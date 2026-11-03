@@ -78,3 +78,5 @@ These are proposed delivery targets. The scaffold is the starting point, not a c
 | 4. Testnet demonstration | Demo application, audit history, deployment records, and developer documentation. | Published contract IDs, transaction links, a demo recording, and a repeatable walkthrough show the payment scenario. Audit events reconstruct the wallet's stored history hash. All milestone checks pass in CI. |
 
 The architecture defines the acceptance cases for these milestones. Test fixtures will be labelled separately from real provider assessments.
+
+# TODO
