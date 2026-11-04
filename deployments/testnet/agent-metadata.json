@@ -1,0 +1,8 @@
+{
+  "schema": "stellar-agent-auth/agent-metadata/v1",
+  "name": "stellar-agent-auth P3 Testnet checkpoint agent",
+  "description": "Example agent registered for the P3 Testnet development checkpoint.\nIt holds no assets of value, takes no actions and has no secrets.",
+  "endpoints": [
+    { "name": "repository", "url": "https://github.com/CenekSanzak/stellar-agent-auth" }
+  ]
+}
