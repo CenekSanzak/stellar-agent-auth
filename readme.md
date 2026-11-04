@@ -4,7 +4,7 @@ An AI agent needs to pay for data or API services without asking its owner to si
 
 The demo will reproduce this scenario on Stellar Testnet using a clearly identified test asset. It will show a successful payment and rejected requests that exceed the budget, use an unapproved recipient, or arrive after revocation. This gives agent developers a concrete example they can integrate through the SDK.
 
-**Current status:** P2 adds the agent registry: controllers register agents, update metadata, rotate signers and disable or reactivate agents, tested with real signatures on a local network. It builds on P1's shared contract types, canonical hashes and authorization probe. The verification registry and wallet follow in P3–P4. See [development setup](docs/DEVELOPMENT.md) and [requirements](docs/REQUIREMENTS.md).
+**Current status:** P3 adds the verification registry and a limited verifier. An admin approves providers for live or fixture results. Providers publish results bound to a live agent revision in strict sequence, and revoke them. Consumers check a result against required checks, age and a risk threshold. The verifier checks metadata integrity, endpoint TLS and the signer account, and reports every other ERC-8126 check as unsupported. P2's agent registry and P1's shared types and authorization probe underpin it. The wallet follows in P4. See [verification coverage](docs/VERIFICATION_COVERAGE.md). See [development setup](docs/DEVELOPMENT.md) and [requirements](docs/REQUIREMENTS.md).
 
 ## Background
 
@@ -79,4 +79,3 @@ These are proposed delivery targets. The scaffold is the starting point, not a c
 
 The architecture defines the acceptance cases for these milestones. Test fixtures will be labelled separately from real provider assessments.
 
-# TODO

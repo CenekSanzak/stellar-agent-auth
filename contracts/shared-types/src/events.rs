@@ -1,6 +1,6 @@
 use soroban_sdk::{contractevent, Address, BytesN};
 
-use crate::attestation::VerificationResult;
+use crate::attestation::{ProviderRecord, VerificationResult};
 use crate::audit::AuditEntry;
 use crate::identity::AgentIdentity;
 
@@ -15,7 +15,7 @@ pub struct IdentityChanged {
 pub struct ProviderChanged {
     #[topic]
     pub provider: Address,
-    pub approved: bool,
+    pub record: ProviderRecord,
 }
 
 #[contractevent(topics = ["assessment_v1"], data_format = "single-value")]

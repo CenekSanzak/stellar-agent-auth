@@ -1,12 +1,12 @@
-import {
-  Account, Address, BASE_FEE, Contract, StrKey, TransactionBuilder, authorizeEntry, rpc, type xdr,
-} from '@stellar/stellar-sdk';
-import { assertAuthWindow } from './actions.js';
+import { Contract, StrKey, type authorizeEntry, type xdr } from '@stellar/stellar-sdk';
+import { signInvocation, simulateRead as simulate, type ContractRead } from './contract-call.js';
 import { decodeIdentity, encodeRegistryArgs } from './encoding.js';
 import {
-  CONTRACT_ERRORS, MAX_METADATA_URI_BYTES, REGISTRY_AUTH_METHODS,
+  MAX_METADATA_URI_BYTES, REGISTRY_AUTH_METHODS,
   type AgentIdentity, type ContractErrorName, type RegistryArgs, type RegistryAuthMethod, type RegistryMethod,
 } from './types.js';
+
+export { contractErrorName } from './contract-call.js';
 
 const encoder = new TextEncoder();
 const HTTPS = 'https://';
@@ -23,16 +23,6 @@ export class AgentRegistryError extends Error {
     super(message);
     this.code = code;
   }
-}
-
-/**
- * Map a simulation or transaction error string led by `Error(Contract, #N)` to its v1 name. Only the first
- * host error counts: the diagnostic log after an auth failure can quote unrelated contract error codes.
- */
-export function contractErrorName(message: string): ContractErrorName | undefined {
-  const [, type, value] = /Error\((\w+), (#?\w+)\)/.exec(message) ?? [];
-  const code = type === 'Contract' ? /^#(\d{1,10})$/.exec(value ?? '')?.[1] : undefined;
-  return code === undefined ? undefined : CONTRACT_ERRORS[Number(code) - 1];
 }
 
 /** Mirrors `shared_types::identity::validate_metadata`, in the same order and with the same error codes. */
@@ -101,56 +91,19 @@ interface RegistryAuthorization<M extends RegistryAuthMethod> {
 export async function signRegistryAuthorization<M extends RegistryAuthMethod>(
   input: RegistryAuthorization<M>,
 ): Promise<xdr.SorobanAuthorizationEntry> {
-  const { entry, contractId, method, args, address, networkPassphrase, latestLedger, expirationLedger, signer } = input;
-  assertAuthWindow(latestLedger, expirationLedger);
-
-  const credentials = entry.credentials;
-  if (!StrKey.isValidEd25519PublicKey(address) || credentials.type !== 'sorobanCredentialsAddress'
-    || Address.fromScAddress(credentials.address.address).toString() !== address) {
-    throw new Error('Expected native authorization for the signing account');
-  }
-  const root = entry.rootInvocation;
-  const fn = root.function;
-  if (!(REGISTRY_AUTH_METHODS as readonly string[]).includes(method) || !StrKey.isValidContract(contractId)
-    || root.subInvocations.length !== 0 || fn.type !== 'sorobanAuthorizedFunctionTypeContractFn') {
-    throw new Error('Expected a single authorized agent registry invocation');
-  }
-  const call = fn.contractFn;
-  const expected = encodeRegistryArgs(method, args);
-  if (Address.fromScAddress(call.contractAddress).toString() !== contractId
-    || call.functionName.toString() !== method || call.args.length !== expected.length
-    || call.args.some((arg, i) => arg.toXdr('hex') !== expected[i]!.toXdr('hex'))) {
-    throw new Error('Authorization invocation does not match the expected registry call');
-  }
-
-  return authorizeEntry(entry, signer, expirationLedger, networkPassphrase, address);
+  return signInvocation({
+    ...input, methods: REGISTRY_AUTH_METHODS, expectedArgs: () => encodeRegistryArgs(input.method, input.args),
+    label: 'agent registry',
+  });
 }
 
-export interface RegistryRead {
-  server: Pick<rpc.Server, 'simulateTransaction'>;
-  contractId: string;
-  /** Any standard account public key; simulation does not consume its sequence. */
-  source: string;
-  networkPassphrase: string;
-}
+export type RegistryRead = ContractRead;
 
-async function simulateRead<M extends 'get' | 'current' | 'agent_count'>(
+function simulateRead<M extends 'get' | 'current' | 'agent_count'>(
   read: RegistryRead, method: M, args: RegistryArgs[M],
 ) {
-  if (!StrKey.isValidEd25519PublicKey(read.source)) throw new Error('Expected a standard source account');
-  const tx = new TransactionBuilder(new Account(read.source, '0'), {
-    fee: BASE_FEE, networkPassphrase: read.networkPassphrase,
-  }).addOperation(registryOperation(read.contractId, method, args)).setTimeout(30).build();
-  const simulation = await read.server.simulateTransaction(tx);
-  if (rpc.Api.isSimulationError(simulation)) {
-    const code = contractErrorName(simulation.error);
-    if (code) throw new AgentRegistryError(code, `Agent registry ${method} failed: ${code}`);
-    throw new Error(`Agent registry ${method} simulation failed: ${simulation.error}`);
-  }
-  if (!rpc.Api.isSimulationSuccess(simulation) || !simulation.result) {
-    throw new Error(`Agent registry ${method} simulation returned no result`);
-  }
-  return simulation.result.retval;
+  return simulate(read, registryOperation(read.contractId, method, args), `Agent registry ${method}`,
+    (code) => new AgentRegistryError(code, `Agent registry ${method} failed: ${code}`));
 }
 
 /** Read an identity in any state; throws `AgentRegistryError` with `NotFound` when absent. */

@@ -17,6 +17,11 @@ export type CheckKind = (typeof CHECK_KINDS)[number];
 export const CHECK_OUTCOMES = ['Passed', 'Failed', 'Inconclusive', 'NotApplicable', 'Unsupported'] as const;
 export type CheckOutcome = (typeof CHECK_OUTCOMES)[number];
 
+export const ASSESSMENT_MODES = ['Live', 'Fixture'] as const;
+export type AssessmentMode = (typeof ASSESSMENT_MODES)[number];
+export const MAX_CHECKS = 8;
+export const MAX_RISK_SCORE = 100;
+
 export const ACTION_KINDS = ['ServicePayment', 'Transfer'] as const;
 export type ActionKind = (typeof ACTION_KINDS)[number];
 
@@ -44,7 +49,7 @@ export interface VerificationResult {
   revision: bigint;
   provider: string;
   sequence: bigint;
-  mode: 'Live' | 'Fixture';
+  mode: AssessmentMode;
   checks: readonly CheckResult[];
   risk_score: number | null;
   serious_wallet_risks: number;
@@ -52,6 +57,20 @@ export interface VerificationResult {
   issued_at: bigint;
   expires_at: bigint;
   revoked: boolean;
+}
+
+/** A provider's approval; the mode is fixed for the provider address's lifetime and disabling is terminal. */
+export interface ProviderRecord {
+  mode: AssessmentMode;
+  approved: boolean;
+}
+
+/** A consumer's verification requirement, as a wallet policy states it. */
+export interface VerificationRequirement {
+  required_checks: readonly CheckKind[];
+  /** Maximum result age in seconds at the time of use. */
+  max_age: bigint;
+  max_risk_score: number;
 }
 
 export interface Transfer {
@@ -149,3 +168,22 @@ export type RegistryMethod = keyof RegistryArgs;
 
 export const REGISTRY_AUTH_METHODS = ['register', 'update_metadata', 'rotate_signer', 'disable', 'reactivate'] as const;
 export type RegistryAuthMethod = (typeof REGISTRY_AUTH_METHODS)[number];
+
+type ResultKey = { agent_id: bigint; revision: bigint; provider: string };
+
+export interface VerificationArgs {
+  approve_provider: { provider: string; mode: AssessmentMode };
+  disable_provider: { provider: string };
+  publish: { result: VerificationResult };
+  revoke: ResultKey & { sequence: bigint };
+  provider: { provider: string };
+  latest: ResultKey;
+  current: ResultKey;
+  check: ResultKey & VerificationRequirement;
+  admin: Record<string, never>;
+  agent_registry: Record<string, never>;
+}
+export type VerificationMethod = keyof VerificationArgs;
+
+export const VERIFICATION_AUTH_METHODS = ['approve_provider', 'disable_provider', 'publish', 'revoke'] as const;
+export type VerificationAuthMethod = (typeof VERIFICATION_AUTH_METHODS)[number];

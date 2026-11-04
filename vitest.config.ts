@@ -1,6 +1,14 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
+// Tests run workspace packages from source, so every import shares one copy of each module.
+const workspace = {
+  '@stellar-agent-auth/sdk': fileURLToPath(new URL('./packages/sdk/src/index.ts', import.meta.url)),
+  '@stellar-agent-auth/verifier': fileURLToPath(new URL('./services/verifier/src/index.ts', import.meta.url)),
+};
+
 export default defineConfig({
+  resolve: { alias: workspace },
   test: {
     passWithNoTests: false,
     projects: [

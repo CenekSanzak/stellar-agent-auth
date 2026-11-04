@@ -8,7 +8,15 @@
     "lib": [
       "ES2022",
       "DOM"
-    ]
+    ],
+    "paths": {
+      "@stellar-agent-auth/sdk": [
+        "./packages/sdk/src/index.ts"
+      ],
+      "@stellar-agent-auth/verifier": [
+        "./services/verifier/src/index.ts"
+      ]
+    }
   },
   "include": [
     "tests/**/*.ts",

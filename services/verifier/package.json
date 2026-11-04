@@ -4,7 +4,23 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "build": "npm run build --workspace @stellar-agent-auth/sdk --silent && tsc -p tsconfig.json",
+    "typecheck": "npm run build --workspace @stellar-agent-auth/sdk --silent && tsc -p tsconfig.json --noEmit",
+    "start": "node dist/index.js"
+  },
+  "bin": {
+    "stellar-agent-auth-verifier": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "dependencies": {
+    "@stellar-agent-auth/sdk": "0.0.0",
+    "@stellar/stellar-sdk": "17.4.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   }
 }

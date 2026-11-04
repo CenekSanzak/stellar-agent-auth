@@ -1,6 +1,6 @@
 # Development
 
-P0 supplies the build and test environment. P1 adds the v1 contract ABI, hash vectors and a local fixture that verifies native authorization and a sponsor-paid transfer. P2 adds the agent registry, its SDK helpers and a signed local registry flow. The verification and wallet flows arrive in P3–P4.
+P0 supplies the build and test environment. P1 adds the v1 contract ABI, hash vectors and a local fixture that verifies native authorization and a sponsor-paid transfer. P2 adds the agent registry, its SDK helpers and a signed local registry flow. P3 adds the verification registry, the limited verifier CLI (`services/verifier`), the SDK verification client and a signed local verification flow. The wallet arrives in P4.
 
 ## Pinned environment
 
@@ -46,7 +46,7 @@ npm run local:down
 
 `dev` starts an isolated protocol-29 Quickstart and waits for matching RPC metadata and a serving Friendbot, which starts several seconds after RPC. It does not start the future application. Port 8000 binds only to loopback. The network is ephemeral: `local:down` removes its state. Do not use it to retain deployment evidence.
 
-Docker must be running. If startup fails, use `docker compose ps` and `docker compose logs`. The local suite checks RPC health and protocol, deploys the Phase 1 fixture with ephemeral accounts, exercises real agent and sponsor signatures and checks a native token transfer and audit event. It also deploys the agent registry and runs its lifecycle with real controller, signer, new-signer and sponsor signatures. Existing planned scenarios use `.planned.ts` until executable tests replace them; Vitest searches the integration/adversarial directories for `.test.ts` files and fails on empty suites.
+Docker must be running. If startup fails, use `docker compose ps` and `docker compose logs`. The local suite checks RPC health and protocol, deploys the Phase 1 fixture with ephemeral accounts, exercises real agent and sponsor signatures and checks a native token transfer and audit event. It also deploys the agent registry and runs its lifecycle with real controller, signer, new-signer and sponsor signatures. The verification suite deploys both registries, approves live and fixture providers, runs the verifier with an in-process metadata transport and exercises publication, sequencing, revocation, expiry and identity changes with real signatures. Existing planned scenarios use `.planned.ts` until executable tests replace them; Vitest searches the integration/adversarial directories for `.test.ts` files and fails on empty suites.
 
 ## Configuration
 

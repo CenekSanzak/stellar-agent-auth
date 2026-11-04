@@ -3,3 +3,5 @@ export * from './types.js';
 export * from './encoding.js';
 export { MAX_AUTH_WINDOW_LEDGERS, signActionAuthorization } from './actions.js';
 export * from './agents.js';
+export * from './verification.js';
+export type { ContractRead } from './contract-call.js';

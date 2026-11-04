@@ -1,20 +1,10 @@
-use soroban_sdk::{xdr::ToXdr, Address, Bytes, BytesN, Env, String};
+use soroban_sdk::{Address, BytesN, Env, String};
+/// v1 signers are standard Stellar accounts; contract addresses are rejected.
+pub use stellar_agent_auth_shared_types::identity::require_account;
 use stellar_agent_auth_shared_types::{
     errors::Error,
     identity::{validate_metadata, AgentIdentity},
 };
-
-/// XDR prefix of `ScVal::Address(ScAddress::Account(..))`.
-const ACCOUNT_ADDRESS_XDR: [u8; 8] = [0, 0, 0, 18, 0, 0, 0, 0];
-
-/// v1 signers are standard Stellar accounts; contract addresses are rejected.
-pub fn require_account(env: &Env, address: &Address) -> Result<(), Error> {
-    let xdr = address.clone().to_xdr(env);
-    if xdr.len() < 8 || xdr.slice(0..8) != Bytes::from_array(env, &ACCOUNT_ADDRESS_XDR) {
-        return Err(Error::InvalidInput);
-    }
-    Ok(())
-}
 
 pub fn check_revision(identity: &AgentIdentity, expected_revision: u64) -> Result<(), Error> {
     if identity.revision != expected_revision {

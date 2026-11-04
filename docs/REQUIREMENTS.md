@@ -1,6 +1,6 @@
 # Requirements and evidence ledger
 
-P0 infrastructure, the P1 ABI and authorization gate and the P2 agent registry are implemented and validated locally. Product acceptance remains tied to the verification, wallet and SDK flows below.
+P0 infrastructure, the P1 ABI and authorization gate, the P2 agent registry and the P3 verification registry and limited verifier are implemented and validated locally. The P3 Testnet checkpoint is still open. Product acceptance remains tied to the verification, wallet and SDK flows below.
 
 | Source requirement | Acceptance IDs | Evidence required | Implementation phase |
 | --- | --- | --- | --- |
@@ -72,3 +72,18 @@ The [Phase 1 validation record](P1_VALIDATION.md) covers matching Rust/TypeScrip
 ## P2 evidence
 
 The [Phase 2 validation record](P2_VALIDATION.md) covers the agent registry's host tests and a signed local flow: registration and readback, controller-only changes, signer and new-signer proof, rejected metadata and revision invalidation. This demonstrates A01 on the local network. A02 is shown only within the registry: requests signed for an earlier revision fail, and `current` rejects old and disabled revisions. Its old-verification and old-policy evidence needs P3 and P4. The 2,048-byte registration adds identity resource evidence to A23. Nothing is deployed to Testnet yet. [The registry decision](decisions/0003-agent-registry.md) sets the rules P3 and P4 must follow.
+
+## P3 evidence
+
+The [Phase 3 validation record](P3_VALIDATION.md) covers the verification registry's host tests, the SDK and verifier unit tests and a signed local flow. Rules are in [ADR 0004](decisions/0004-verification-registry.md); check coverage and scoring are in [the coverage document](VERIFICATION_COVERAGE.md).
+
+- A02: for verification, results and already signed publications for an earlier identity revision fail after a metadata update, disable or reactivation. The old-policy part needs P4.
+- A03: unapproved, disabled and wrong-mode providers fail. Publication, revocation, approval and disabling signed by any other key fail with the expected host cause.
+- A04: expiry at `expires_at` and the maximum-age boundary hold in host tests with controlled ledger time and on the local ledger clock. Future issue times are rejected.
+- A05: a newer failure replaces a pass with no fallback, revocation is terminal, and earlier sequences cannot be republished.
+- A06: a required check that is unsupported, absent, inconclusive, not applicable or failed denies. The verifier reports its real unsupported coverage.
+- A07: the risk threshold is inclusive, an absent aggregate denies, and serious wallet-risk flags deny whatever the score.
+- A25: the metadata hash is checked before parsing. Redirects, private and special addresses, DNS rebinding, timeouts and oversized bodies are rejected in unit tests with an injected transport; the real HTTPS transport is not yet exercised against a live server.
+- A23: the result encoding round-trips strictly, and an eight-check publication fits the network limits.
+
+SOW deliverable 1 still needs the Testnet checkpoint: an initial registration and real limited assessment with recorded IDs and transaction links, which `deployments/testnet/checkpoint.ts` performs.

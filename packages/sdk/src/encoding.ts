@@ -1,10 +1,10 @@
 import { Address, StrKey, hash, nativeToScVal, xdr } from '@stellar/stellar-sdk';
 import {
-  ACTION_KINDS, CHECK_KINDS, CHECK_OUTCOMES, MAX_ASSETS, MAX_METADATA_URI_BYTES, MAX_RECIPIENTS, SCHEMA_VERSION,
-  SERIOUS_WALLET_RISK_MASK,
-  type Action, type ActionRequest, type AgentIdentity, type AuditEntry, type AuditOutcome,
-  type Hash32, type Policy, type RegistryArgs, type RegistryMethod, type ServiceRule, type Transfer,
-  type VerificationResult,
+  ACTION_KINDS, ASSESSMENT_MODES, CHECK_KINDS, CHECK_OUTCOMES, MAX_ASSETS, MAX_METADATA_URI_BYTES, MAX_RECIPIENTS,
+  SCHEMA_VERSION, SERIOUS_WALLET_RISK_MASK,
+  type Action, type ActionRequest, type AgentIdentity, type AuditEntry, type AuditOutcome, type CheckResult,
+  type Hash32, type Policy, type ProviderRecord, type RegistryArgs, type RegistryMethod, type ServiceRule,
+  type Transfer, type VerificationArgs, type VerificationMethod, type VerificationResult,
 } from './types.js';
 
 const encoder = new TextEncoder();
@@ -200,7 +200,7 @@ export function encodeVerification(result: VerificationResult): xdr.ScVal {
     revision: u64(result.revision),
     provider: address(result.provider),
     sequence: u64(result.sequence),
-    mode: variant(result.mode, ['Live', 'Fixture']),
+    mode: variant(result.mode, ASSESSMENT_MODES),
     checks: vec(result.checks.map((check) => record({
       kind: variant(check.kind, CHECK_KINDS),
       outcome: variant(check.outcome, CHECK_OUTCOMES),
@@ -213,6 +213,124 @@ export function encodeVerification(result: VerificationResult): xdr.ScVal {
     expires_at: u64(result.expires_at),
     revoked: bool(result.revoked),
   });
+}
+
+/** Exact canonical map fields in order, or throw naming `type`. */
+function fields<const F extends readonly string[]>(value: xdr.ScVal, names: F, type: string) {
+  const entries = value.type === 'scvMap' ? value.map ?? [] : [];
+  if (entries.length !== names.length) throw new Error(`Expected a ${type} map`);
+  entries.forEach(({ key }, i) => {
+    if (key.type !== 'scvSymbol' || key.sym.toString() !== names[i]) throw new Error(`Unexpected ${type} field`);
+  });
+  return (name: F[number]) => entries[names.indexOf(name)]!.val;
+}
+
+function decodeU32(value: xdr.ScVal) {
+  if (value.type !== 'scvU32') throw new Error('Expected a u32');
+  return value.u32;
+}
+
+function decodeBool(value: xdr.ScVal) {
+  if (value.type !== 'scvBool') throw new Error('Expected a bool');
+  return value.b;
+}
+
+function decodeBytes32(value: xdr.ScVal) {
+  if (value.type !== 'scvBytes' || value.bytes.value.length !== 32) throw new Error('Expected 32 bytes');
+  return Uint8Array.from(value.bytes.value);
+}
+
+function decodeVariant<T extends string>(value: xdr.ScVal, tags: readonly T[]): T {
+  const items = value.type === 'scvVec' ? value.vec ?? [] : [];
+  const [item] = items;
+  const tag = items.length === 1 && item?.type === 'scvSymbol' ? item.sym.toString() : undefined;
+  if (tag === undefined || !(tags as readonly string[]).includes(tag)) throw new Error('Unknown ABI variant');
+  return tag as T;
+}
+
+function decodeScore(value: xdr.ScVal) {
+  return value.type === 'scvVoid' ? null : decodeU32(value);
+}
+
+const CHECK_FIELDS = ['kind', 'outcome', 'score'] as const;
+const VERIFICATION_FIELDS = [
+  'agent_id', 'checks', 'evidence_hash', 'expires_at', 'issued_at', 'mode', 'provider', 'revision', 'revoked',
+  'risk_score', 'schema_version', 'sequence', 'serious_wallet_risks',
+] as const;
+
+function decodeCheck(value: xdr.ScVal): CheckResult {
+  const field = fields(value, CHECK_FIELDS, 'CheckResult');
+  return {
+    kind: decodeVariant(field('kind'), CHECK_KINDS),
+    outcome: decodeVariant(field('outcome'), CHECK_OUTCOMES),
+    score: decodeScore(field('score')),
+  };
+}
+
+/** Strict inverse of `encodeVerification`: exact canonical fields and types only. */
+export function decodeVerification(value: xdr.ScVal): VerificationResult {
+  const field = fields(value, VERIFICATION_FIELDS, 'VerificationResult');
+  const checks = field('checks');
+  if (checks.type !== 'scvVec') throw new Error('Expected a check list');
+  const result: VerificationResult = {
+    schema_version: decodeU32(field('schema_version')),
+    agent_id: decodeU64(field('agent_id')),
+    revision: decodeU64(field('revision')),
+    provider: decodeAddress(field('provider')),
+    sequence: decodeU64(field('sequence')),
+    mode: decodeVariant(field('mode'), ASSESSMENT_MODES),
+    checks: (checks.vec ?? []).map(decodeCheck),
+    risk_score: decodeScore(field('risk_score')),
+    serious_wallet_risks: decodeU32(field('serious_wallet_risks')),
+    evidence_hash: decodeBytes32(field('evidence_hash')),
+    issued_at: decodeU64(field('issued_at')),
+    expires_at: decodeU64(field('expires_at')),
+    revoked: decodeBool(field('revoked')),
+  };
+  if (encodeVerification(result).toXdr('hex') !== value.toXdr('hex')) {
+    throw new Error('Non-canonical VerificationResult');
+  }
+  return result;
+}
+
+export function encodeProviderRecord(provider: ProviderRecord): xdr.ScVal {
+  return record({ mode: variant(provider.mode, ASSESSMENT_MODES), approved: bool(provider.approved) });
+}
+
+/** Strict inverse of `encodeProviderRecord`. */
+export function decodeProviderRecord(value: xdr.ScVal): ProviderRecord {
+  const field = fields(value, ['approved', 'mode'] as const, 'ProviderRecord');
+  return { mode: decodeVariant(field('mode'), ASSESSMENT_MODES), approved: decodeBool(field('approved')) };
+}
+
+const VERIFICATION_ENCODERS: { [M in VerificationMethod]: (args: VerificationArgs[M]) => xdr.ScVal[] } = {
+  approve_provider: (a) => [address(a.provider), variant(a.mode, ASSESSMENT_MODES)],
+  disable_provider: (a) => [address(a.provider)],
+  publish: (a) => [encodeVerification(a.result)],
+  revoke: (a) => [u64(a.agent_id), u64(a.revision), address(a.provider), u64(a.sequence)],
+  provider: (a) => [address(a.provider)],
+  latest: (a) => [u64(a.agent_id), u64(a.revision), address(a.provider)],
+  current: (a) => [u64(a.agent_id), u64(a.revision), address(a.provider)],
+  check: (a) => [
+    u64(a.agent_id), u64(a.revision), address(a.provider),
+    vec(a.required_checks.map((kind) => variant(kind, CHECK_KINDS))), u64(a.max_age), u32(a.max_risk_score),
+  ],
+  admin: () => [],
+  agent_registry: () => [],
+};
+
+/** Structural verification-registry argument XDR. Semantic prechecks live in `verificationOperation`. */
+export function encodeVerificationArgs<M extends VerificationMethod>(
+  method: M, args: VerificationArgs[M],
+): xdr.ScVal[] {
+  if (!Object.hasOwn(VERIFICATION_ENCODERS, method)) throw new Error('Unknown verification registry method');
+  return VERIFICATION_ENCODERS[method](args);
+}
+
+/** Constructor arguments `(admin, agent_registry)` for deploying the verification registry. */
+export function encodeVerificationConstructorArgs(admin: string, agentRegistry: string): xdr.ScVal[] {
+  if (!StrKey.isValidContract(agentRegistry)) throw new Error('Expected an agent registry contract address');
+  return [address(admin), address(agentRegistry)];
 }
 
 export function encodePolicy(policy: Policy): xdr.ScVal {

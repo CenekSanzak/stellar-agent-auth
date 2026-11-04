@@ -2,7 +2,7 @@
 
 This project lets a wallet owner give an AI agent limited permission to use funds on Stellar. The owner keeps control of the wallet, while the agent can perform only the actions the owner has approved.
 
-**Current status:** The repository contains folders, package configuration, and placeholder modules. The behavior below is the planned design; contracts and services are not implemented or deployed yet.
+**Current status:** The agent registry (P2), verification registry and limited verifier (P3) are implemented and tested on a local network. The wallet, submitter, indexer and demo below are still planned. Nothing is deployed to Testnet yet.
 
 ## Example: paying for services
 

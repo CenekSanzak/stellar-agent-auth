@@ -1,10 +1,33 @@
-use soroban_sdk::{contracttype, Address, BytesN, String};
+use soroban_sdk::{contracttype, xdr::ToXdr, Address, Bytes, BytesN, Env, String};
 
 use crate::errors::Error;
 
 pub const MAX_METADATA_URI_BYTES: u32 = 2_048;
 
 const METADATA_URI_SCHEME: &[u8] = b"https://";
+
+/// XDR prefixes of `ScVal::Address(ScAddress::Account(..))` and `ScVal::Address(ScAddress::Contract(..))`.
+/// `Address::to_payload` would need soroban-sdk's `hazmat-address` feature.
+const ACCOUNT_ADDRESS_XDR: [u8; 8] = [0, 0, 0, 18, 0, 0, 0, 0];
+const CONTRACT_ADDRESS_XDR: [u8; 8] = [0, 0, 0, 18, 0, 0, 0, 1];
+
+fn has_prefix(env: &Env, address: &Address, prefix: &[u8; 8]) -> Result<(), Error> {
+    let xdr = address.clone().to_xdr(env);
+    if xdr.len() < 8 || xdr.slice(0..8) != Bytes::from_array(env, prefix) {
+        return Err(Error::InvalidInput);
+    }
+    Ok(())
+}
+
+/// A standard ed25519 account; contract and muxed addresses fail with `InvalidInput`.
+pub fn require_account(env: &Env, address: &Address) -> Result<(), Error> {
+    has_prefix(env, address, &ACCOUNT_ADDRESS_XDR)
+}
+
+/// A contract address; anything else fails with `InvalidInput`.
+pub fn require_contract(env: &Env, address: &Address) -> Result<(), Error> {
+    has_prefix(env, address, &CONTRACT_ADDRESS_XDR)
+}
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]

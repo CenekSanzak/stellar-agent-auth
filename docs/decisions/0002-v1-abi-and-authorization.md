@@ -21,7 +21,7 @@ Use `u64` for application sequences, agent IDs, revisions and Unix seconds, and 
 | Topics in order | XDR data |
 | --- | --- |
 | `identity_v1`, agent ID | `AgentIdentity` after the change |
-| `provider_v1`, provider address | Approval boolean after the change |
+| `provider_v1`, provider address | `ProviderRecord` (mode and approval) after the change; amended by [ADR 0004](0004-verification-registry.md) |
 | `assessment_v1`, agent ID, provider address | `VerificationResult` after publication or revocation |
 | `audit_v1`, audit sequence | Map with `entry` and `hash`. The entry includes the outcome, wallet, actor, previous hash, ledger and timestamp. |
 
