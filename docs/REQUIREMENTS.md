@@ -1,6 +1,6 @@
 # Requirements and evidence ledger
 
-P0 infrastructure, the P1 ABI and authorization gate, the P2 agent registry and the P3 verification registry and limited verifier are implemented and validated locally. The P3 Testnet checkpoint has run. Product acceptance remains tied to the verification, wallet and SDK flows below.
+P0 infrastructure, the P1 ABI and authorization gate, the P2 agent registry, the P3 verification registry and limited verifier and the P4 smart wallet are implemented and validated locally. The P3 Testnet checkpoint has run; the wallet is not yet deployed to Testnet. Product acceptance remains tied to the verification, wallet and SDK flows below.
 
 | Source requirement | Acceptance IDs | Evidence required | Implementation phase |
 | --- | --- | --- | --- |
@@ -87,3 +87,12 @@ The [Phase 3 validation record](P3_VALIDATION.md) covers the verification regist
 - A23: the result encoding round-trips strictly, and an eight-check publication fits the network limits.
 
 The Testnet checkpoint for SOW deliverable 1 is done: one registration and one real limited assessment, read back with recorded IDs and transaction links ([record](../deployments/testnet/p3-checkpoint.json)). It is a development checkpoint; A29's final deployment evidence belongs to P8.
+
+## P4 evidence
+
+The [Phase 4 validation record](P4_VALIDATION.md) covers 30 smart wallet host tests, the SDK wallet and policy unit tests, and three signed local suites: the wallet flow, authorization attacks and limits. Rules are in [ADR 0005](decisions/0005-smart-wallet.md). The SOW deliverable 2 gate is met locally: a signed 3-unit payment under a 5-per-payment, 20-per-UTC-day, seven-day policy succeeds. Over-limit, unapproved-recipient and post-revocation payments fail, and a failed asset transfer leaves balances, budget, sequence and audit head unchanged on the ledger.
+
+- A02: the old-policy part is now shown. A request signed before an identity update fails, and so does a policy for an old revision.
+- A08–A20, A22: each has signed local-network evidence, host tests, or both, as listed in the validation record.
+- A21: archival and restoration are covered by host emulation of protocol 23 automatic restoration, together with TTL extension checks. Live-network archival is left to P8's maintenance evidence.
+- A23: the wallet ABI decoders are strict, every SDK signer handles CAP-71 AddressV2 credentials, and a full `execute` fits the network limits with large margins.

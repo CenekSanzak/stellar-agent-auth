@@ -14,3 +14,5 @@ stellar-agent-auth-shared-types.workspace = true
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+stellar-agent-auth-agent-registry = { path = "../agent-registry" }
+stellar-agent-auth-verification-registry = { path = "../verification-registry" }

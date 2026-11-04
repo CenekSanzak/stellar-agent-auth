@@ -1,6 +1,9 @@
 export const SCHEMA_VERSION = 1;
 export const MAX_ASSETS = 4;
 export const MAX_RECIPIENTS = 32;
+/** Active (approved and not revoked) policies one wallet may hold at once. */
+export const MAX_ACTIVE_POLICIES = 8;
+export const SECONDS_PER_DAY = 86_400n;
 export const MAX_METADATA_URI_BYTES = 2_048;
 export const SERIOUS_WALLET_RISKS = {
   KnownCompromise: 1 << 0,
@@ -136,6 +139,12 @@ export type AuditOutcome =
   | { kind: 'OwnerWithdrawal'; transfer: Transfer }
   | { kind: 'Executed'; policy_hash: Hash32; action_hash: Hash32; action: Action };
 
+/** The latest audit entry's sequence and hash; sequence 0 and 32 zero bytes at genesis. */
+export interface AuditHead {
+  sequence: bigint;
+  hash: Hash32;
+}
+
 export interface AuditEntry {
   schema_version: number;
   wallet: string;
@@ -151,6 +160,7 @@ export interface AuditEntry {
 export const CONTRACT_ERRORS = [
   'UnsupportedVersion', 'InvalidInput', 'LimitExceeded', 'Duplicate', 'NotFound', 'InvalidSequence', 'Expired',
   'Revoked', 'IdentityChanged', 'VerificationDenied', 'PolicyDenied', 'Paused', 'ArithmeticOverflow',
+  'TransferFailed',
 ] as const;
 export type ContractErrorName = (typeof CONTRACT_ERRORS)[number];
 
@@ -187,3 +197,30 @@ export type VerificationMethod = keyof VerificationArgs;
 
 export const VERIFICATION_AUTH_METHODS = ['approve_provider', 'disable_provider', 'publish', 'revoke'] as const;
 export type VerificationAuthMethod = (typeof VERIFICATION_AUTH_METHODS)[number];
+
+export interface WalletArgs {
+  fund: { from: string; asset: string; amount: bigint };
+  withdraw: { asset: string; recipient: string; amount: bigint };
+  balance: { asset: string };
+  approve_policy: { policy: Policy };
+  revoke_policy: { policy_hash: Hash32 };
+  replace_policy: { old_policy_hash: Hash32; policy: Policy };
+  pause: Record<string, never>;
+  resume: Record<string, never>;
+  execute: { request: ActionRequest };
+  owner: Record<string, never>;
+  agent_registry: Record<string, never>;
+  verification_registry: Record<string, never>;
+  paused: Record<string, never>;
+  policies: Record<string, never>;
+  policy: { policy_hash: Hash32 };
+  policy_state: { policy_hash: Hash32 };
+  audit_head: Record<string, never>;
+}
+export type WalletMethod = keyof WalletArgs;
+
+/** Methods only the wallet owner may authorize. */
+export const WALLET_OWNER_METHODS = [
+  'withdraw', 'approve_policy', 'revoke_policy', 'replace_policy', 'pause', 'resume',
+] as const;
+export type WalletOwnerMethod = (typeof WALLET_OWNER_METHODS)[number];

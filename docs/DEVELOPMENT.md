@@ -1,6 +1,6 @@
 # Development
 
-P0 supplies the build and test environment. P1 adds the v1 contract ABI, hash vectors and a local fixture that verifies native authorization and a sponsor-paid transfer. P2 adds the agent registry, its SDK helpers and a signed local registry flow. P3 adds the verification registry, the limited verifier CLI (`services/verifier`), the SDK verification client and a signed local verification flow. The wallet arrives in P4.
+P0 supplies the build and test environment. P1 adds the v1 contract ABI, hash vectors and a local fixture that verifies native authorization and a sponsor-paid transfer. P2 adds the agent registry, its SDK helpers and a signed local registry flow. P3 adds the verification registry, the limited verifier CLI (`services/verifier`), the SDK verification client and a signed local verification flow. P4 adds the smart wallet, the SDK wallet and policy clients, and signed local wallet and adversarial suites; see [ADR 0005](decisions/0005-smart-wallet.md) for its storage maintenance notes. The transaction pipeline and CLI arrive in P5.
 
 ## Pinned environment
 

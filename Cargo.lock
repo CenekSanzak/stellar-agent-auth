@@ -1775,7 +1775,9 @@ name = "stellar-agent-auth-smart-wallet"
 version = "0.0.0"
 dependencies = [
  "soroban-sdk",
+ "stellar-agent-auth-agent-registry",
  "stellar-agent-auth-shared-types",
+ "stellar-agent-auth-verification-registry",
 ]
 
 [[package]]

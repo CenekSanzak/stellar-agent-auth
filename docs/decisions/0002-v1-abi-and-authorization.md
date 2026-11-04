@@ -16,6 +16,8 @@ Policy hashes use the immutable policy only. Sort asset limits by asset address 
 
 Use `u64` for application sequences, agent IDs, revisions and Unix seconds, and positive `i128` contract units for transfers and caps. The SDK uses `bigint` for both. A JSON transport represents these values as decimal strings. The verification record separates live assessments from fixture data and distinguishes absent scores from zero. The serious wallet risk mask reserves bits 0, 1 and 2 for known compromise, confirmed malicious activity and a threat feed match. Unknown bits are invalid in v1.
 
+[ADR 0005](0005-smart-wallet.md) adds `Error::TransferFailed` (14) for a refused asset transfer, the `AuditHead` record and the `MAX_ACTIVE_POLICIES` and `SECONDS_PER_DAY` constants, without changing the hash vectors.
+
 ## Events
 
 | Topics in order | XDR data |

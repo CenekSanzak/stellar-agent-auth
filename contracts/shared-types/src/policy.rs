@@ -6,6 +6,14 @@ use crate::{errors::Error, SCHEMA_VERSION};
 
 pub const MAX_ASSETS: u32 = 4;
 pub const MAX_RECIPIENTS: u32 = 32;
+/// Active (approved and not revoked) policies one wallet may hold at once.
+pub const MAX_ACTIVE_POLICIES: u32 = 8;
+pub const SECONDS_PER_DAY: u64 = 86_400;
+
+/// The UTC day number of a Unix timestamp; daily budgets reset when it changes.
+pub const fn utc_day(timestamp: u64) -> u64 {
+    timestamp / SECONDS_PER_DAY
+}
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -1,10 +1,11 @@
-import { Address, StrKey, hash, nativeToScVal, xdr } from '@stellar/stellar-sdk';
+import { Address, StrKey, hash, nativeToScVal, scValToNative, xdr } from '@stellar/stellar-sdk';
 import {
   ACTION_KINDS, ASSESSMENT_MODES, CHECK_KINDS, CHECK_OUTCOMES, MAX_ASSETS, MAX_METADATA_URI_BYTES, MAX_RECIPIENTS,
   SCHEMA_VERSION, SERIOUS_WALLET_RISK_MASK,
   type Action, type ActionRequest, type AgentIdentity, type AuditEntry, type AuditOutcome, type CheckResult,
   type Hash32, type Policy, type ProviderRecord, type RegistryArgs, type RegistryMethod, type ServiceRule,
   type Transfer, type VerificationArgs, type VerificationMethod, type VerificationResult,
+  type AuditHead, type AssetLimit, type PolicyState, type WalletArgs, type WalletMethod,
 } from './types.js';
 
 const encoder = new TextEncoder();
@@ -374,6 +375,143 @@ export function encodePolicy(policy: Policy): xdr.ScVal {
       ? vec([sym('Disabled')])
       : vec([sym('Restricted'), serviceScVal(policy.service)]),
   });
+}
+
+const POLICY_FIELDS = [
+  'action_kinds', 'agent_id', 'allowed_recipients', 'assets', 'blocked_recipients', 'max_assessment_age',
+  'max_risk_score', 'policy_id', 'provider', 'required_checks', 'revision', 'schema_version', 'service', 'signer',
+  'valid_after', 'valid_until',
+] as const;
+
+function decodeVec(value: xdr.ScVal, label: string) {
+  if (value.type !== 'scvVec') throw new Error(`Expected a ${label} list`);
+  return value.vec ?? [];
+}
+
+function decodeAmount(value: xdr.ScVal) {
+  if (value.type !== 'scvI128') throw new Error('Expected an i128');
+  return scValToNative(value) as bigint;
+}
+
+function decodeAssetLimit(value: xdr.ScVal): AssetLimit {
+  const field = fields(value, ['asset', 'per_day', 'per_transaction'] as const, 'AssetLimit');
+  return {
+    asset: decodeAddress(field('asset')),
+    per_transaction: decodeAmount(field('per_transaction')),
+    per_day: decodeAmount(field('per_day')),
+  };
+}
+
+function decodeService(value: xdr.ScVal): ServiceRule | null {
+  const items = decodeVec(value, 'ServicePermission');
+  const [tag, rule] = items;
+  if (tag?.type !== 'scvSymbol') throw new Error('Unknown ABI variant');
+  if (tag.sym.toString() === 'Disabled' && items.length === 1) return null;
+  if (tag.sym.toString() !== 'Restricted' || items.length !== 2) throw new Error('Unknown ABI variant');
+  const field = fields(rule!, ['contract', 'service_id'] as const, 'ServiceRule');
+  return { contract: decodeAddress(field('contract')), service_id: decodeBytes32(field('service_id')) };
+}
+
+/** Strict inverse of `encodePolicy` for a canonical policy, as the wallet stores it. */
+export function decodePolicy(value: xdr.ScVal): Policy {
+  const field = fields(value, POLICY_FIELDS, 'Policy');
+  const policy: Policy = {
+    schema_version: decodeU32(field('schema_version')),
+    policy_id: decodeBytes32(field('policy_id')),
+    agent_id: decodeU64(field('agent_id')),
+    revision: decodeU64(field('revision')),
+    signer: decodeAddress(field('signer')),
+    provider: decodeAddress(field('provider')),
+    required_checks: decodeVec(field('required_checks'), 'check').map((kind) => decodeVariant(kind, CHECK_KINDS)),
+    max_assessment_age: decodeU64(field('max_assessment_age')),
+    max_risk_score: decodeU32(field('max_risk_score')),
+    assets: decodeVec(field('assets'), 'asset').map(decodeAssetLimit),
+    allowed_recipients: decodeVec(field('allowed_recipients'), 'recipient').map(decodeAddress),
+    blocked_recipients: decodeVec(field('blocked_recipients'), 'recipient').map(decodeAddress),
+    valid_after: decodeU64(field('valid_after')),
+    valid_until: decodeU64(field('valid_until')),
+    action_kinds: decodeVec(field('action_kinds'), 'action kind').map((kind) => decodeVariant(kind, ACTION_KINDS)),
+    service: decodeService(field('service')),
+  };
+  if (encodePolicy(policy).toXdr('hex') !== value.toXdr('hex')) throw new Error('Non-canonical Policy');
+  return policy;
+}
+
+export function encodePolicyState(state: PolicyState): xdr.ScVal {
+  return record({
+    policy_hash: bytes32(state.policy_hash),
+    revoked: bool(state.revoked),
+    next_sequence: u64(state.next_sequence),
+    utc_day: u64(state.utc_day),
+    daily_spend: vec(state.daily_spend.map(({ asset, amount }) => record({
+      asset: address(asset), amount: positiveAmount(amount),
+    }))),
+  });
+}
+
+/** Strict inverse of `encodePolicyState`. */
+export function decodePolicyState(value: xdr.ScVal): PolicyState {
+  const field = fields(value, ['daily_spend', 'next_sequence', 'policy_hash', 'revoked', 'utc_day'] as const,
+    'PolicyState');
+  const state: PolicyState = {
+    policy_hash: decodeBytes32(field('policy_hash')),
+    revoked: decodeBool(field('revoked')),
+    next_sequence: decodeU64(field('next_sequence')),
+    utc_day: decodeU64(field('utc_day')),
+    daily_spend: decodeVec(field('daily_spend'), 'spend').map((spend) => {
+      const entry = fields(spend, ['amount', 'asset'] as const, 'AssetSpend');
+      return { asset: decodeAddress(entry('asset')), amount: decodeAmount(entry('amount')) };
+    }),
+  };
+  if (encodePolicyState(state).toXdr('hex') !== value.toXdr('hex')) throw new Error('Non-canonical PolicyState');
+  return state;
+}
+
+/** Strict decoder for the wallet's `AuditHead`. */
+export function decodeAuditHead(value: xdr.ScVal): AuditHead {
+  const field = fields(value, ['hash', 'sequence'] as const, 'AuditHead');
+  return { sequence: decodeU64(field('sequence')), hash: decodeBytes32(field('hash')) };
+}
+
+/** Decodes a `Vec<BytesN<32>>`, such as the wallet's active policy hashes. */
+export function decodeHashList(value: xdr.ScVal): Hash32[] {
+  return decodeVec(value, 'hash').map(decodeBytes32);
+}
+
+const WALLET_ENCODERS: { [M in WalletMethod]: (args: WalletArgs[M]) => xdr.ScVal[] } = {
+  fund: (a) => [address(a.from), address(a.asset), positiveAmount(a.amount)],
+  withdraw: (a) => [address(a.asset), address(a.recipient), positiveAmount(a.amount)],
+  balance: (a) => [address(a.asset)],
+  approve_policy: (a) => [encodePolicy(a.policy)],
+  revoke_policy: (a) => [bytes32(a.policy_hash)],
+  replace_policy: (a) => [bytes32(a.old_policy_hash), encodePolicy(a.policy)],
+  pause: () => [],
+  resume: () => [],
+  execute: (a) => [encodeAction(a.request)],
+  owner: () => [],
+  agent_registry: () => [],
+  verification_registry: () => [],
+  paused: () => [],
+  policies: () => [],
+  policy: (a) => [bytes32(a.policy_hash)],
+  policy_state: (a) => [bytes32(a.policy_hash)],
+  audit_head: () => [],
+};
+
+/** Structural wallet argument XDR. Semantic prechecks live in `walletOperation`. */
+export function encodeWalletArgs<M extends WalletMethod>(method: M, args: WalletArgs[M]): xdr.ScVal[] {
+  if (!Object.hasOwn(WALLET_ENCODERS, method)) throw new Error('Unknown wallet method');
+  return WALLET_ENCODERS[method](args);
+}
+
+/** Constructor arguments `(owner, agent_registry, verification_registry)` for deploying a wallet. */
+export function encodeWalletConstructorArgs(
+  owner: string, agentRegistry: string, verificationRegistry: string,
+): xdr.ScVal[] {
+  if (!StrKey.isValidContract(agentRegistry) || !StrKey.isValidContract(verificationRegistry)) {
+    throw new Error('Expected agent and verification registry contract addresses');
+  }
+  return [address(owner), address(agentRegistry), address(verificationRegistry)];
 }
 
 export function encodeAction(request: ActionRequest): xdr.ScVal {

@@ -17,4 +17,8 @@ pub enum Error {
     PolicyDenied = 11,
     Paused = 12,
     ArithmeticOverflow = 13,
+    /// An asset contract refused a transfer the wallet requested, such as for an insufficient
+    /// balance or a missing trustline. Asset contracts number their own errors, so the wallet
+    /// reports this instead of letting an asset error code pass for one of its own.
+    TransferFailed = 14,
 }

@@ -1,8 +1,8 @@
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import {
-  Address, BASE_FEE, Networks, Operation, TransactionBuilder, hash, rpc,
-  type Keypair, type Transaction, type xdr,
+  Address, BASE_FEE, Networks, Operation, TransactionBuilder, hash, rpc, xdr,
+  type Keypair, type Transaction,
 } from '@stellar/stellar-sdk';
 import { expect } from 'vitest';
 import { loadConfig } from '../../../packages/sdk/src/config.js';
@@ -98,9 +98,25 @@ export async function localNetwork() {
     return { ...await submit(tx, simulation, source), simulation };
   }
 
-  /** Upload `wasm` and create one instance with `source` as deployer; returns the contract address. */
+  /**
+   * Install `wasm` unless its code is already on the ledger. Suites run in parallel and install the same contracts;
+   * when another suite's identical upload lands between simulation and inclusion, the racing upload can exceed its
+   * simulated budget and fail. That failure is harmless exactly when the code is then present.
+   */
+  async function upload(source: Keypair, wasm: Uint8Array) {
+    const key = xdr.LedgerKey.contractCode(new xdr.LedgerKeyContractCode({ hash: hash(wasm) }));
+    const installed = async () => (await server.getLedgerEntries(key)).entries.length > 0;
+    if (await installed()) return;
+    try {
+      await invoke(source, Operation.uploadContractWasm({ wasm }));
+    } catch (error) {
+      if (!(await installed())) throw error;
+    }
+  }
+
+  /** Install `wasm` if needed and create one instance with `source` as deployer; returns the contract address. */
   async function deploy(source: Keypair, wasm: Uint8Array, constructorArgs: xdr.ScVal[] = []) {
-    await invoke(source, Operation.uploadContractWasm({ wasm }));
+    await upload(source, wasm);
     const { confirmed } = await invoke(source, Operation.createCustomContract({
       address: Address.fromString(source.publicKey()), wasmHash: hash(wasm), salt: randomBytes(32), constructorArgs,
     }));
@@ -109,5 +125,5 @@ export async function localNetwork() {
 
   const latestLedger = async () => (await server.getLatestLedger()).sequence;
 
-  return { server, passphrase, fund, build, simulate, submit, invoke, deploy, latestLedger };
+  return { server, passphrase, fund, build, simulate, submit, invoke, upload, deploy, latestLedger };
 }

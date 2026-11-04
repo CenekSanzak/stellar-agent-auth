@@ -253,7 +253,7 @@ describe('verification registry on local Stellar', () => {
 
   it('deploys only with the admin constructor authorization and binds the agent registry', async () => {
     const wasm = readWasm('verification_registry');
-    await net.invoke(sponsor, Operation.uploadContractWasm({ wasm }));
+    await net.upload(sponsor, wasm);
     const deployment = (deployer: Keypair) => Operation.createCustomContract({
       address: Address.fromString(deployer.publicKey()), wasmHash: hash(wasm), salt: Buffer.alloc(32, 7),
       constructorArgs: encodeVerificationConstructorArgs(admin.publicKey(), agentRegistry),

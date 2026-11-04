@@ -59,6 +59,13 @@ impl Transfer {
 }
 
 impl Action {
+    pub fn kind(&self) -> ActionKind {
+        match self {
+            Self::Transfer(_) => ActionKind::Transfer,
+            Self::ServicePayment(_) => ActionKind::ServicePayment,
+        }
+    }
+
     pub(crate) fn validate_amount(&self) -> Result<(), Error> {
         match self {
             Self::Transfer(transfer) => transfer.validate_amount(),

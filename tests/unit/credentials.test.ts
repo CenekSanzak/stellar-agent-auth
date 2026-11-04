@@ -3,8 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { signActionAuthorization } from '../../packages/sdk/src/actions.js';
 import { signRegistryAuthorization } from '../../packages/sdk/src/agents.js';
 import { signingAddress } from '../../packages/sdk/src/credentials.js';
-import { encodeAction, encodeRegistryArgs, encodeVerificationArgs } from '../../packages/sdk/src/encoding.js';
+import {
+  encodeAction, encodeRegistryArgs, encodeVerificationArgs, encodeWalletArgs,
+} from '../../packages/sdk/src/encoding.js';
 import { signVerificationAuthorization } from '../../packages/sdk/src/verification.js';
+import { signFundingAuthorization, signWalletAuthorization } from '../../packages/sdk/src/wallet.js';
 import { action, contract, passphrase } from '../fixtures/abi-v1.js';
 
 /**
@@ -18,12 +21,14 @@ const latestLedger = 500;
 const expirationLedger = latestLedger + 20;
 const registry = contract(70);
 
-function invocation(contractId: string, method: string, args: xdr.ScVal[]) {
+function invocation(
+  contractId: string, method: string, args: xdr.ScVal[], subInvocations: xdr.SorobanAuthorizedInvocation[] = [],
+) {
   return new xdr.SorobanAuthorizedInvocation({
     function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(new xdr.InvokeContractArgs({
       contractAddress: Address.fromString(contractId).toScAddress(), functionName: method, args,
     })),
-    subInvocations: [],
+    subInvocations,
   });
 }
 
@@ -109,5 +114,31 @@ describe('native credential kinds', () => {
     await expect(signActionAuthorization({ ...input, entry: legacy })).resolves.toBeDefined();
     expectAddressBoundSignature(await signActionAuthorization({ ...input, entry: v2 }), root);
     await expect(signActionAuthorization({ ...input, entry: delegated })).rejects.toThrow('agent account');
+  });
+
+  it('signs wallet owner and funding entries of either kind and refuses delegation', async () => {
+    const wallet = contract(71);
+    const asset = contract(72);
+    const window = { networkPassphrase: passphrase, latestLedger, expirationLedger, signer: key };
+
+    const ownerArgs = { policy_hash: new Uint8Array(32).fill(3) };
+    const ownerRoot = invocation(wallet, 'revoke_policy', encodeWalletArgs('revoke_policy', ownerArgs));
+    const owner = entries(ownerRoot);
+    const ownerInput = {
+      contractId: wallet, method: 'revoke_policy' as const, args: ownerArgs, address: key.publicKey(), ...window,
+    };
+    expectAddressBoundSignature(await signWalletAuthorization({ ...ownerInput, entry: owner.v2 }), ownerRoot);
+    await expect(signWalletAuthorization({ ...ownerInput, entry: owner.delegated })).rejects.toThrow('signing account');
+
+    const fundArgs = { from: key.publicKey(), asset, amount: 5n };
+    const encoded = encodeWalletArgs('fund', fundArgs);
+    const fundRoot = invocation(wallet, 'fund', encoded, [invocation(asset, 'transfer', [
+      Address.fromString(key.publicKey()).toScVal(), Address.fromString(wallet).toScVal(), encoded[2]!,
+    ])]);
+    const funding = entries(fundRoot);
+    const fundInput = { contractId: wallet, args: fundArgs, ...window };
+    await expect(signFundingAuthorization({ ...fundInput, entry: funding.legacy })).resolves.toBeDefined();
+    expectAddressBoundSignature(await signFundingAuthorization({ ...fundInput, entry: funding.v2 }), fundRoot);
+    await expect(signFundingAuthorization({ ...fundInput, entry: funding.delegated })).rejects.toThrow('funding account');
   });
 });

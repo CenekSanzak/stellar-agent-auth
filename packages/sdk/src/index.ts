@@ -4,5 +4,7 @@ export * from './encoding.js';
 export { MAX_AUTH_WINDOW_LEDGERS, signActionAuthorization } from './actions.js';
 export * from './agents.js';
 export * from './verification.js';
+export * from './policies.js';
+export * from './wallet.js';
 export type { ContractRead } from './contract-call.js';
 export { signingAddress } from './credentials.js';
