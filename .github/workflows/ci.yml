@@ -23,9 +23,17 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: contract-wasm
-          path: target/wasm32v1-none/release/*.wasm
+          path: |
+            target/wasm32v1-none/release/*.wasm
+            !target/wasm32v1-none/release/stellar_agent_auth_probe.wasm
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: auth-probe-wasm
+          path: target/wasm32v1-none/release/stellar_agent_auth_probe.wasm
           if-no-files-found: error
   local-network:
+    needs: foundation
     timeout-minutes: 20
     runs-on: ubuntu-24.04
     steps:
@@ -35,6 +43,10 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci --ignore-scripts
+      - uses: actions/download-artifact@v4
+        with:
+          name: auth-probe-wasm
+          path: target/wasm32v1-none/release
       - run: npm run dev
       - run: npm run test:integration
       - if: failure()

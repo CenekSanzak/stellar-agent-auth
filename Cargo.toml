@@ -6,6 +6,7 @@ members = [
     "contracts/smart-wallet",
     "contracts/demo-service",
     "contracts/shared-types",
+    "tests/contracts/auth-probe",
 ]
 
 [workspace.package]

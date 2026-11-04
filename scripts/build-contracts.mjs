@@ -6,7 +6,7 @@ if (version.status !== 0 || !/stellar 30\.0\.1(?:\s|$)/.test(version.stdout)) {
 }
 const result = spawnSync('stellar', ['contract', 'build', '--locked'], { stdio: 'inherit' });
 if (result.status !== 0) process.exit(result.status ?? 1);
-for (const name of ['agent_registry', 'verification_registry', 'smart_wallet', 'demo_service']) {
+for (const name of ['agent_registry', 'verification_registry', 'smart_wallet', 'demo_service', 'probe']) {
   const path = `target/wasm32v1-none/release/stellar_agent_auth_${name}.wasm`;
   if (statSync(path).size === 0) throw new Error(`Empty WASM: ${path}`);
 }

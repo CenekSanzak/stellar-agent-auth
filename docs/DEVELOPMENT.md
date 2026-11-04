@@ -1,6 +1,6 @@
 # Development
 
-P0 supplies the build/test environment, network configuration and a non-economic contract probe. Registries, spending policies, signing workflows, services and the UI remain unimplemented. Passing P0 does not establish payment safety.
+P0 supplies the build and test environment. P1 adds the v1 contract ABI, hash vectors and a local fixture that verifies native authorization and a sponsor-paid transfer. The full registry and wallet flows arrive in P2–P4.
 
 ## Pinned environment
 
@@ -31,13 +31,14 @@ cargo install stellar-cli --version 30.0.1 --locked
 npm run check
 ```
 
-Alternatively install the matching Stellar CLI release binary for your OS/architecture. `npm run build:contracts` rejects a different CLI version. Contract compilation uses `stellar contract build`, which applies the SDK's required WASM processing. The build creates four WASM files under target/wasm32v1-none/release; only demo-service currently exposes a callable probe. shared-types remains a library.
+Alternatively install the matching Stellar CLI release binary for your OS/architecture. `npm run build:contracts` rejects a different CLI version. Contract compilation uses `stellar contract build`, which applies the SDK's required WASM processing. The build creates the four application WASM files plus the local-only auth probe under `target/wasm32v1-none/release`. The shared types remain a library.
 
 `npm run check` typechecks source, deployments and tests; builds all TS workspaces; runs fast TS tests; runs Rust check, format, clippy and non-empty tests; and builds WASM. Fast checks need no network credentials. Rust and Node dependencies must be downloaded once.
 
 ## Local network
 
 ```sh
+npm run build:contracts
 npm run dev
 npm run test:integration
 npm run local:down
@@ -45,7 +46,7 @@ npm run local:down
 
 `dev` starts an isolated protocol-29 Quickstart and waits for matching RPC metadata. It does not start the future application. Port 8000 binds only to loopback. The network is ephemeral: `local:down` removes its state. Do not use it to retain deployment evidence.
 
-Docker must be running. If startup fails, use `docker compose ps` and `docker compose logs`. P0's local suite checks actual RPC health, protocol and passphrase. Real signed registration/payment tests arrive in P1-P5. Existing planned scenarios use `.planned.ts` until executable tests replace them; Vitest searches the integration/adversarial directories for `.test.ts` files and fails on empty suites.
+Docker must be running. If startup fails, use `docker compose ps` and `docker compose logs`. The local suite checks RPC health and protocol, deploys the Phase 1 fixture with ephemeral accounts, exercises real agent and sponsor signatures and checks a native token transfer and audit event. Existing planned scenarios use `.planned.ts` until executable tests replace them; Vitest searches the integration/adversarial directories for `.test.ts` files and fails on empty suites.
 
 ## Configuration
 
@@ -63,10 +64,10 @@ This is a read-only network compatibility preflight. It is excluded from require
 
 ## Test layout
 
-- `tests/unit`: deterministic configuration tests; SDK/service colocated tests also belong to the unit project.
+- `tests/unit`: deterministic configuration and ABI tests; SDK/service colocated tests also belong to the unit project.
 - `tests/local`, `tests/integration`, `tests/adversarial`: local-network suites, with explicit execution.
 - `tests/testnet`: opt-in public Testnet preflight.
 - Rust contract tests: native Soroban host dispatch; the wrapper rejects zero discovered tests.
 - `tests/fixtures`: public fixtures only; generate private test keys at runtime.
 
-CI has independent foundation and Docker local-network jobs. It retains built WASM as artifacts. GitHub Actions run only when the owner later pushes these files; implementing the workflow does not run remote CI or create a commit.
+CI builds WASM in the foundation job. The Docker local-network job downloads the separate auth probe artifact for integration tests.

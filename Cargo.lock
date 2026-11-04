@@ -1756,6 +1756,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "stellar-agent-auth-probe"
+version = "0.0.0"
+dependencies = [
+ "soroban-sdk",
+ "stellar-agent-auth-shared-types",
+]
+
+[[package]]
 name = "stellar-agent-auth-shared-types"
 version = "0.0.0"
 dependencies = [

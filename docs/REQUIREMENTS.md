@@ -1,6 +1,6 @@
 # Requirements and evidence ledger
 
-Status: P0 infrastructure implemented; domain acceptance remains pending. Do not mark a milestone complete because its scaffold builds.
+P0 infrastructure and the P1 ABI and authorization gate are implemented. Product acceptance remains tied to the registry, wallet and SDK flows below.
 
 | Source requirement | Acceptance IDs | Evidence required | Implementation phase |
 | --- | --- | --- | --- |
@@ -63,3 +63,8 @@ See [the local validation record](P0_VALIDATION.md) for commands, results and li
 - F07: CI scripts reject empty test suites, and public network availability is excluded from required checks.
 
 The included local SOW is a source document, not a public deployment artifact. The full scope and relative-day schedule are in IMPLEMENTATION_PLAN.md. No P0 test substitutes for A01-A30.
+
+
+## P1 evidence
+
+The [Phase 1 validation record](P1_VALIDATION.md) covers matching Rust/TypeScript vectors, constructor authorization, a confirmed transfer and the signed mutation matrix. This supports the authorization portions of A10–A13 and the ABI and resource portions of A23. The product wallet and registry acceptance cases still require their production paths.

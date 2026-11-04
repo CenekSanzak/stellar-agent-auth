@@ -1,0 +1,12 @@
+[package]
+name = "stellar-agent-auth-probe"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+soroban-sdk.workspace = true
+stellar-agent-auth-shared-types.workspace = true

@@ -1,12 +1,14 @@
 #![no_std]
 
-//! Shared contract types and errors.
-//! Placeholder only; no contract entry points are implemented.
+//! Versioned contract ABI shared by registries, wallets, and SDK clients.
 
+pub mod action;
+pub mod attestation;
+pub mod audit;
+pub mod encoding;
+pub mod errors;
+pub mod events;
 pub mod identity;
-
 pub mod policy;
 
-pub mod attestation;
-
-pub mod errors;
+pub const SCHEMA_VERSION: u32 = 1;
