@@ -2,6 +2,7 @@ import {
   Account, Address, BASE_FEE, StrKey, TransactionBuilder, authorizeEntry, rpc, type xdr,
 } from '@stellar/stellar-sdk';
 import { assertAuthWindow } from './actions.js';
+import { signingAddress } from './credentials.js';
 import { CONTRACT_ERRORS, type ContractErrorName } from './types.js';
 
 /** Shared plumbing for the registry clients: read simulation and pre-signing authorization checks. */
@@ -76,9 +77,7 @@ export async function signInvocation(input: InvocationAuthorization): Promise<xd
   } = input;
   assertAuthWindow(latestLedger, expirationLedger);
 
-  const credentials = entry.credentials;
-  if (!StrKey.isValidEd25519PublicKey(address) || credentials.type !== 'sorobanCredentialsAddress'
-    || Address.fromScAddress(credentials.address.address).toString() !== address) {
+  if (!StrKey.isValidEd25519PublicKey(address) || signingAddress(entry) !== address) {
     throw new Error('Expected native authorization for the signing account');
   }
   const root = entry.rootInvocation;

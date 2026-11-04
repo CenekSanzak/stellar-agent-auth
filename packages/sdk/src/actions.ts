@@ -1,4 +1,5 @@
 import { Address, StrKey, authorizeEntry, type xdr } from '@stellar/stellar-sdk';
+import { signingAddress } from './credentials.js';
 import { encodeAction } from './encoding.js';
 import type { ActionRequest } from './types.js';
 
@@ -28,9 +29,7 @@ export async function signActionAuthorization(input: ActionAuthorization): Promi
   const { entry, request, agentAddress, networkPassphrase, latestLedger, expirationLedger, signer } = input;
   assertAuthWindow(latestLedger, expirationLedger);
 
-  const credentials = entry.credentials;
-  if (!StrKey.isValidEd25519PublicKey(agentAddress) || credentials.type !== 'sorobanCredentialsAddress'
-    || Address.fromScAddress(credentials.address.address).toString() !== agentAddress) {
+  if (!StrKey.isValidEd25519PublicKey(agentAddress) || signingAddress(entry) !== agentAddress) {
     throw new Error('Expected native authorization for the agent account');
   }
   const root = entry.rootInvocation;

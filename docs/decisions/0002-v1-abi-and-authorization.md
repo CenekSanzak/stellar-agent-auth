@@ -28,7 +28,7 @@ Use `u64` for application sequences, agent IDs, revisions and Unix seconds, and 
 ## Signing and execution
 
 1. Build `wallet.execute(request)` using the sponsor as the transaction source. Simulate in recording mode to obtain the native agent authorization entry.
-2. Before signing, match the account credential, wallet address, `execute` method, single encoded argument and empty list of child invocations against the expected transfer. Sign the authorization entry using the configured network passphrase. The SDK caps its validity at 20 ledgers beyond the observed ledger.
+2. Before signing, match the account credential (legacy `Address` or CAP-71 `AddressV2`, which binds the address into the preimage; delegated credentials are refused), wallet address, `execute` method, single encoded argument and empty list of child invocations against the expected transfer. Sign the authorization entry using the configured network passphrase. The SDK caps its validity at 20 ledgers beyond the observed ledger.
 3. Attach the agent entry, simulate with authorization enforcement to obtain the footprint and resource fee, then have the sponsor sign and submit the transaction envelope. The sponsor pays the fee as the transaction source. A separate fee-bump envelope is unnecessary for this flow.
 4. Confirm the transaction by hash. The host uses the signed entry's nonce and expiration ledger to guard replay. The expiration ledger is inclusive. The wallet independently uses the next policy sequence and an exclusive Unix timestamp deadline. Policy validity uses `valid_after <= ledger_time < valid_until`.
 
