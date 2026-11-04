@@ -19,7 +19,7 @@ import {
 } from '@stellar/stellar-sdk';
 import {
   decodeIdentity, encodeRegistryArgs, encodeVerificationConstructorArgs, loadConfig, readProvider, registryOperation,
-  signRegistryAuthorization, verificationOperation, MAX_AUTH_WINDOW_LEDGERS,
+  signRegistryAuthorization, signingAddress, verificationOperation, MAX_AUTH_WINDOW_LEDGERS,
 } from '@stellar-agent-auth/sdk';
 import { ReportStore, assess, safeFetch } from '@stellar-agent-auth/verifier';
 
@@ -59,17 +59,18 @@ const save = (record: Checkpoint) => writeFile(RECORD, `${JSON.stringify(record,
 /** An owner-only local key for `role`, generated and Friendbot-funded on first use. */
 async function role(record: Checkpoint, name: string): Promise<Keypair> {
   const path = new URL(`${name}.key`, KEYS);
+  let key: Keypair;
   try {
-    return Keypair.fromSecret((await readFile(path, 'utf8')).trim());
+    key = Keypair.fromSecret((await readFile(path, 'utf8')).trim());
   } catch {
-    const key = Keypair.random();
+    key = Keypair.random();
     await mkdir(KEYS, { recursive: true });
     await writeFile(path, `${key.secret()}\n`, { mode: 0o600 });
     await chmod(path, 0o600);
     await server.requestAirdrop(key.publicKey());
-    record.roles[name] = key.publicKey();
-    return key;
   }
+  record.roles[name] = key.publicKey();
+  return key;
 }
 
 async function submit(record: Checkpoint, step: string, source: Keypair, operation: xdr.Operation) {
@@ -137,8 +138,9 @@ async function register(record: Checkpoint, metadataUri: string) {
     .addOperation(registryOperation(contractId, 'register', args)).setTimeout(120).build();
   const recording = await server.simulateTransaction(draft);
   if (!rpc.Api.isSimulationSuccess(recording) || !recording.result) throw new Error('Registration simulation failed');
-  // The controller authorizes as transaction source; the signer proves control with its own entry.
-  const auth = await Promise.all(recording.result.auth.map((entry) => entry.credentials.type === 'sorobanCredentialsAddress'
+  // The controller authorizes as transaction source; the signer proves control with its own entry, which Testnet
+  // RPC records as CAP-71 address-bound credentials.
+  const auth = await Promise.all(recording.result.auth.map((entry) => signingAddress(entry) !== undefined
     ? signRegistryAuthorization({
       entry, contractId, method: 'register', args, address: signer.publicKey(), networkPassphrase: config.passphrase,
       latestLedger: recording.latestLedger, expirationLedger: recording.latestLedger + MAX_AUTH_WINDOW_LEDGERS, signer,

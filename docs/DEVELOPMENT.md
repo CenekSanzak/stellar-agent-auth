@@ -14,7 +14,7 @@ P0 supplies the build and test environment. P1 adds the v1 contract ABI, hash ve
 | TypeScript / Vitest | 5.9.3 / 5.1.0 |
 | Quickstart | Immutable digest in compose.yaml; local protocol explicitly set to 29 |
 
-Testnet reported protocol 29 during P0 version selection. The Rust SDK's published minimum Rust version is 1.91; the pinned compiler exceeds it. Dependencies are locked in Cargo.lock and package-lock.json. Revalidate network compatibility before deployment; a future Testnet upgrade does not automatically change the local baseline.
+Testnet reported protocol 29 during P0 version selection and protocol 30 at the P3 checkpoint. The contracts built on soroban-sdk 29 deploy and run on it. Its RPC records CAP-71 `AddressV2` credentials, which the SDK signs; the local baseline stays at 29 until a deliberate upgrade. The Rust SDK's published minimum Rust version is 1.91; the pinned compiler exceeds it. Dependencies are locked in Cargo.lock and package-lock.json. Revalidate network compatibility before deployment; a future Testnet upgrade does not automatically change the local baseline.
 
 Sources: [Soroban build requirements](https://github.com/stellar/rs-soroban-sdk), [CLI releases](https://github.com/stellar/stellar-cli/releases), [Quickstart options](https://github.com/stellar/quickstart). P0 installs no private signing keys and deploys nothing.
 

@@ -8,7 +8,7 @@ On 2026-11-04, `npm run check` passed:
 
 The typecheck, Rust format check and clippy with warnings denied also passed. On a freshly started protocol 29 Quickstart, the local suite passed 24 tests in four files: 12 verification registry tests plus the P1 and P2 suites. A second run on a new network also passed all 24.
 
-To reproduce, run `npm run check` and start the network with `npm run dev`. Then run `npm run test:integration -- --disableConsoleIntercept` to print the resource measurements, and remove the network with `npm run local:down`. Every role key is generated at runtime and funded by the local Friendbot: admin, live provider, fixture provider, controller, agent signer, sponsor and attacker. No key material is committed. Nothing was deployed to a public network.
+To reproduce, run `npm run check` and start the network with `npm run dev`. Then run `npm run test:integration -- --disableConsoleIntercept` to print the resource measurements, and remove the network with `npm run local:down`. Every role key is generated at runtime and funded by the local Friendbot: admin, live provider, fixture provider, controller, agent signer, sponsor and attacker. No key material is committed. The local runs deploy nothing to a public network; the Testnet checkpoint is described below.
 
 The validated tree is uncommitted P3 work on top of 5e91f1e. The verification registry WASM is 16,352 bytes, with SHA-256 `8a5a342b6bd48fb1d0953fe88ff0dd0864c54eff1a59ce3f9a774db503c91c02`. It exports the ten entry points and constructor in [ADR 0004](decisions/0004-verification-registry.md). The agent registry WASM is now 8,632 bytes, with SHA-256 `1acf5293f85810204aa4153f5701406523d7d8e1dd77e0957c7b4b19cf4bb8aa`. That is one byte smaller than in P2, because the account check moved into shared-types; its 14 host tests and 10 local tests pass unchanged.
 
@@ -117,10 +117,41 @@ The values are simulated resource declarations and committed event XDR lengths, 
 
 The measured publication is the first by a provider for a new revision, so it creates its result entry. `check`, `revoke`, provider calls and Testnet fees were not measured.
 
+## Testnet checkpoint
+
+On 2026-11-04, `deployments/testnet/checkpoint.ts` ran the P3 gate's development checkpoint on Testnet, which reported protocol 30. The whole run, contract IDs, transactions, WASM hashes and the assessment, is recorded in [`p3-checkpoint.json`](../deployments/testnet/p3-checkpoint.json). The WASM hashes match the local build above.
+
+| Step | Transaction |
+| --- | --- |
+| Upload and deploy the agent registry `CBQ2URTR67ILCZYLJKPLCLZ5PBXFWVD5FCQSVW6TX6B4DPFUPFTZP5JL` | [upload](https://stellar.expert/explorer/testnet/tx/5a2fd0b11c69c2c882ab6997a2b1b2136b972601d943ed20621a153354445893), [deploy](https://stellar.expert/explorer/testnet/tx/c9317a7e74d8e7596560d369015a2d7c2774c45ec30a37a73b60a356498ed236) |
+| Upload and deploy the verification registry `CA24ELDWDJOJNDG3ALQLOQQUXBDALS7PSJQROMWGWR25R46KJEJZJ6VY` with the admin's constructor authorization | [upload](https://stellar.expert/explorer/testnet/tx/87b6425288865b3b167c03f6d6e0966c92e7419c9d92b0d1236a71c2a61de20c), [deploy](https://stellar.expert/explorer/testnet/tx/ab7f7dae73fd2f0aa89550fb6d2b203fb1b7e95d8f11ccf50ce9d2accb780059) |
+| Approve the live provider `GAJQD7OYQ7TL2WW26QSISEULCIYVIDRBOFM2EXDZFELD6UQDNFPQ74VY` | [approve](https://stellar.expert/explorer/testnet/tx/645f3c247b83c19349fa33878e6520a94f5a7c35238701c1910cd1c1f410486b) |
+| Register agent 1, revision 1, with controller and signer authorization | [register](https://stellar.expert/explorer/testnet/tx/39284ba60c80929600bb73549c1a2bb629a4156e08dca3b33bfe6d8a84f07c39) |
+| Publish the limited assessment, sequence 1 | [publish](https://stellar.expert/explorer/testnet/tx/203252458af7b9cddb3fb3092c39c52130e26d5d6a269cc5fc78441a6bed57cf) |
+
+- **Metadata:** the agent's metadata is [`agent-metadata.json`](../deployments/testnet/agent-metadata.json), registered by its raw URL pinned to commit a5e6b4b, so the served bytes cannot change. Its SHA-256 is `758b655a35a4c82170fe125bb7ccba6b8a86a43293bbb6cd4d38495984686b79`.
+- **A live run:** the verifier fetched the metadata over real HTTPS, matched the hash and parsed the document. It probed the declared endpoint, the project's GitHub page, which answered HTTP 200 over TLS 1.3. This was the first exercise of the real `nodeTransport`.
+- **Results:**
+  - metadata, endpoint and signer account `Passed`;
+  - signer history `Inconclusive`, because the account was minutes old;
+  - code, media, threat feed and token `Unsupported`;
+  - risk 0, valid for 24 hours.
+- **Report:** the report is committed as [`reports/83abc79e….json`](../deployments/testnet/reports/83abc79eccaa19f2517cb4a107f156eb1397a69f25afc2ab2c1f26db7588ed76.json), and its SHA-256 equals the published evidence hash.
+- **Readback:** all seven transactions reported `SUCCESS`, and a separate read from Testnet matched the record:
+  - the admin and agent registry bindings;
+  - the live provider record;
+  - the identity's controller, signer and metadata hash;
+  - `current` with the evidence hash;
+  - `check` passing for metadata, endpoint and signer account at risk 0, and `VerificationDenied` when a threat-feed check is required.
+
+Testnet RPC records the signer's entry with CAP-71 `AddressV2` credentials, which bind the address into the signed payload; the local protocol 29 Quickstart records legacy `Address` credentials. The first registration attempt failed in simulation because the SDK's signature validators accepted only the legacy kind, so the entry went unsigned. Nothing was submitted. The SDK now validates and signs both kinds through `signingAddress`, still refusing delegated credentials; `tests/unit/credentials.test.ts` checks each signer against the address-bound preimage. The local suite still runs only legacy credentials until the local baseline moves to protocol 30.
+
+The roles' keys are owner-only files in the git-ignored `.local/testnet/` and were funded by the Testnet Friendbot. The checkpoint is a development record, not the final P8 deployment.
+
 ## Limits
 
-- **No Testnet checkpoint yet.** The P3 gate's initial Testnet registration and real limited assessment have not been run. `deployments/testnet/checkpoint.ts` performs them once metadata is hosted at a public HTTPS URL and a Testnet deployment is approved.
-- **Network calls are simulated locally.** The local flow serves metadata and endpoint answers through an in-process transport, because the network cannot reach a public host. `nodeTransport`, the real `node:https` path with address pinning, SNI and TLS error mapping, has not been exercised against a live server.
+- **Local network calls are simulated.** The local flow serves metadata and endpoint answers through an in-process transport. The real `nodeTransport` succeeded once on Testnet, but its rejection paths (TLS errors, oversized bodies) are covered only through the injected transport.
+- **Protocol mismatch:** Testnet runs protocol 30 and the local baseline protocol 29, so the local suite does not cover `AddressV2` credentials. The checkpoint shows the SDK 29 contracts work on protocol 30.
 - **Rejections are simulations.** As in P1 and P2, rejections are full-check simulations against the live ledger, not failed submitted transactions.
 - **Host tests do not enforce constructor authorization.** `env.register` skips that enforcement, so the host test asserts the recorded requirement and the local flow shows the enforcement.
 - **A02 is complete for verification only.** Already signed old-policy requests need P4.

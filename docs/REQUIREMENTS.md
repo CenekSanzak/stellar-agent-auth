@@ -1,6 +1,6 @@
 # Requirements and evidence ledger
 
-P0 infrastructure, the P1 ABI and authorization gate, the P2 agent registry and the P3 verification registry and limited verifier are implemented and validated locally. The P3 Testnet checkpoint is still open. Product acceptance remains tied to the verification, wallet and SDK flows below.
+P0 infrastructure, the P1 ABI and authorization gate, the P2 agent registry and the P3 verification registry and limited verifier are implemented and validated locally. The P3 Testnet checkpoint has run. Product acceptance remains tied to the verification, wallet and SDK flows below.
 
 | Source requirement | Acceptance IDs | Evidence required | Implementation phase |
 | --- | --- | --- | --- |
@@ -86,4 +86,4 @@ The [Phase 3 validation record](P3_VALIDATION.md) covers the verification regist
 - A25: the metadata hash is checked before parsing. Redirects, private and special addresses, DNS rebinding, timeouts and oversized bodies are rejected in unit tests with an injected transport; the real HTTPS transport is not yet exercised against a live server.
 - A23: the result encoding round-trips strictly, and an eight-check publication fits the network limits.
 
-SOW deliverable 1 still needs the Testnet checkpoint: an initial registration and real limited assessment with recorded IDs and transaction links, which `deployments/testnet/checkpoint.ts` performs.
+The Testnet checkpoint for SOW deliverable 1 is done: one registration and one real limited assessment, read back with recorded IDs and transaction links ([record](../deployments/testnet/p3-checkpoint.json)). It is a development checkpoint; A29's final deployment evidence belongs to P8.

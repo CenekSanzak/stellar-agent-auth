@@ -1,0 +1,118 @@
+{
+  "network": "testnet",
+  "network_passphrase": "Test SDF Network ; September 2015",
+  "roles": {
+    "admin": "GBIZ72UNAZEY2NLHWUOBW3FPCYWJANXL2UXEQ7UNZ4EHHCSU35AN56P6",
+    "provider": "GAJQD7OYQ7TL2WW26QSISEULCIYVIDRBOFM2EXDZFELD6UQDNFPQ74VY",
+    "controller": "GB5GU7VS243ATR7T2I2ELAADOF66TDRUW565CHPSUYOPT5KCA4J6X65A",
+    "agent_signer": "GAUGO5NHFILW3XPNLCURKIRPOZDJPNI6LLRYDHSKZVXBKGR2ZZPCPVZY"
+  },
+  "transactions": [
+    {
+      "step": "upload agent_registry",
+      "hash": "5a2fd0b11c69c2c882ab6997a2b1b2136b972601d943ed20621a153354445893",
+      "ledger": 5555396,
+      "link": "https://stellar.expert/explorer/testnet/tx/5a2fd0b11c69c2c882ab6997a2b1b2136b972601d943ed20621a153354445893"
+    },
+    {
+      "step": "deploy agent_registry",
+      "hash": "c9317a7e74d8e7596560d369015a2d7c2774c45ec30a37a73b60a356498ed236",
+      "ledger": 5555397,
+      "link": "https://stellar.expert/explorer/testnet/tx/c9317a7e74d8e7596560d369015a2d7c2774c45ec30a37a73b60a356498ed236"
+    },
+    {
+      "step": "upload verification_registry",
+      "hash": "87b6425288865b3b167c03f6d6e0966c92e7419c9d92b0d1236a71c2a61de20c",
+      "ledger": 5555399,
+      "link": "https://stellar.expert/explorer/testnet/tx/87b6425288865b3b167c03f6d6e0966c92e7419c9d92b0d1236a71c2a61de20c"
+    },
+    {
+      "step": "deploy verification_registry",
+      "hash": "ab7f7dae73fd2f0aa89550fb6d2b203fb1b7e95d8f11ccf50ce9d2accb780059",
+      "ledger": 5555402,
+      "link": "https://stellar.expert/explorer/testnet/tx/ab7f7dae73fd2f0aa89550fb6d2b203fb1b7e95d8f11ccf50ce9d2accb780059"
+    },
+    {
+      "step": "approve live provider",
+      "hash": "645f3c247b83c19349fa33878e6520a94f5a7c35238701c1910cd1c1f410486b",
+      "ledger": 5555405,
+      "link": "https://stellar.expert/explorer/testnet/tx/645f3c247b83c19349fa33878e6520a94f5a7c35238701c1910cd1c1f410486b"
+    },
+    {
+      "step": "register agent",
+      "hash": "39284ba60c80929600bb73549c1a2bb629a4156e08dca3b33bfe6d8a84f07c39",
+      "ledger": 5555458,
+      "link": "https://stellar.expert/explorer/testnet/tx/39284ba60c80929600bb73549c1a2bb629a4156e08dca3b33bfe6d8a84f07c39"
+    },
+    {
+      "step": "publish assessment",
+      "hash": "203252458af7b9cddb3fb3092c39c52130e26d5d6a269cc5fc78441a6bed57cf",
+      "ledger": 5555467,
+      "link": "https://stellar.expert/explorer/testnet/tx/203252458af7b9cddb3fb3092c39c52130e26d5d6a269cc5fc78441a6bed57cf"
+    }
+  ],
+  "protocol_version": 30,
+  "wasm_sha256": {
+    "agent_registry": "1acf5293f85810204aa4153f5701406523d7d8e1dd77e0957c7b4b19cf4bb8aa",
+    "verification_registry": "8a5a342b6bd48fb1d0953fe88ff0dd0864c54eff1a59ce3f9a774db503c91c02"
+  },
+  "contracts": {
+    "agent_registry": "CBQ2URTR67ILCZYLJKPLCLZ5PBXFWVD5FCQSVW6TX6B4DPFUPFTZP5JL",
+    "verification_registry": "CA24ELDWDJOJNDG3ALQLOQQUXBDALS7PSJQROMWGWR25R46KJEJZJ6VY"
+  },
+  "agent": {
+    "agent_id": "1",
+    "revision": "1",
+    "metadata_uri": "https://raw.githubusercontent.com/CenekSanzak/stellar-agent-auth/a5e6b4bd45afa4f6ee2b852d31ed68fc527a5694/deployments/testnet/agent-metadata.json",
+    "metadata_sha256": "758b655a35a4c82170fe125bb7ccba6b8a86a43293bbb6cd4d38495984686b79"
+  },
+  "assessment": {
+    "sequence": "1",
+    "risk_score": 0,
+    "evidence_hash": "83abc79eccaa19f2517cb4a107f156eb1397a69f25afc2ab2c1f26db7588ed76",
+    "issued_at": "1793800950",
+    "expires_at": "1793887350",
+    "checks": [
+      {
+        "kind": "Code",
+        "outcome": "Unsupported",
+        "score": null
+      },
+      {
+        "kind": "Endpoint",
+        "outcome": "Passed",
+        "score": 0
+      },
+      {
+        "kind": "Media",
+        "outcome": "Unsupported",
+        "score": null
+      },
+      {
+        "kind": "Metadata",
+        "outcome": "Passed",
+        "score": 0
+      },
+      {
+        "kind": "SignerAccount",
+        "outcome": "Passed",
+        "score": 0
+      },
+      {
+        "kind": "SignerHistory",
+        "outcome": "Inconclusive",
+        "score": null
+      },
+      {
+        "kind": "ThreatFeed",
+        "outcome": "Unsupported",
+        "score": null
+      },
+      {
+        "kind": "Token",
+        "outcome": "Unsupported",
+        "score": null
+      }
+    ]
+  }
+}
