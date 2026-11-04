@@ -87,7 +87,11 @@ impl AgentRegistry {
         commit(&env, identity)
     }
 
-    pub fn disable(env: Env, agent_id: u64, expected_revision: u64) -> Result<AgentIdentity, Error> {
+    pub fn disable(
+        env: Env,
+        agent_id: u64,
+        expected_revision: u64,
+    ) -> Result<AgentIdentity, Error> {
         let mut identity = controlled(&env, agent_id)?;
         identity::check_revision(&identity, expected_revision)?;
         identity::set_disabled(&mut identity, true)?;

@@ -15,10 +15,14 @@ fn metadata_validation_matches_the_v1_rules() {
     let env = Env::default();
     let hash = BytesN::from_array(&env, &[7; 32]);
     let zero = BytesN::from_array(&env, &[0; 32]);
-    let check = |uri: &[u8], hash: &BytesN<32>| validate_metadata(&String::from_bytes(&env, uri), hash);
+    let check =
+        |uri: &[u8], hash: &BytesN<32>| validate_metadata(&String::from_bytes(&env, uri), hash);
 
     assert_eq!(check(b"https://a", &hash), Ok(()));
-    assert_eq!(check(b"https://example.com/agent.json?v=1#~", &hash), Ok(()));
+    assert_eq!(
+        check(b"https://example.com/agent.json?v=1#~", &hash),
+        Ok(())
+    );
     assert_eq!(
         validate_metadata(&uri_of_len(&env, MAX_METADATA_URI_BYTES), &hash),
         Ok(())
