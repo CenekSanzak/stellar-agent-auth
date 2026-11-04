@@ -18,9 +18,21 @@ export function successfulSimulation(response: rpc.Api.SimulateTransactionRespon
   return { ...response, result: response.result };
 }
 
-/** A host credential failure, as opposed to a contract, budget or encoding error. */
-export function assertAuthFailure(simulation: rpc.Api.SimulateTransactionResponse, label: string) {
-  expect(simulation, label).toHaveProperty('error', expect.stringMatching(/Error\(Auth,/));
+/** Host auth failures by cause: the leading host error and the diagnostic that names the failing address. */
+const AUTH_FAILURES = {
+  missing: ['InvalidAction', 'Unauthorized function call for address'],
+  forged: ['InvalidAction', 'failed account authentication with error'],
+  replayed: ['ExistingValue', 'nonce already exists for address'],
+} as const;
+
+/** A host credential failure of `kind` for `address`, as opposed to an expiry, contract, budget or other error. */
+export function assertAuthFailure(
+  simulation: rpc.Api.SimulateTransactionResponse, kind: keyof typeof AUTH_FAILURES, address: string, label: string,
+) {
+  const [code, diagnostic] = AUTH_FAILURES[kind];
+  const error = 'error' in simulation ? simulation.error : 'success';
+  expect(error, label).toMatch(new RegExp(`^HostError: Error\\(Auth, ${code}\\)`));
+  expect(error, label).toContain(`"${diagnostic}", ${address}`);
 }
 
 export function returnValue(result: Confirmed) {

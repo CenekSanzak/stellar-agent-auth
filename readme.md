@@ -4,7 +4,7 @@ An AI agent needs to pay for data or API services without asking its owner to si
 
 The demo will reproduce this scenario on Stellar Testnet using a clearly identified test asset. It will show a successful payment and rejected requests that exceed the budget, use an unapproved recipient, or arrive after revocation. This gives agent developers a concrete example they can integrate through the SDK.
 
-**Current status:** P1 adds the shared v1 contract types, canonical hashes and a local probe for agent authorization and sponsored transfers. Registry and wallet implementation follow in P2–P4. See [development setup](docs/DEVELOPMENT.md) and [requirements](docs/REQUIREMENTS.md).
+**Current status:** P2 adds the agent registry: controllers register agents, update metadata, rotate signers and disable or reactivate agents, tested with real signatures on a local network. It builds on P1's shared contract types, canonical hashes and authorization probe. The verification registry and wallet follow in P3–P4. See [development setup](docs/DEVELOPMENT.md) and [requirements](docs/REQUIREMENTS.md).
 
 ## Background
 

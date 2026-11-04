@@ -47,6 +47,9 @@ pub fn set_metadata(
 }
 
 pub fn set_signer(env: &Env, identity: &mut AgentIdentity, signer: Address) -> Result<(), Error> {
+    if signer == identity.controller {
+        return Err(Error::InvalidInput);
+    }
     require_account(env, &signer)?;
     if identity.signer == signer {
         return Err(Error::Duplicate);

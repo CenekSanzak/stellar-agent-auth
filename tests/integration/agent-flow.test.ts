@@ -99,6 +99,11 @@ async function signedByHand<M extends RegistryAuthMethod>(method: M, args: Regis
   }), ledger, method, args, key)));
 }
 
+/** Leaves a ledger of margin so an entry signed to expire at `expirationLedger` is live when the next call simulates. */
+async function expectUnexpired(expirationLedger: number) {
+  expect(await net.latestLedger() + 2).toBeLessThanOrEqual(expirationLedger);
+}
+
 function expectContractError(simulation: rpc.Api.SimulateTransactionResponse, code: ContractErrorName, label: string) {
   expect('error' in simulation ? contractErrorName(simulation.error) : 'success', label).toBe(code);
 }
@@ -194,8 +199,9 @@ describe('agent registry on local Stellar', () => {
   }, TIMEOUT);
 
   it('rejects reuse of a confirmed registration authorization', async () => {
-    expect(await net.latestLedger()).toBeLessThanOrEqual(registration.expirationLedger);
-    assertAuthFailure(await enforce('register', registration.args, registration.auth), 'replayed registration');
+    await expectUnexpired(registration.expirationLedger);
+    const replay = await enforce('register', registration.args, registration.auth);
+    assertAuthFailure(replay, 'replayed', controller.publicKey(), 'replayed registration');
     expect(await readAgentCount(read)).toBe(1n);
   }, TIMEOUT);
 
@@ -207,13 +213,18 @@ describe('agent registry on local Stellar', () => {
     const controllerAuth = await sign(controllerEntry!, at, 'register', args, controller);
     const signerAuth = await sign(signerEntry!, at, 'register', args, signer);
     const forgedSigner = await sign(signerEntry!, at, 'register', args, controller, signer.publicKey());
-    assertAuthFailure(await enforce('register', args, [controllerAuth]), 'no signer proof');
-    assertAuthFailure(await enforce('register', args, [controllerAuth, forgedSigner]), 'signer entry signed by controller key');
-    assertAuthFailure(await enforce('register', args, [signerAuth]), 'no controller authorization');
+    const signerKey = signer.publicKey();
+    assertAuthFailure(await enforce('register', args, [controllerAuth]), 'missing', signerKey, 'no signer proof');
+    assertAuthFailure(
+      await enforce('register', args, [controllerAuth, forgedSigner]), 'forged', signerKey, 'signer entry signed by controller key',
+    );
+    assertAuthFailure(await enforce('register', args, [signerAuth]), 'missing', controller.publicKey(), 'no controller authorization');
     for (const [label, role] of [['controller as signer', controller.publicKey()], ['contract signer', registry]] as const) {
       const invalid = { ...args, signer: role };
       expect(precheck(() => registryOperation(registry, 'register', invalid)), label).toBe('InvalidInput');
-      expectContractError(await net.simulate(await callTx('register', invalid), 'record'), 'InvalidInput', label);
+      // The controller's signature alone reaches the rejection; an invalid signer is never asked to authorize.
+      const controllerOnly = await signedByHand('register', invalid, [controller]);
+      expectContractError(await enforce('register', invalid, controllerOnly), 'InvalidInput', label);
     }
     expect(await readAgentCount(read)).toBe(1n);
   }, TIMEOUT);
@@ -250,35 +261,36 @@ describe('agent registry on local Stellar', () => {
 
   it('rejects updates, rotation and disabling authorized by anyone but the controller', async () => {
     const before = await readAgent(read, 1n);
+    const controllerKey = controller.publicKey();
     const update = { agent_id: 1n, expected_revision: before.revision, metadata_uri: v2.uri, metadata_hash: v2.hash };
     const recording = await record('update_metadata', update);
-    expect(recording.result.auth.map(credential)).toEqual([controller.publicKey()]);
+    expect(recording.result.auth.map(credential)).toEqual([controllerKey]);
     const entry = recording.result.auth[0]!;
     for (const [label, key] of [['attacker', attacker], ['agent signer', signer], ['sponsor', sponsor]] as const) {
-      const forged = await sign(entry, recording.latestLedger, 'update_metadata', update, key, controller.publicKey());
+      const forged = await sign(entry, recording.latestLedger, 'update_metadata', update, key, controllerKey);
       const simulation = await enforce('update_metadata', update, [forged]);
-      assertAuthFailure(simulation, `${label} key signing as controller`);
+      assertAuthFailure(simulation, 'forged', controllerKey, `${label} key signing as controller`);
       // The host's account check logs an internal code that must not read as a registry error.
       expect('error' in simulation && contractErrorName(simulation.error), label).toBeUndefined();
     }
     const attackerAuth = await signedByHand('update_metadata', update, [attacker]);
-    assertAuthFailure(await enforce('update_metadata', update, attackerAuth), 'attacker credential');
+    assertAuthFailure(await enforce('update_metadata', update, attackerAuth), 'missing', controllerKey, 'attacker credential');
     const sourceOnly = new xdr.SorobanAuthorizationEntry({
       credentials: xdr.SorobanCredentials.sorobanCredentialsSourceAccount(), rootInvocation: entry.rootInvocation,
     });
-    assertAuthFailure(await enforce('update_metadata', update, [sourceOnly]), 'sponsor source account');
+    assertAuthFailure(await enforce('update_metadata', update, [sourceOnly]), 'missing', controllerKey, 'sponsor source account');
 
     const disable = { agent_id: 1n, expected_revision: before.revision };
     const disabling = await record('disable', disable);
     const forgedDisable = await sign(
-      disabling.result.auth[0]!, disabling.latestLedger, 'disable', disable, attacker, controller.publicKey(),
+      disabling.result.auth[0]!, disabling.latestLedger, 'disable', disable, attacker, controllerKey,
     );
-    assertAuthFailure(await enforce('disable', disable, [forgedDisable]), 'attacker disable');
+    assertAuthFailure(await enforce('disable', disable, [forgedDisable]), 'forged', controllerKey, 'attacker disable');
     const rotate = { agent_id: 1n, expected_revision: before.revision, new_signer: attacker.publicKey() };
     const rotating = await record('rotate_signer', rotate);
     const rotateAuth = await Promise.all(rotating.result.auth.map((item) =>
       sign(item, rotating.latestLedger, 'rotate_signer', rotate, attacker, credential(item))));
-    assertAuthFailure(await enforce('rotate_signer', rotate, rotateAuth), 'attacker rotating to its own key');
+    assertAuthFailure(await enforce('rotate_signer', rotate, rotateAuth), 'forged', controllerKey, 'attacker rotating to its own key');
     expect(await readAgent(read, 1n)).toEqual(before);
   }, TIMEOUT);
 
@@ -299,18 +311,24 @@ describe('agent registry on local Stellar', () => {
     const at = recording.latestLedger;
     const controllerAuth = await sign(controllerEntry!, at, 'rotate_signer', rotate, controller);
     const forged = await sign(newSignerEntry!, at, 'rotate_signer', rotate, controller, newSigner.publicKey());
-    assertAuthFailure(await enforce('rotate_signer', rotate, [controllerAuth]), 'no new signer proof');
-    assertAuthFailure(await enforce('rotate_signer', rotate, [controllerAuth, forged]), 'new signer entry signed by controller key');
+    const incoming = newSigner.publicKey();
+    assertAuthFailure(await enforce('rotate_signer', rotate, [controllerAuth]), 'missing', incoming, 'no new signer proof');
+    assertAuthFailure(
+      await enforce('rotate_signer', rotate, [controllerAuth, forged]), 'forged', incoming, 'new signer entry signed by controller key',
+    );
 
     const before = await readAgent(read, 1n);
     const { identity } = await mutate('rotate_signer', rotate, [controller, newSigner]);
     expect(identity).toEqual({ ...before, signer: newSigner.publicKey(), revision: 3n });
     await expectRegistryError(readCurrent(read, 1n, 2n), 'IdentityChanged');
     expectContractError(await recordCall('rotate_signer', { ...rotate, expected_revision: 3n }), 'Duplicate', 'current signer');
-    expectContractError(
-      await recordCall('rotate_signer', { ...rotate, expected_revision: 3n, new_signer: controller.publicKey() }),
-      'InvalidInput', 'controller as signer',
-    );
+    // The controller's one entry covers a controller-named signer, which is rejected after the revision check.
+    for (const [expected_revision, code] of [[2n, 'IdentityChanged'], [3n, 'InvalidInput']] as const) {
+      const toController = { ...rotate, expected_revision, new_signer: controller.publicKey() };
+      const auth = await signedByHand('rotate_signer', toController, [controller]);
+      const label = `controller as signer, revision ${expected_revision}`;
+      expectContractError(await enforce('rotate_signer', toController, auth), code, label);
+    }
   }, TIMEOUT);
 
   it('disables and reactivates with new revisions and rejects requests signed for older ones', async () => {
@@ -321,7 +339,7 @@ describe('agent registry on local Stellar', () => {
 
     const { identity: disabled } = await mutate('disable', { agent_id: 1n, expected_revision: 3n }, [controller]);
     expect(disabled).toMatchObject({ signer: newSigner.publicKey(), revision: 4n, disabled: true });
-    expect(await net.latestLedger()).toBeLessThanOrEqual(recording.latestLedger + MAX_AUTH_WINDOW_LEDGERS);
+    await expectUnexpired(recording.latestLedger + MAX_AUTH_WINDOW_LEDGERS);
     expectContractError(await enforce('update_metadata', stale, staleAuth), 'IdentityChanged', 'update signed before disable');
     await expectRegistryError(readCurrent(read, 1n, 4n), 'Revoked');
     await expectRegistryError(readCurrent(read, 1n, 3n), 'IdentityChanged');

@@ -19,6 +19,7 @@ fn metadata_validation_matches_the_v1_rules() {
         |uri: &[u8], hash: &BytesN<32>| validate_metadata(&String::from_bytes(&env, uri), hash);
 
     assert_eq!(check(b"https://a", &hash), Ok(()));
+    assert_eq!(check(b"https://!", &hash), Ok(()));
     assert_eq!(
         check(b"https://example.com/agent.json?v=1#~", &hash),
         Ok(())

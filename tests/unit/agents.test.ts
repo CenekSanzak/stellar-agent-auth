@@ -33,6 +33,9 @@ describe('metadata validation mirrors the registry contract', () => {
   it.each<[string, string, Uint8Array, ContractErrorName | 'ok']>([
     ['2048-byte URI', prefix + 'a'.repeat(2_040), bytes(1), 'ok'],
     ['shortest https URI', prefix + 'a', bytes(1), 'ok'],
+    ['lowest visible byte', `${prefix}!`, bytes(1), 'ok'],
+    ['tilde, query and fragment', `${prefix}example.test/agent.json?v=1#~`, bytes(1), 'ok'],
+    ['hash with zero bytes', `${prefix}a`, Uint8Array.from({ length: 32 }, (_, i) => (i === 31 ? 1 : 0)), 'ok'],
     ['2049-byte URI', prefix + 'a'.repeat(2_041), bytes(1), 'LimitExceeded'],
     ['2049 UTF-8 bytes in 2048 UTF-16 units', prefix + 'a'.repeat(2_039) + 'é', bytes(1), 'LimitExceeded'],
     ['empty URI', '', bytes(1), 'InvalidInput'],
@@ -203,6 +206,15 @@ describe('registry authorization signing', () => {
     })).resolves.toBeDefined();
   });
 
+  // disable and reactivate encode identical arguments, so only the method name tells their entries apart.
+  const lifecycle = (method: 'disable' | 'reactivate') => entry(invocation(method, encodeRegistryArgs(method, update)));
+
+  it('signs a lifecycle entry for its own method', async () => {
+    for (const method of ['disable', 'reactivate'] as const) {
+      await expect(signRegistryAuthorization({ ...input, method, entry: lifecycle(method) })).resolves.toBeDefined();
+    }
+  });
+
   const sourceOnly = new xdr.SorobanAuthorizationEntry({
     credentials: xdr.SorobanCredentials.sorobanCredentialsSourceAccount(), rootInvocation: root,
   });
@@ -212,12 +224,14 @@ describe('registry authorization signing', () => {
   it.each<[string, Partial<typeof input>, string]>([
     ['source-account credentials', { entry: sourceOnly }, 'signing account'],
     ['credential for another address', { entry: entry(root, signer.publicKey()) }, 'signing account'],
-    ['contract signing address', { address: contract(9) }, 'signing account'],
+    ['contract signing address', { address: contract(9), entry: entry(root, contract(9)) }, 'signing account'],
     ['subinvocation', { entry: entry(invocation('update_metadata', updateArgs({}), registry, [root])) }, 'single'],
     ['read-only method', { method: 'get' as RegistryAuthMethod }, 'single'],
     ['invalid contract id', { contractId: account(9) }, 'single'],
     ['other contract', { entry: entry(invocation('update_metadata', updateArgs({}), contract(41))) }, 'does not match'],
     ['other method', { entry: entry(invocation('disable', encodeRegistryArgs('disable', update))) }, 'does not match'],
+    ['disable entry signed as reactivate', { method: 'reactivate', entry: lifecycle('disable') }, 'does not match'],
+    ['reactivate entry signed as disable', { method: 'disable', entry: lifecycle('reactivate') }, 'does not match'],
     ['metadata hash', { entry: entry(invocation('update_metadata', updateArgs({ metadata_hash: bytes(9) }))) }, 'does not match'],
     ['metadata URI', { entry: entry(invocation('update_metadata', updateArgs({ metadata_uri: `${prefix}y` }))) }, 'does not match'],
     ['expected revision', { entry: entry(invocation('update_metadata', updateArgs({ expected_revision: 1n }))) }, 'does not match'],

@@ -1,6 +1,6 @@
 # Development
 
-P0 supplies the build and test environment. P1 adds the v1 contract ABI, hash vectors and a local fixture that verifies native authorization and a sponsor-paid transfer. The full registry and wallet flows arrive in P2–P4.
+P0 supplies the build and test environment. P1 adds the v1 contract ABI, hash vectors and a local fixture that verifies native authorization and a sponsor-paid transfer. P2 adds the agent registry, its SDK helpers and a signed local registry flow. The verification and wallet flows arrive in P3–P4.
 
 ## Pinned environment
 
@@ -44,9 +44,9 @@ npm run test:integration
 npm run local:down
 ```
 
-`dev` starts an isolated protocol-29 Quickstart and waits for matching RPC metadata. It does not start the future application. Port 8000 binds only to loopback. The network is ephemeral: `local:down` removes its state. Do not use it to retain deployment evidence.
+`dev` starts an isolated protocol-29 Quickstart and waits for matching RPC metadata and a serving Friendbot, which starts several seconds after RPC. It does not start the future application. Port 8000 binds only to loopback. The network is ephemeral: `local:down` removes its state. Do not use it to retain deployment evidence.
 
-Docker must be running. If startup fails, use `docker compose ps` and `docker compose logs`. The local suite checks RPC health and protocol, deploys the Phase 1 fixture with ephemeral accounts, exercises real agent and sponsor signatures and checks a native token transfer and audit event. Existing planned scenarios use `.planned.ts` until executable tests replace them; Vitest searches the integration/adversarial directories for `.test.ts` files and fails on empty suites.
+Docker must be running. If startup fails, use `docker compose ps` and `docker compose logs`. The local suite checks RPC health and protocol, deploys the Phase 1 fixture with ephemeral accounts, exercises real agent and sponsor signatures and checks a native token transfer and audit event. It also deploys the agent registry and runs its lifecycle with real controller, signer, new-signer and sponsor signatures. Existing planned scenarios use `.planned.ts` until executable tests replace them; Vitest searches the integration/adversarial directories for `.test.ts` files and fails on empty suites.
 
 ## Configuration
 
@@ -70,4 +70,4 @@ This is a read-only network compatibility preflight. It is excluded from require
 - Rust contract tests: native Soroban host dispatch; the wrapper rejects zero discovered tests.
 - `tests/fixtures`: public fixtures only; generate private test keys at runtime.
 
-CI builds WASM in the foundation job. The Docker local-network job downloads the separate auth probe artifact for integration tests.
+CI builds WASM in the foundation job. The Docker local-network job downloads the contract WASM and auth probe artifacts for integration tests.

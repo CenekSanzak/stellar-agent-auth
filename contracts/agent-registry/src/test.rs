@@ -202,16 +202,30 @@ fn register_requires_controller_and_signer() {
 
     t.env.set_auths(&[]);
     denied(client.try_register(&t.controller, &t.signer, &uri, &hash));
-    t.allow(&[&t.controller], "register", args.clone());
+    // The controller alone is refused: the account signer must prove control.
+    t.allow(&[&t.controller], "register", args);
     denied(client.try_register(&t.controller, &t.signer, &uri, &hash));
-    t.allow(&[&t.attacker], "register", args);
-    denied(client.try_register(&t.controller, &t.signer, &uri, &hash));
-    // Controller auth is bound to the exact arguments.
-    let other = t.register_args(&uri, &digest(&t.env, 2));
-    t.allow(&[&t.controller], "register", other);
-    denied(client.try_register(&t.controller, &t.signer, &uri, &hash));
+    // A contract signer is rejected as soon as the controller check passes, without asking it
+    // to authorize, so the abort shows the controller check refusing the attacker.
+    let contract_signer = Address::generate(&t.env);
+    let contract_args: Vec<Val> = (
+        t.controller.clone(),
+        contract_signer.clone(),
+        uri.clone(),
+        hash.clone(),
+    )
+        .into_val(&t.env);
+    t.allow(&[&t.attacker], "register", contract_args.clone());
+    denied(client.try_register(&t.controller, &contract_signer, &uri, &hash));
+    t.allow(&[&t.controller], "register", contract_args);
+    failed(
+        client.try_register(&t.controller, &contract_signer, &uri, &hash),
+        Error::InvalidInput,
+    );
     assert_eq!(client.agent_count(), 0);
 
+    // Account auth cannot be mocked, so `Test::register` proves through `env.auths()` that both
+    // roles authorized exactly these arguments.
     let identity = t.register();
     assert_eq!(
         identity,
@@ -408,8 +422,28 @@ fn rotate_signer_requires_controller_and_new_signer() {
     denied(client.try_rotate_signer(&1, &1, &new_signer));
     t.allow(&[&t.controller], "rotate_signer", args.clone());
     denied(client.try_rotate_signer(&1, &1, &new_signer));
-    t.allow(&[&t.attacker], "rotate_signer", args.clone());
-    denied(client.try_rotate_signer(&1, &1, &new_signer));
+    // A contract new signer that authorizes reaches InvalidInput once the controller check
+    // passes, so the first abort is the controller check refusing the attacker. The new signer
+    // authorizes before validation, so without its entry the host refuses the call.
+    let contract_signer = Address::generate(&t.env);
+    let contract_args: Vec<Val> = (1u64, 1u64, contract_signer.clone()).into_val(&t.env);
+    t.allow(
+        &[&t.attacker, &contract_signer],
+        "rotate_signer",
+        contract_args.clone(),
+    );
+    denied(client.try_rotate_signer(&1, &1, &contract_signer));
+    t.allow(&[&t.controller], "rotate_signer", contract_args.clone());
+    denied(client.try_rotate_signer(&1, &1, &contract_signer));
+    t.allow(
+        &[&t.controller, &contract_signer],
+        "rotate_signer",
+        contract_args,
+    );
+    failed(
+        client.try_rotate_signer(&1, &1, &contract_signer),
+        Error::InvalidInput,
+    );
     assert_eq!(client.get(&1), registered);
 
     let rotated = t.rotate(1, 1, &new_signer).unwrap().unwrap();
@@ -448,6 +482,19 @@ fn rotate_signer_rejects_invalid_transitions() {
         t.rotate(1, 1, &Address::generate(&t.env)),
         Error::InvalidInput,
     );
+    // A stale revision fails first, whatever the new signer is.
+    for invalid in [&t.controller, &t.signer, &Address::generate(&t.env)] {
+        failed(t.rotate(1, 0, invalid), Error::IdentityChanged);
+    }
+    // The controller's single entry covers a controller-named signer, which is then rejected.
+    for (revision, error) in [(0u64, Error::IdentityChanged), (1, Error::InvalidInput)] {
+        let args = (1u64, revision, t.controller.clone()).into_val(&t.env);
+        t.allow(&[&t.controller], "rotate_signer", args);
+        failed(
+            t.client().try_rotate_signer(&1, &revision, &t.controller),
+            error,
+        );
+    }
     assert_eq!(t.client().get(&1), current);
 }
 
@@ -537,7 +584,9 @@ fn signer_alone_cannot_mutate() {
     });
     let client = t.client();
     let (new_uri, new_hash) = (link(&t.env, b"https://b"), digest(&t.env, 2));
-    let new_signer = account(&t.env);
+    // An authorizing contract new signer would reach InvalidInput if the signer's auth were
+    // accepted in place of the controller's.
+    let new_signer = Address::generate(&t.env);
 
     t.allow(
         &[&signer],
@@ -546,7 +595,7 @@ fn signer_alone_cannot_mutate() {
     );
     denied(client.try_update_metadata(&1, &1, &new_uri, &new_hash));
     t.allow(
-        &[&signer],
+        &[&signer, &new_signer],
         "rotate_signer",
         (1u64, 1u64, new_signer.clone()).into_val(&t.env),
     );

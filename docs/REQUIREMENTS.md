@@ -1,6 +1,6 @@
 # Requirements and evidence ledger
 
-P0 infrastructure and the P1 ABI and authorization gate are implemented. Product acceptance remains tied to the registry, wallet and SDK flows below.
+P0 infrastructure, the P1 ABI and authorization gate and the P2 agent registry are implemented and validated locally. Product acceptance remains tied to the verification, wallet and SDK flows below.
 
 | Source requirement | Acceptance IDs | Evidence required | Implementation phase |
 | --- | --- | --- | --- |
@@ -14,7 +14,7 @@ P0 infrastructure and the P1 ABI and authorization gate are implemented. Product
 | Architecture: unsupported verification is not a pass | A04-A07, A25 | Explicit coverage outcomes, report hashes, visible fixture labels | P3, P7 |
 | SOW exclusions | N/A | No security-audit/full-ERC/consumer-wallet claims | All phases |
 
-## Acceptance cases (all pending domain implementation)
+## Acceptance cases (status in the evidence sections below)
 
 | ID | Case | Required evidence |
 | --- | --- | --- |
@@ -68,3 +68,7 @@ The included local SOW is a source document, not a public deployment artifact. T
 ## P1 evidence
 
 The [Phase 1 validation record](P1_VALIDATION.md) covers matching Rust/TypeScript vectors, constructor authorization, a confirmed transfer and the signed mutation matrix. This supports the authorization portions of A10–A13 and the ABI and resource portions of A23. The product wallet and registry acceptance cases still require their production paths.
+
+## P2 evidence
+
+The [Phase 2 validation record](P2_VALIDATION.md) covers the agent registry's host tests and a signed local flow: registration and readback, controller-only changes, signer and new-signer proof, rejected metadata and revision invalidation. This demonstrates A01 on the local network. A02 is shown only within the registry: requests signed for an earlier revision fail, and `current` rejects old and disabled revisions. Its old-verification and old-policy evidence needs P3 and P4. The 2,048-byte registration adds identity resource evidence to A23. Nothing is deployed to Testnet yet. [The registry decision](decisions/0003-agent-registry.md) sets the rules P3 and P4 must follow.

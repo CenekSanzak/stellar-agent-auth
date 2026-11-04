@@ -11,7 +11,11 @@ import {
 const encoder = new TextEncoder();
 const HTTPS = 'https://';
 
-/** A contract error, or an SDK precheck mirroring the contract error it would produce. */
+/**
+ * A registry contract error, or an SDK precheck for input the contract rejects with that error. The contract checks
+ * most authorization first, so a raw call missing a required entry (such as a contract new signer's) fails with a host
+ * `Error(Auth, …)` instead, which has no contract error name.
+ */
 export class AgentRegistryError extends Error {
   override readonly name = 'AgentRegistryError';
   readonly code: ContractErrorName;

@@ -23,7 +23,8 @@ pub struct AgentRegistry;
 
 #[contractimpl]
 impl AgentRegistry {
-    /// Allocates the next ID. Both the controller and the signer must authorize.
+    /// Allocates the next ID. Both the controller and the signer must authorize. The signer is
+    /// checked before its proof is requested, so a contract signer's `__check_auth` never runs.
     pub fn register(
         env: Env,
         controller: Address,
@@ -36,8 +37,8 @@ impl AgentRegistry {
         if signer == controller {
             return Err(Error::InvalidInput);
         }
-        signer.require_auth();
         identity::require_account(&env, &signer)?;
+        signer.require_auth();
         validate_metadata(&metadata_uri, &metadata_hash)?;
         let agent_id = storage::agent_count(&env)
             .checked_add(1)
@@ -78,10 +79,11 @@ impl AgentRegistry {
         new_signer: Address,
     ) -> Result<AgentIdentity, Error> {
         let mut identity = controlled(&env, agent_id)?;
-        if new_signer == identity.controller {
-            return Err(Error::InvalidInput);
+        // A controller named as signer has just authorized; requiring it again would need a
+        // second entry. `set_signer` rejects it after the revision check.
+        if new_signer != identity.controller {
+            new_signer.require_auth();
         }
-        new_signer.require_auth();
         identity::check_revision(&identity, expected_revision)?;
         identity::set_signer(&env, &mut identity, new_signer)?;
         commit(&env, identity)
