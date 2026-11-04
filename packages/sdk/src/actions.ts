@@ -14,14 +14,19 @@ interface ActionAuthorization {
   signer: Parameters<typeof authorizeEntry>[1];
 }
 
-/** Inspect a recording-mode entry before giving the headless agent signer any bytes. */
-export async function signActionAuthorization(input: ActionAuthorization): Promise<xdr.SorobanAuthorizationEntry> {
-  const { entry, request, agentAddress, networkPassphrase, latestLedger, expirationLedger, signer } = input;
+/** Inclusive expiry must fall in (latestLedger, latestLedger + MAX_AUTH_WINDOW_LEDGERS]. */
+export function assertAuthWindow(latestLedger: number, expirationLedger: number) {
   if (!Number.isSafeInteger(latestLedger) || latestLedger < 0
     || !Number.isSafeInteger(expirationLedger) || expirationLedger > 0xffff_ffff
     || expirationLedger <= latestLedger || expirationLedger - latestLedger > MAX_AUTH_WINDOW_LEDGERS) {
-    throw new Error('Authorization expiry must be within the next 20 ledgers');
+    throw new Error(`Authorization expiry must be within the next ${MAX_AUTH_WINDOW_LEDGERS} ledgers`);
   }
+}
+
+/** Inspect a recording-mode entry before giving the headless agent signer any bytes. */
+export async function signActionAuthorization(input: ActionAuthorization): Promise<xdr.SorobanAuthorizationEntry> {
+  const { entry, request, agentAddress, networkPassphrase, latestLedger, expirationLedger, signer } = input;
+  assertAuthWindow(latestLedger, expirationLedger);
 
   const credentials = entry.credentials;
   if (!StrKey.isValidEd25519PublicKey(agentAddress) || credentials.type !== 'sorobanCredentialsAddress'

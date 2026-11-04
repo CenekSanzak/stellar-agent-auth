@@ -127,3 +127,25 @@ export interface AuditEntry {
   actor: string;
   outcome: AuditOutcome;
 }
+
+/** Contract error names in `shared_types::errors::Error` code order, starting at 1. */
+export const CONTRACT_ERRORS = [
+  'UnsupportedVersion', 'InvalidInput', 'LimitExceeded', 'Duplicate', 'NotFound', 'InvalidSequence', 'Expired',
+  'Revoked', 'IdentityChanged', 'VerificationDenied', 'PolicyDenied', 'Paused', 'ArithmeticOverflow',
+] as const;
+export type ContractErrorName = (typeof CONTRACT_ERRORS)[number];
+
+export interface RegistryArgs {
+  register: { controller: string; signer: string; metadata_uri: string; metadata_hash: Hash32 };
+  update_metadata: { agent_id: bigint; expected_revision: bigint; metadata_uri: string; metadata_hash: Hash32 };
+  rotate_signer: { agent_id: bigint; expected_revision: bigint; new_signer: string };
+  disable: { agent_id: bigint; expected_revision: bigint };
+  reactivate: { agent_id: bigint; expected_revision: bigint };
+  get: { agent_id: bigint };
+  current: { agent_id: bigint; revision: bigint };
+  agent_count: Record<string, never>;
+}
+export type RegistryMethod = keyof RegistryArgs;
+
+export const REGISTRY_AUTH_METHODS = ['register', 'update_metadata', 'rotate_signer', 'disable', 'reactivate'] as const;
+export type RegistryAuthMethod = (typeof REGISTRY_AUTH_METHODS)[number];

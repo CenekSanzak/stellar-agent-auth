@@ -3,7 +3,8 @@ import {
   ACTION_KINDS, CHECK_KINDS, CHECK_OUTCOMES, MAX_ASSETS, MAX_METADATA_URI_BYTES, MAX_RECIPIENTS, SCHEMA_VERSION,
   SERIOUS_WALLET_RISK_MASK,
   type Action, type ActionRequest, type AgentIdentity, type AuditEntry, type AuditOutcome,
-  type Hash32, type Policy, type ServiceRule, type Transfer, type VerificationResult,
+  type Hash32, type Policy, type RegistryArgs, type RegistryMethod, type ServiceRule, type Transfer,
+  type VerificationResult,
 } from './types.js';
 
 const encoder = new TextEncoder();
@@ -117,6 +118,74 @@ export function encodeIdentity(identity: AgentIdentity): xdr.ScVal {
     metadata_uri: xdr.ScVal.scvString(identity.metadata_uri), metadata_hash: bytes32(identity.metadata_hash),
     revision: u64(identity.revision), disabled: bool(identity.disabled),
   });
+}
+
+const IDENTITY_FIELDS = [
+  'agent_id', 'controller', 'disabled', 'metadata_hash', 'metadata_uri', 'revision', 'signer',
+] as const;
+
+function decodeU64(value: xdr.ScVal) {
+  if (value.type !== 'scvU64') throw new Error('Expected a u64');
+  return value.u64;
+}
+
+function decodeAddress(value: xdr.ScVal) {
+  if (value.type !== 'scvAddress'
+    || (value.address.type !== 'scAddressTypeAccount' && value.address.type !== 'scAddressTypeContract')) {
+    throw new Error('Expected a standard account or contract address');
+  }
+  return Address.fromScAddress(value.address).toString();
+}
+
+/** Strict inverse of `encodeIdentity`: exact canonical fields and types only. */
+export function decodeIdentity(value: xdr.ScVal): AgentIdentity {
+  const entries = value.type === 'scvMap' ? value.map ?? [] : [];
+  if (entries.length !== IDENTITY_FIELDS.length) throw new Error('Expected an AgentIdentity map');
+  entries.forEach(({ key }, i) => {
+    if (key.type !== 'scvSymbol' || key.sym.toString() !== IDENTITY_FIELDS[i]) {
+      throw new Error('Unexpected AgentIdentity field');
+    }
+  });
+  const field = (name: (typeof IDENTITY_FIELDS)[number]) => entries[IDENTITY_FIELDS.indexOf(name)]!.val;
+  const disabled = field('disabled');
+  const uri = field('metadata_uri');
+  const metadataHash = field('metadata_hash');
+  if (disabled.type !== 'scvBool' || uri.type !== 'scvString'
+    || metadataHash.type !== 'scvBytes' || metadataHash.bytes.value.length !== 32) {
+    throw new Error('Unexpected AgentIdentity field type');
+  }
+  const identity: AgentIdentity = {
+    agent_id: decodeU64(field('agent_id')), controller: decodeAddress(field('controller')),
+    signer: decodeAddress(field('signer')), metadata_uri: uri.str.toStringStrict(),
+    metadata_hash: Uint8Array.from(metadataHash.bytes.value), revision: decodeU64(field('revision')),
+    disabled: disabled.value,
+  };
+  if (encodeIdentity(identity).toXdr('hex') !== value.toXdr('hex')) throw new Error('Non-canonical AgentIdentity');
+  return identity;
+}
+
+function metadataUri(value: string) {
+  if (typeof value !== 'string') throw new Error('Expected a metadata URI string');
+  return xdr.ScVal.scvString(value);
+}
+
+const REGISTRY_ENCODERS: { [M in RegistryMethod]: (args: RegistryArgs[M]) => xdr.ScVal[] } = {
+  register: (a) => [address(a.controller), address(a.signer), metadataUri(a.metadata_uri), bytes32(a.metadata_hash)],
+  update_metadata: (a) => [
+    u64(a.agent_id), u64(a.expected_revision), metadataUri(a.metadata_uri), bytes32(a.metadata_hash),
+  ],
+  rotate_signer: (a) => [u64(a.agent_id), u64(a.expected_revision), address(a.new_signer)],
+  disable: (a) => [u64(a.agent_id), u64(a.expected_revision)],
+  reactivate: (a) => [u64(a.agent_id), u64(a.expected_revision)],
+  get: (a) => [u64(a.agent_id)],
+  current: (a) => [u64(a.agent_id), u64(a.revision)],
+  agent_count: () => [],
+};
+
+/** Structural agent-registry argument XDR. Semantic prechecks live in `registryOperation`. */
+export function encodeRegistryArgs<M extends RegistryMethod>(method: M, args: RegistryArgs[M]): xdr.ScVal[] {
+  if (!Object.hasOwn(REGISTRY_ENCODERS, method)) throw new Error('Unknown agent registry method');
+  return REGISTRY_ENCODERS[method](args);
 }
 
 export function encodeVerification(result: VerificationResult): xdr.ScVal {
