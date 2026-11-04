@@ -6,3 +6,6 @@ coverage/
 .env.*
 !.env.example
 .DS_Store
+
+.local/
+test_snapshots/

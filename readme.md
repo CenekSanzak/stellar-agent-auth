@@ -4,7 +4,7 @@ An AI agent needs to pay for data or API services without asking its owner to si
 
 The demo will reproduce this scenario on Stellar Testnet using a clearly identified test asset. It will show a successful payment and rejected requests that exceed the budget, use an unapproved recipient, or arrive after revocation. This gives agent developers a concrete example they can integrate through the SDK.
 
-**Current status:** Project scaffold only. Contracts, services, and the demo are not implemented or deployed yet.
+**Current status:** P0 development foundation: pinned dependencies, CI, executable infrastructure tests and a contract probe. Agent verification, wallet behavior, services and demo UI are not implemented or deployed yet. See [development setup](docs/DEVELOPMENT.md) and [requirements](docs/REQUIREMENTS.md).
 
 ## Background
 

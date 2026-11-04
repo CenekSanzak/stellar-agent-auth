@@ -6,3 +6,6 @@ publish.workspace = true
 
 [lib]
 path = "src/lib.rs"
+
+[dependencies]
+soroban-sdk.workspace = true

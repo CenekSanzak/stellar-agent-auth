@@ -6,3 +6,11 @@ publish.workspace = true
 
 [lib]
 path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+soroban-sdk.workspace = true
+stellar-agent-auth-shared-types.workspace = true
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }

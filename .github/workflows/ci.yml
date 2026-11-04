@@ -1,0 +1,43 @@
+name: CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  foundation:
+    timeout-minutes: 45
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: rustup show
+      - name: Install pinned Stellar CLI
+        run: cargo install stellar-cli --version 30.0.1 --locked
+      - run: npm run check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: contract-wasm
+          path: target/wasm32v1-none/release/*.wasm
+          if-no-files-found: error
+  local-network:
+    timeout-minutes: 20
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run dev
+      - run: npm run test:integration
+      - if: failure()
+        run: docker compose logs --tail=100
+      - if: always()
+        run: npm run local:down

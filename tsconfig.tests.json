@@ -1,0 +1,24 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": [
+      "node"
+    ],
+    "lib": [
+      "ES2022",
+      "DOM"
+    ]
+  },
+  "include": [
+    "tests/**/*.ts",
+    "packages/**/*.ts",
+    "services/**/*.ts",
+    "deployments/**/*.ts",
+    "vitest.config.ts"
+  ],
+  "exclude": [
+    "**/dist/**",
+    "**/node_modules/**"
+  ]
+}

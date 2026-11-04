@@ -1,0 +1,6 @@
+services:
+  stellar:
+    image: stellar/quickstart@sha256:5f14df9369ba6aa3c99a167a9b6321537e48edee4e5d3a67490cc37c676573ce
+    command: ["--local", "--protocol-version", "29", "--limits", "testnet", "--enable", "rpc"]
+    ports:
+      - "127.0.0.1:8000:8000"
