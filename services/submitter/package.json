@@ -3,8 +3,25 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "description": "Private fee sponsor for signed contract operations.",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/index.js"
+  },
+  "bin": {
+    "stellar-agent-auth-submitter": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@stellar-agent-auth/sdk": "0.0.0",
+    "@stellar/stellar-sdk": "17.4.0"
   }
 }

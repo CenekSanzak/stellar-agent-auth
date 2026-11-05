@@ -13,8 +13,17 @@
       "@stellar-agent-auth/sdk": [
         "./packages/sdk/src/index.ts"
       ],
+      "@stellar-agent-auth/sdk/node": [
+        "./packages/sdk/src/node.ts"
+      ],
       "@stellar-agent-auth/verifier": [
         "./services/verifier/src/index.ts"
+      ],
+      "@stellar-agent-auth/submitter": [
+        "./services/submitter/src/index.ts"
+      ],
+      "@stellar-agent-auth/cli": [
+        "./packages/cli/src/index.ts"
       ]
     }
   },
@@ -23,6 +32,7 @@
     "packages/**/*.ts",
     "services/**/*.ts",
     "deployments/**/*.ts",
+    "examples/**/*.ts",
     "vitest.config.ts"
   ],
   "exclude": [

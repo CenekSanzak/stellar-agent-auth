@@ -558,6 +558,103 @@ export function encodeAudit(entry: AuditEntry): xdr.ScVal {
   });
 }
 
+function tagged(value: xdr.ScVal, label: string): [string, xdr.ScVal | undefined] {
+  const items = decodeVec(value, label);
+  const [tag, payload] = items;
+  if (tag?.type !== 'scvSymbol' || items.length > 2) throw new Error('Unknown ABI variant');
+  return [tag.sym.toString(), payload];
+}
+
+function decodeTransfer(value: xdr.ScVal): Transfer {
+  const field = fields(value, ['amount', 'asset', 'recipient'] as const, 'Transfer');
+  return {
+    asset: decodeAddress(field('asset')), recipient: decodeAddress(field('recipient')),
+    amount: decodeAmount(field('amount')),
+  };
+}
+
+function decodeActionValue(value: xdr.ScVal): Action {
+  const [tag, payload] = tagged(value, 'Action');
+  if (tag === 'Transfer' && payload) return { kind: 'Transfer', transfer: decodeTransfer(payload) };
+  if (tag === 'ServicePayment' && payload) {
+    const field = fields(payload, ['payment', 'service'] as const, 'ServicePayment');
+    const service = fields(field('service'), ['contract', 'service_id'] as const, 'ServiceRule');
+    return {
+      kind: 'ServicePayment', payment: decodeTransfer(field('payment')),
+      service: { contract: decodeAddress(service('contract')), service_id: decodeBytes32(service('service_id')) },
+    };
+  }
+  throw new Error('Unknown ABI variant');
+}
+
+const ACTION_FIELDS = ['action', 'deadline', 'policy_hash', 'schema_version', 'sequence', 'wallet'] as const;
+
+/** Strict inverse of `encodeAction`. */
+export function decodeAction(value: xdr.ScVal): ActionRequest {
+  const field = fields(value, ACTION_FIELDS, 'ActionRequest');
+  const request: ActionRequest = {
+    schema_version: decodeU32(field('schema_version')),
+    wallet: decodeAddress(field('wallet')),
+    policy_hash: decodeBytes32(field('policy_hash')),
+    sequence: decodeU64(field('sequence')),
+    deadline: decodeU64(field('deadline')),
+    action: decodeActionValue(field('action')),
+  };
+  if (encodeAction(request).toXdr('hex') !== value.toXdr('hex')) throw new Error('Non-canonical ActionRequest');
+  return request;
+}
+
+function decodeAuditOutcome(value: xdr.ScVal): AuditOutcome {
+  const [tag, payload] = tagged(value, 'AuditOutcome');
+  if (!payload) throw new Error('Unknown ABI variant');
+  switch (tag) {
+    case 'PolicyCreated':
+    case 'PolicyRevoked':
+      return { kind: tag, policy_hash: decodeBytes32(payload) };
+    case 'PauseChanged':
+      return { kind: tag, paused: decodeBool(payload) };
+    case 'OwnerWithdrawal':
+      return { kind: tag, transfer: decodeTransfer(payload) };
+    case 'Executed': {
+      const field = fields(payload, ['action', 'action_hash', 'policy_hash'] as const, 'Executed');
+      return {
+        kind: tag, policy_hash: decodeBytes32(field('policy_hash')), action_hash: decodeBytes32(field('action_hash')),
+        action: decodeActionValue(field('action')),
+      };
+    }
+    default:
+      throw new Error('Unknown ABI variant');
+  }
+}
+
+const AUDIT_FIELDS = [
+  'actor', 'ledger', 'outcome', 'previous_hash', 'schema_version', 'sequence', 'timestamp', 'wallet',
+] as const;
+
+/** Strict inverse of `encodeAudit`. */
+export function decodeAudit(value: xdr.ScVal): AuditEntry {
+  const field = fields(value, AUDIT_FIELDS, 'AuditEntry');
+  const timestamp = field('timestamp');
+  const entry: AuditEntry = {
+    schema_version: decodeU32(field('schema_version')),
+    wallet: decodeAddress(field('wallet')),
+    sequence: decodeU64(field('sequence')),
+    previous_hash: decodeBytes32(field('previous_hash')),
+    ledger: decodeU32(field('ledger')),
+    timestamp: decodeU64(timestamp),
+    actor: decodeAddress(field('actor')),
+    outcome: decodeAuditOutcome(field('outcome')),
+  };
+  if (encodeAudit(entry).toXdr('hex') !== value.toXdr('hex')) throw new Error('Non-canonical AuditEntry');
+  return entry;
+}
+
+/** The `{ entry, hash }` data of a wallet `audit_v1` event. The hash is as published, not yet verified. */
+export function decodeAuditEvent(value: xdr.ScVal): { entry: AuditEntry; hash: Hash32 } {
+  const field = fields(value, ['entry', 'hash'] as const, 'AuditEvent');
+  return { entry: decodeAudit(field('entry')), hash: decodeBytes32(field('hash')) };
+}
+
 function digest(purpose: string, passphrase: string, wallet: string, value: xdr.ScVal): Hash32 {
   return hash(vec([
     sym('stellar_agent_auth'), u32(SCHEMA_VERSION), sym(purpose),

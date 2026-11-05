@@ -3,8 +3,25 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "description": "Command-line interface for agents, verification, wallets, policies and transfers.",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "bin": {
+    "stellar-agent-auth": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@stellar-agent-auth/sdk": "0.0.0",
+    "@stellar-agent-auth/verifier": "0.0.0",
+    "@stellar/stellar-sdk": "17.4.0"
   }
 }

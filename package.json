@@ -8,22 +8,25 @@
     "apps/*"
   ],
   "scripts": {
-    "build": "npm run build --workspaces",
-    "typecheck": "npm run typecheck --workspaces && tsc -p tsconfig.tests.json --noEmit",
+    "build": "npm run build -w @stellar-agent-auth/sdk --silent && npm run build -w @stellar-agent-auth/verifier --silent && npm run build -w @stellar-agent-auth/submitter --silent && npm run build -w @stellar-agent-auth/cli --silent && npm run build -w @stellar-agent-auth/indexer --silent && npm run build -w @stellar-agent-auth/demo --silent",
+    "typecheck": "npm run build -w @stellar-agent-auth/sdk --silent && npm run build -w @stellar-agent-auth/verifier --silent && npm run typecheck --workspaces && tsc -p tsconfig.tests.json --noEmit",
     "check:rust": "cargo check --workspace --locked",
     "format:rust:check": "cargo fmt --all -- --check",
     "test": "npm run test:unit",
     "test:unit": "vitest run --project unit",
+    "test:spec": "vitest run --project spec",
     "test:integration": "vitest run --project local",
     "test:testnet": "node scripts/testnet.mjs",
     "test:rust": "node scripts/rust-tests.mjs",
     "lint:rust": "cargo clippy --workspace --all-targets --locked -- -D warnings",
     "build:contracts": "node scripts/build-contracts.mjs",
+    "check:sdk-package": "node scripts/check-sdk-package.mjs",
+    "example:payment": "node examples/payment-flow.ts",
     "local:up": "docker compose up -d",
     "local:down": "docker compose down",
     "local:ready": "node scripts/local-ready.mjs",
     "dev": "npm run local:up && npm run local:ready",
-    "check": "npm run typecheck && npm run build && npm run test:unit && npm run check:rust && npm run format:rust:check && npm run lint:rust && npm run test:rust && npm run build:contracts"
+    "check": "npm run typecheck && npm run build && npm run check:sdk-package && npm run test:unit && npm run check:rust && npm run format:rust:check && npm run lint:rust && npm run test:rust && npm run build:contracts && npm run test:spec"
   },
   "devDependencies": {
     "typescript": "5.9.3",

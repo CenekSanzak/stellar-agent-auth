@@ -1,0 +1,18 @@
+{
+  "network": "local",
+  "rpc_url": "http://localhost:8000/rpc",
+  "metadata_uri": "https://raw.githubusercontent.com/CenekSanzak/stellar-agent-auth/a5e6b4bd45afa4f6ee2b852d31ed68fc527a5694/deployments/testnet/agent-metadata.json",
+  "asset_code": "DEMO",
+  "issue": "1000",
+  "fund": "50",
+  "policy": {
+    "required_checks": ["Metadata", "SignerAccount"],
+    "max_assessment_age_seconds": 86400,
+    "max_risk_score": 0,
+    "per_transfer": "5",
+    "per_day": "20",
+    "valid_for_seconds": 604800
+  },
+  "payment": "3",
+  "presigned_payment": "2"
+}

@@ -62,6 +62,7 @@ jobs:
         with:
           name: auth-probe-wasm
           path: target/wasm32v1-none/release
+      - run: npm run build
       - run: npm run dev
       - run: npm run test:integration
       - if: failure()
