@@ -7,6 +7,7 @@ import { executeCommands } from './commands/execute.js';
 import { historyCommand } from './commands/history.js';
 import { keysCommands } from './commands/keys.js';
 import { policyCommands } from './commands/policy.js';
+import { txCommands } from './commands/tx.js';
 import { verifyCommands } from './commands/verify.js';
 import { walletCommands } from './commands/wallet.js';
 import { EXIT, Runtime, UsageError, classify, toJson, type GlobalOptions, type Io } from './runtime.js';
@@ -19,6 +20,8 @@ import { EXIT, Runtime, UsageError, classify, toJson, type GlobalOptions, type I
 export interface Command {
   summary: string;
   options: Record<string, 'string' | 'boolean'>;
+  /** `false` for a command with a side effect that cannot be simulated; `--dry-run` is then refused, not ignored. */
+  dryRun?: false;
   run(
     runtime: Runtime, values: Record<string, string | undefined>, flags: Record<string, boolean | undefined>,
   ): Promise<Record<string, unknown>>;
@@ -31,6 +34,7 @@ export const COMMANDS: Record<string, Record<string, Command> | Command> = {
   policy: policyCommands,
   execute: executeCommands,
   history: historyCommand,
+  tx: txCommands,
   keys: keysCommands,
 };
 
@@ -60,7 +64,8 @@ function usage(): string {
     '', 'Contracts come from AGENT_REGISTRY_ID, VERIFICATION_REGISTRY_ID and WALLET_ID, or the matching flags.',
     'Key references: file:<path> (owner-only), env:<NAME>, or a name under STELLAR_AGENT_AUTH_KEY_DIR (.local/keys).',
     '', `Exit codes: ${EXIT.ok} success, ${EXIT.usage} usage, ${EXIT.rejected} refused before submission, `
-      + `${EXIT.failed} submitted but not applied, ${EXIT.pending} outcome pending (do not retry), ${EXIT.error} other.`);
+      + `${EXIT.failed} submitted but not applied, ${EXIT.pending} outcome not yet known (never repeat the command; `
+      + `use "tx status"), ${EXIT.earlier} an earlier submission settled and was reported instead, ${EXIT.error} other.`);
   return lines.join('\n');
 }
 
@@ -109,6 +114,9 @@ export async function main(argv: string[], env: Environment, io: Io = defaultIo)
     for (const [name, type] of Object.entries(command.options)) {
       if (type === 'string') strings[name] = values[name] as string | undefined;
       else flags[name] = values[name] as boolean | undefined;
+    }
+    if (global.dryRun && command.dryRun === false) {
+      throw new UsageError('--dry-run is not supported by this command: its effect cannot be simulated');
     }
     const runtime = new Runtime(env, global);
     await runtime.ensureState();

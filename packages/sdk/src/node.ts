@@ -74,7 +74,8 @@ export class KeyReferenceError extends Error {
  * - `<name>`: `<key directory>/<name>.key`, also owner-only.
  */
 export async function loadKeypair(reference: string, env: Record<string, string | undefined>): Promise<Keypair> {
-  if (StrKey.isValidEd25519SecretSeed(reference)) {
+  // Anything shaped like a seed is refused without being echoed: a mistyped or quoted secret must not reach a log.
+  if (StrKey.isValidEd25519SecretSeed(reference) || /S[A-Z2-7]{55}/.test(reference)) {
     throw new KeyReferenceError('Pass a key reference (file:, env: or a key name), never a secret key');
   }
   let secret: string;
@@ -88,7 +89,7 @@ export async function loadKeypair(reference: string, env: Record<string, string 
     if (reference.startsWith('file:')) {
       path = resolve(reference.slice(5));
     } else {
-      if (!/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(reference)) throw new KeyReferenceError(`Invalid key name: ${reference}`);
+      if (!/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(reference)) throw new KeyReferenceError('Invalid key name');
       path = join(keyDirectory(env), `${reference}.key`);
     }
     const info = await stat(path).catch(() => {
@@ -97,7 +98,7 @@ export async function loadKeypair(reference: string, env: Record<string, string 
     if ((info.mode & 0o077) !== 0) throw new KeyReferenceError(`Key file ${path} must be readable by its owner only`);
     secret = (await readFile(path, 'utf8')).trim();
   }
-  if (!StrKey.isValidEd25519SecretSeed(secret)) throw new KeyReferenceError(`Key reference ${reference} is not a secret key`);
+  if (!StrKey.isValidEd25519SecretSeed(secret)) throw new KeyReferenceError('Key reference does not hold a secret key');
   return Keypair.fromSecret(secret);
 }
 

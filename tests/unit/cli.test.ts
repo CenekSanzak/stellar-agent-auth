@@ -1,16 +1,19 @@
 import { chmod, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Keypair } from '@stellar/stellar-sdk';
+import { Account, Contract, Keypair } from '@stellar/stellar-sdk';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { main } from '../../packages/cli/src/index.js';
-import { EXIT, OutcomeError, classify, settled } from '../../packages/cli/src/runtime.js';
+import { EXIT, OutcomeError, Runtime, classify, settled } from '../../packages/cli/src/runtime.js';
 import { FileJournal, KeyReferenceError, createNamedKey, loadKey } from '../../packages/sdk/src/node.js';
 import { WalletError } from '../../packages/sdk/src/policies.js';
-import { SponsorRefused } from '../../packages/sdk/src/sponsor.js';
+import { SponsorOutcomeUnknown, SponsorRefused } from '../../packages/sdk/src/sponsor.js';
 import {
-  FeeCeilingExceeded, SimulationRejected, SubmissionUnsettled, type TransactionOutcome, type TransactionRecord,
+  FeeCeilingExceeded, SimulationRejected, SubmissionUnsettled, buildTransaction, pipelineLimits,
+  type TransactionOutcome, type TransactionRecord,
 } from '../../packages/sdk/src/transactions.js';
+import { contract } from '../fixtures/abi-v1.js';
+import { FakeRpc, hex } from './support/fake-rpc.js';
 
 let directory: string;
 beforeEach(async () => {
@@ -39,7 +42,7 @@ describe('key references', () => {
     await expect(loadKey('env:bad-name', {})).rejects.toBeInstanceOf(KeyReferenceError);
     await expect(loadKey('../escape', { STELLAR_AGENT_AUTH_KEY_DIR: directory })).rejects.toThrow('Invalid key name');
     await writeFile(join(directory, 'public.key'), key.publicKey(), { mode: 0o600 });
-    await expect(loadKey('public', { STELLAR_AGENT_AUTH_KEY_DIR: directory })).rejects.toThrow('not a secret key');
+    await expect(loadKey('public', { STELLAR_AGENT_AUTH_KEY_DIR: directory })).rejects.toThrow('does not hold a secret key');
   });
 
   it('creates named keys owner-only and never overwrites one', async () => {
@@ -86,7 +89,8 @@ describe('command outcomes and exit codes', () => {
         return undefined;
       })();
       expect(error).toBeInstanceOf(OutcomeError);
-      expect(error).toMatchObject({ exitCode: EXIT.pending, message: /Do not retry/ });
+      // The instruction is to query the hash; repeating the command would sign a new request.
+      expect(error).toMatchObject({ exitCode: EXIT.pending, message: /Do not repeat the command; query it with "tx status/ });
     }
     for (const status of ['failed', 'expired', 'rejected'] as const) {
       expect(() => settled({ outcome: outcome(status, status === 'failed' ? { code: 'TransferFailed' } : {}) }))
@@ -103,8 +107,39 @@ describe('command outcomes and exit codes', () => {
     });
     expect(classify(new FeeCeilingExceeded(5n, 1n)).code).toBe(EXIT.rejected);
     expect(classify(new SponsorRefused('no')).code).toBe(EXIT.rejected);
-    expect(classify(new SubmissionUnsettled(record())).code).toBe(EXIT.pending);
+    expect(classify(new SubmissionUnsettled(record()))).toMatchObject({
+      code: EXIT.pending, message: expect.stringContaining('tx status --hash'),
+    });
+    expect(classify(new SponsorOutcomeUnknown(120, new Error('fetch failed')))).toMatchObject({
+      code: EXIT.pending, result: { status: 'unknown', stage: 'sponsor', auth_expiration_ledger: 120 },
+    });
     expect(classify(new Error('boom')).code).toBe(EXIT.error);
+  });
+
+  it('reports an earlier submission that settled instead of building a new request', async () => {
+    const rpc = new FakeRpc();
+    const runtime = new Runtime({ STELLAR_NETWORK: 'local', STELLAR_AGENT_AUTH_STATE_DIR: join(directory, 'state') },
+      { json: true, dryRun: false });
+    (runtime as unknown as { network: Promise<unknown> }).network = Promise.resolve(rpc.context());
+    const tx = buildTransaction(rpc.context(), new Account(Keypair.random().publicKey(), '5'),
+      new Contract(contract(41)).call('execute'), pipelineLimits());
+    const scope = 'execute:wallet:policy';
+    await runtime.journal.put(record({ scope, hash: hex(tx.hash()), max_time: tx.timeBounds!.maxTime,
+      submitted_after_ledger: 100 }));
+
+    // Still in flight: the command stops, as before.
+    await expect(runtime.settleEarlier(scope)).rejects.toBeInstanceOf(SubmissionUnsettled);
+    // It was applied after all. The repeated command reports that and signs nothing.
+    rpc.commit(tx);
+    const stopped = await runtime.settleEarlier(scope).catch((error: unknown) => error);
+    expect(stopped).toBeInstanceOf(OutcomeError);
+    expect(stopped).toMatchObject({
+      exitCode: EXIT.earlier,
+      result: { status: 'earlier-settled', transactions: [{ transaction: hex(tx.hash()), status: 'success' }] },
+    });
+    // Once reported, a deliberate rerun proceeds; other scopes were never affected.
+    await expect(runtime.settleEarlier(scope)).resolves.toBeUndefined();
+    await expect(runtime.settleEarlier('execute:other')).resolves.toBeUndefined();
   });
 });
 
@@ -134,6 +169,13 @@ describe('command line', () => {
     expect(await main(['keys', 'address', '--key', secret, '--json'], env(), run.io)).toBe(EXIT.usage);
     expect([...run.out, ...run.err].join('\n')).not.toContain(secret);
     expect(run.err.join()).toContain('never a secret key');
+    // A mangled secret (trailing space, quotes, one wrong character) is not a valid seed, and is still never echoed.
+    for (const mangled of [`${secret} `, `"${secret}"`, `${secret.slice(0, 55)}${secret.endsWith('A') ? 'B' : 'A'}`,
+      `file:${secret}`]) {
+      const output = io();
+      expect(await main(['keys', 'address', '--key', mangled, '--json'], env(), output.io)).toBe(EXIT.usage);
+      expect([...output.out, ...output.err].join('\n')).not.toContain(secret.slice(0, 55));
+    }
   });
 
   it('creates and resolves named keys and prints JSON results', async () => {
@@ -145,6 +187,26 @@ describe('command line', () => {
     expect(await main(['keys', 'address', '--key', 'agent'], env(), shown.io)).toBe(EXIT.ok);
     expect(shown.out[0]).toBe(`address: ${result.address}`);
     expect(await main(['keys', 'create', '--name', 'agent'], env(), io().io)).toBe(EXIT.usage);
+  });
+
+  it('refuses --dry-run where the effect cannot be simulated, before doing anything', async () => {
+    for (const argv of [
+      ['verify', 'revoke', '--agent', '1', '--revision', '1', '--sequence', '1', '--provider', 'provider'],
+      ['keys', 'create', '--name', 'agent'], ['keys', 'fund', '--key', 'agent'],
+      ['execute', 'sign', '--out', join(directory, 'signed.json')],
+    ]) {
+      const run = io();
+      expect(await main([...argv, '--dry-run'], env(), run.io), argv.join(' ')).toBe(EXIT.usage);
+      expect(run.err.join(), argv.join(' ')).toContain('--dry-run is not supported');
+    }
+    await expect(readdir(join(directory, 'keys'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('queries a journaled hash and knows nothing about others', async () => {
+    const run = io();
+    expect(await main(['tx', 'status', '--hash', 'ab'.repeat(32)], env(), run.io)).toBe(EXIT.usage);
+    expect(run.err.join()).toContain('No journal record');
+    expect(await main(['tx', 'status', '--hash', 'nothex'], env(), io().io)).toBe(EXIT.usage);
   });
 
   it('requires contract addresses and well-formed arguments before touching the network', async () => {

@@ -280,7 +280,8 @@ async function vet(url: URL, resolver: Resolver, signal: AbortSignal) {
   const first = answers[0];
   if (!first) throw new FetchRejected('dns', `No DNS answer for ${host}`);
   const blocked = answers.find(({ address }) => !isPublicAddress(address));
-  if (blocked) throw new FetchRejected('private-address', `${host} resolves to non-public ${blocked.address}`);
+  // The address stays out of the message: it ends up in a public report, where it would map the verifier's network.
+  if (blocked) throw new FetchRejected('private-address', `${host} resolves to a non-public address`);
   return first;
 }
 

@@ -74,6 +74,7 @@ export const verifyCommands: Record<string, Command> = {
   revoke: {
     summary: 'Revoke a published result: --agent <id> --revision <n> --sequence <n> --provider <key>',
     options: { agent: 'string', revision: 'string', sequence: 'string', provider: 'string', ...registries },
+    dryRun: false,
     async run(runtime, values) {
       const provider = await runtime.keypair(values['provider'], 'provider');
       const revoked = await revoke(await verifier(runtime, provider.publicKey(), values), provider,

@@ -1,20 +1,24 @@
 import { Address, Contract, Operation, StrKey, hash, scValToNative, xdr } from '@stellar/stellar-sdk';
-import { signActionAuthorization } from './actions.js';
-import { signRegistryAuthorization } from './agents.js';
+import { assertActionTree, signActionAuthorization } from './actions.js';
+import { assertRegistryTree, signRegistryAuthorization } from './agents.js';
 import { simulateRead, type ContractRead } from './contract-call.js';
 import { encodeWalletConstructorArgs } from './encoding.js';
 import { authSigner, type Signer } from './signers.js';
-import type { EntryAuthorizer, Invocation, NetworkContext } from './transactions.js';
+import type { EntryAuthorizer, Invocation, NetworkContext, TreeCheck } from './transactions.js';
 import type {
   ActionRequest, RegistryArgs, RegistryAuthMethod, VerificationArgs, VerificationAuthMethod, WalletArgs,
   WalletOwnerMethod,
 } from './types.js';
-import { signVerificationAuthorization } from './verification.js';
-import { signFundingAuthorization, signWalletAuthorization, walletOperation } from './wallet.js';
+import { assertVerificationTree, signVerificationAuthorization } from './verification.js';
+import {
+  assertFundingTree, assertWalletTree, signFundingAuthorization, signWalletAuthorization, walletOperation,
+} from './wallet.js';
 
 /**
  * Domain invocations: each pairs an operation with authorizers that sign only the exact expected call for each
- * account involved. Pass them to `invoke` (the source pays and signs the envelope) or `signForSponsor`.
+ * account involved, and with the same tree check for when that account is the transaction source and authorizes
+ * through the envelope signature instead. Pass them to `invoke` (the source pays and signs the envelope) or
+ * `signForSponsor`.
  */
 
 type Window = Parameters<EntryAuthorizer>[1];
@@ -36,6 +40,7 @@ export function ownerInvocation<M extends WalletOwnerMethod>(
         signer: authSigner(owner),
       }),
     },
+    checks: { [owner.address]: (root) => assertWalletTree(root, wallet, method, args) },
   };
 }
 
@@ -51,6 +56,7 @@ export function fundInvocation(
         entry, contractId: wallet, args, ...context(network, window), signer: authSigner(funder),
       }),
     },
+    checks: { [funder.address]: (root) => assertFundingTree(root, wallet, args) },
   };
 }
 
@@ -63,6 +69,7 @@ export function executeInvocation(network: NetworkContext, request: ActionReques
         entry, request, agentAddress: agent.address, ...context(network, window), signer: authSigner(agent),
       }),
     },
+    checks: { [agent.address]: (root) => assertActionTree(root, request) },
   };
 }
 
@@ -78,6 +85,8 @@ export function registryInvocation<M extends RegistryAuthMethod>(
         entry, contractId: registry, method, args, address: signer.address, ...context(network, window),
         signer: authSigner(signer),
       })] as const)),
+    checks: Object.fromEntries(signers.map((signer) => [signer.address,
+      ((root) => assertRegistryTree(root, registry, method, args)) satisfies TreeCheck] as const)),
   };
 }
 
@@ -94,25 +103,67 @@ export function verificationInvocation<M extends VerificationAuthMethod>(
         signer: authSigner(signer),
       }),
     },
+    checks: { [signer.address]: (root) => assertVerificationTree(root, registry, method, args, signer.address) },
   };
 }
 
-/** Install contract code; authorized by the source alone. */
+/** Install contract code. Uploading needs no authorization entry, so the source is expected to authorize nothing. */
 export const uploadInvocation = (wasm: Uint8Array): Invocation => ({
   operation: Operation.uploadContractWasm({ wasm }),
 });
 
-/** Deploy a smart wallet for `owner`, who must be the transaction source: the constructor requires its authorization. */
-export function walletDeployment(
-  owner: string, wasmHash: Uint8Array, agentRegistry: string, verificationRegistry: string, salt: Uint8Array,
+/**
+ * Deploy installed code as a new contract. `deployer` must be the transaction source: its envelope signature
+ * authorizes the creation, and the check admits nothing beyond the contract's own constructor.
+ */
+export function contractDeployment(
+  networkPassphrase: string, deployer: string, wasmHash: Uint8Array, salt: Uint8Array, constructorArgs: xdr.ScVal[],
 ): Invocation {
   if (wasmHash.length !== 32 || salt.length !== 32) throw new Error('Expected a 32-byte WASM hash and salt');
+  const operation = Operation.createCustomContract({
+    address: Address.fromString(deployer), wasmHash: Buffer.from(wasmHash), salt: Buffer.from(salt), constructorArgs,
+  });
+  const contract = deployedAddress(networkPassphrase, deployer, salt);
   return {
-    operation: Operation.createCustomContract({
-      address: Address.fromString(owner), wasmHash: Buffer.from(wasmHash), salt: Buffer.from(salt),
-      constructorArgs: encodeWalletConstructorArgs(owner, agentRegistry, verificationRegistry),
-    }),
+    operation,
+    checks: { [deployer]: (root) => assertDeploymentTree(root, operation, contract, constructorArgs) },
   };
+}
+
+/** Deploy a smart wallet for `owner`, who must be the transaction source: the constructor requires its authorization. */
+export function walletDeployment(
+  networkPassphrase: string, owner: string, wasmHash: Uint8Array, agentRegistry: string,
+  verificationRegistry: string, salt: Uint8Array,
+): Invocation {
+  return contractDeployment(networkPassphrase, owner, wasmHash, salt,
+    encodeWalletConstructorArgs(owner, agentRegistry, verificationRegistry));
+}
+
+/**
+ * Throws unless `root` is exactly the creation `operation` performs, with at most the one child the host records
+ * for a constructor that requires the deployer: `contract.__constructor(constructorArgs)` and nothing below it.
+ */
+export function assertDeploymentTree(
+  root: xdr.SorobanAuthorizedInvocation, operation: xdr.Operation, contract: string, constructorArgs: xdr.ScVal[],
+): void {
+  const { body } = operation;
+  const hostFunction = body.type === 'invokeHostFunction' ? body.invokeHostFunctionOp.hostFunction : undefined;
+  const fn = root.function;
+  if (hostFunction?.type !== 'hostFunctionTypeCreateContractV2'
+    || fn.type !== 'sorobanAuthorizedFunctionTypeCreateContractV2HostFn'
+    || fn.createContractV2HostFn.toXdr('hex') !== hostFunction.createContractV2.toXdr('hex')) {
+    throw new Error('Authorization invocation does not match the expected contract deployment');
+  }
+  const [child, ...rest] = root.subInvocations;
+  if (!child) return;
+  const call = child.function;
+  if (rest.length || child.subInvocations.length || call.type !== 'sorobanAuthorizedFunctionTypeContractFn'
+    || Address.fromScAddress(call.contractFn.contractAddress).toString() !== contract
+    || call.contractFn.functionName.toString() !== '__constructor'
+    || call.contractFn.args.length !== constructorArgs.length
+    || call.contractFn.args.some((arg, i) => arg.toXdr('hex') !== constructorArgs[i]!.toXdr('hex'))) {
+    throw new Error('A contract deployment may authorize only its own constructor');
+  }
 }
 
 /** The contract address `createCustomContract` assigns for `deployer` and `salt` on this network. */

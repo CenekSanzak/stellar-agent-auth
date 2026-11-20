@@ -13,7 +13,8 @@ import { MAX_BODY_BYTES, RateLimiter, RequestRejected, admit } from './simulatio
  * - `GET /v1/health` reports the sponsor address and policy.
  *
  * A settled result is HTTP 200 whatever its status, a pending or unknown one 202. A simulation rejection is 422 with
- * the contract error name, so a client can tell "nothing happened" from every submitted outcome.
+ * the contract error name. Every 4xx means nothing was submitted for the request; a 5xx may follow a submission, so
+ * a client must treat it as an unknown outcome.
  */
 
 export interface SubmitterOptions {
@@ -88,7 +89,8 @@ export function createHandler(options: SubmitterOptions) {
       if (error instanceof SponsorRefused) return json(response, 403, { error: error.message });
       if (error instanceof FeeCeilingExceeded) return json(response, 403, { error: error.message });
       if (error instanceof SubmissionUnsettled) {
-        return json(response, 503, { error: `Sponsor is settling ${error.record.hash}; retry later` });
+        // Nothing was built for this request, so it is a refusal (4xx), not an uncertain outcome (5xx).
+        return json(response, 409, { error: `Sponsor is settling ${error.record.hash}; retry later` });
       }
       console.error('submitter:', error);
       return json(response, 500, { error: 'Internal error' });

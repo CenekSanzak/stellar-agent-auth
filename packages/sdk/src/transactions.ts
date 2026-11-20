@@ -169,21 +169,41 @@ export type EntryAuthorizer = (entry: xdr.SorobanAuthorizationEntry, window: Aut
 /** Entry authorizers keyed by the account each one signs for. */
 export type Authorizers = Readonly<Record<string, EntryAuthorizer>>;
 
+/** Throws unless `root` is exactly the invocation tree an account agreed to authorize. */
+export type TreeCheck = (root: xdr.SorobanAuthorizedInvocation) => void;
+
 /**
- * Sign every recorded entry with the authorizer for its account. Source-account credentials are accepted only when
- * `allowSource`: in a sponsored transaction the source is the sponsor, which must never authorize anything.
+ * The transaction source and the tree checks keyed by account. A source-account entry carries no signature of its
+ * own: the envelope signature authorizes its whole tree, so the tree is checked here instead of by an authorizer.
+ */
+export interface SourceAuthorization {
+  address: string;
+  checks: Readonly<Record<string, TreeCheck>>;
+}
+
+/**
+ * Sign every recorded entry with the authorizer for its account. A source-account entry is accepted only when
+ * `source` is given and has a tree check for that account that passes; anything the source was not expected to
+ * authorize is refused. In a sponsored transaction the source is the sponsor, which must never authorize anything,
+ * so `source` is omitted there.
  */
 export async function authorizeEntries(
   entries: readonly xdr.SorobanAuthorizationEntry[], authorizers: Authorizers, window: AuthWindow,
-  allowSource: boolean,
+  source?: SourceAuthorization,
 ): Promise<xdr.SorobanAuthorizationEntry[]> {
   const signed: xdr.SorobanAuthorizationEntry[] = [];
   for (const entry of entries) {
     const address = signingAddress(entry);
     if (address === undefined) {
-      if (entry.credentials.type !== 'sorobanCredentialsSourceAccount' || !allowSource) {
+      if (entry.credentials.type !== 'sorobanCredentialsSourceAccount' || !source) {
         throw new Error('Simulation asked the transaction source to authorize; refusing');
       }
+      const check = Object.hasOwn(source.checks, source.address) ? source.checks[source.address] : undefined;
+      if (!check) {
+        throw new Error(`The call needs authorization from its source ${source.address}, which this call does not `
+          + 'expect; refusing');
+      }
+      check(entry.rootInvocation);
       signed.push(entry);
       continue;
     }
@@ -444,6 +464,11 @@ export interface Invocation {
   operation: xdr.Operation;
   /** Signers for every account other than the transaction source that the call must authorize. */
   authorizers?: Authorizers;
+  /**
+   * The exact tree each account agrees to, for when that account is the transaction source and so authorizes
+   * through the envelope signature. A source without a check here may authorize nothing.
+   */
+  checks?: Readonly<Record<string, TreeCheck>>;
 }
 
 export interface Prepared {
@@ -464,7 +489,8 @@ export async function prepare(
   const account = await loadSource(context, source);
   const recording = await simulate(context, buildTransaction(context, account, invocation.operation, limits), 'record');
   const window = authWindow(recording.latestLedger, limits);
-  const auth = await authorizeEntries(recording.result.auth, invocation.authorizers ?? {}, window, true);
+  const auth = await authorizeEntries(recording.result.auth, invocation.authorizers ?? {}, window,
+    { address: source, checks: invocation.checks ?? {} });
   const tx = buildTransaction(context, account, withAuth(invocation.operation, auth), limits);
   const enforced = await simulate(context, tx, 'enforce');
   const transaction = assemble(tx, enforced, limits);

@@ -1,18 +1,19 @@
 import { once } from 'node:events';
 import { createServer, type Server } from 'node:http';
-import { Address, Asset, Keypair, Operation, xdr } from '@stellar/stellar-sdk';
+import { Account, Address, Asset, Keypair, Operation, xdr } from '@stellar/stellar-sdk';
 import { afterEach, describe, expect, it } from 'vitest';
 import { keypairSigner } from '../../packages/sdk/src/signers.js';
 import {
-  Sponsor, SponsorRefused, assertSuppliedAuth, httpSponsor, inspectSponsoredOperation, sponsorPolicy,
-  type SponsorEndpoint, type SponsorshipResult,
+  Sponsor, SponsorOutcomeUnknown, SponsorRefused, assertSuppliedAuth, httpSponsor, inspectSponsoredOperation,
+  sponsorPolicy, sponsoredInvoke, type SponsorEndpoint, type SponsorshipResult,
 } from '../../packages/sdk/src/sponsor.js';
 import {
-  MemoryJournal, SimulationRejected, SubmissionUnsettled, type TransactionRecord,
+  MemoryJournal, SimulationRejected, SubmissionUnsettled, buildTransaction, type TransactionRecord,
+  type TransactionStatus,
 } from '../../packages/sdk/src/transactions.js';
 import { RateLimiter, admit, createHandler } from '../../services/submitter/src/index.js';
 import { contract } from '../fixtures/abi-v1.js';
-import { FakeRpc, success } from './support/fake-rpc.js';
+import { FakeRpc, hex, success } from './support/fake-rpc.js';
 
 const wallet = contract(31);
 const sponsorKey = Keypair.random();
@@ -143,6 +144,106 @@ describe('sponsor serialization', () => {
   });
 });
 
+describe('sponsored client', () => {
+  const scope = 'execute:a';
+  const signedOperation = () => xdr.Operation.fromXdr(operation([entry()]), 'base64');
+
+  /** The transaction an honest sponsor builds around `operationXdr`, and the report it sends back. */
+  function sponsored(rpc: FakeRpc, operationXdr: string, source = sponsorKey.publicKey()) {
+    const tx = buildTransaction(rpc.context(), new Account(source, '1000'),
+      xdr.Operation.fromXdr(operationXdr, 'base64'), policy.limits);
+    const now = new Date().toISOString();
+    const report = (status: TransactionStatus, overrides: Partial<TransactionRecord> = {}): SponsorshipResult => ({
+      status, hash: hex(tx.hash()),
+      record: {
+        scope: 'sponsor', hash: hex(tx.hash()), envelope: tx.toXDR(), source: tx.source,
+        max_time: tx.timeBounds!.maxTime, submitted_after_ledger: 100, status, created_at: now, updated_at: now,
+        ...overrides,
+      },
+    });
+    return { tx, report };
+  }
+  const endpoint = (sponsor: SponsorEndpoint['sponsor']): SponsorEndpoint => ({
+    address: sponsorKey.publicKey(), sponsor, status: async () => {
+      throw new Error('unused');
+    },
+  });
+
+  it('settles the transaction it can tie to its own operation, read from the network', async () => {
+    const rpc = new FakeRpc();
+    const journal = new MemoryJournal();
+    const outcome = await sponsoredInvoke(rpc.context(), endpoint(async (operationXdr) => {
+      const { tx, report } = sponsored(rpc, operationXdr);
+      rpc.commit(tx, xdr.ScVal.scvU32(7));
+      return report('success');
+    }), signedOperation(), journal, scope);
+    expect(outcome).toMatchObject({ status: 'success', record: { scope, status: 'success', source: sponsorKey.publicKey() } });
+    expect(outcome.returnValue?.toXdr('base64')).toBe(xdr.ScVal.scvU32(7).toXdr('base64'));
+    expect((await journal.get(outcome.hash))?.status).toBe('success');
+  });
+
+  it('does not accept another transaction passed off as this one', async () => {
+    const rpc = new FakeRpc();
+    const cases: [string, (operationXdr: string) => SponsorshipResult][] = [
+      ['another committed operation', () => {
+        const other = sponsored(rpc, operation([entry({ callArgs: [xdr.ScVal.scvU32(2)] })]));
+        rpc.commit(other.tx);
+        return other.report('success');
+      }],
+      ['a different source', (operationXdr) => {
+        const other = sponsored(rpc, operationXdr, Keypair.random().publicKey());
+        rpc.commit(other.tx);
+        return other.report('success');
+      }],
+      ['a hash that is not the envelope\'s', (operationXdr) => {
+        const { report } = sponsored(rpc, operationXdr);
+        const forged = report('success');
+        return { ...forged, record: { ...forged.record, hash: 'cd'.repeat(32) } };
+      }],
+      ['no readable envelope', (operationXdr) => sponsored(rpc, operationXdr).report('success', { envelope: 'AAAA' })],
+    ];
+    for (const [label, answer] of cases) {
+      const journal = new MemoryJournal();
+      const error = await sponsoredInvoke(rpc.context(), endpoint(async (operationXdr) => answer(operationXdr)),
+        signedOperation(), journal, scope).catch((thrown: unknown) => thrown);
+      expect(error, label).toBeInstanceOf(SponsorOutcomeUnknown);
+      expect(error, label).toMatchObject({ expirationLedger: 120 });
+      expect(journal.records.size, label).toBe(0);
+    }
+  });
+
+  it('counts a reported rejection or success only once the network shows it', async () => {
+    const rpc = new FakeRpc();
+    for (const status of ['rejected', 'expired', 'success'] as const) {
+      const journal = new MemoryJournal();
+      // The sponsor claims the envelope is dead (or applied) and backdates its time bound; it is still includable.
+      const error = await sponsoredInvoke(rpc.context(), endpoint(async (operationXdr) =>
+        sponsored(rpc, operationXdr).report(status, { max_time: '1' })), signedOperation(), journal, scope)
+        .catch((thrown: unknown) => thrown);
+      expect(error, status).toBeInstanceOf(SubmissionUnsettled);
+      const [pending] = await journal.unsettled(scope);
+      expect(pending, status).toMatchObject({ status: 'pending', submitted_after_ledger: 100 });
+      expect(Number(pending!.max_time), status).toBeGreaterThan(rpc.latest.closeTime);
+    }
+  });
+
+  it('treats a sponsor that does not answer as an unknown outcome, and a refusal as a refusal', async () => {
+    const rpc = new FakeRpc();
+    const journal = new MemoryJournal();
+    const lost = await sponsoredInvoke(rpc.context(), endpoint(async () => {
+      throw new TypeError('fetch failed');
+    }), signedOperation(), journal, scope).catch((thrown: unknown) => thrown);
+    expect(lost).toBeInstanceOf(SponsorOutcomeUnknown);
+    expect(lost).toMatchObject({ expirationLedger: 120, message: expect.stringContaining('until ledger 120') });
+    for (const refusal of [new SponsorRefused('no'), new SimulationRejected('HostError: Error(Contract, #8)')]) {
+      await expect(sponsoredInvoke(rpc.context(), endpoint(async () => {
+        throw refusal;
+      }), signedOperation(), journal, scope)).rejects.toBe(refusal);
+    }
+    expect(journal.records.size).toBe(0);
+  });
+});
+
 describe('submitter HTTP adapter', () => {
   let server: Server | undefined;
   afterEach(() => server?.close());
@@ -190,7 +291,18 @@ describe('submitter HTTP adapter', () => {
     next = async () => {
       throw new SubmissionUnsettled(record('pending').record);
     };
-    await expect(client.sponsor(operation([entry()]))).rejects.toThrow('settling');
+    // Busy is a refusal: nothing was built for this request.
+    const busy = await client.sponsor(operation([entry()])).catch((error: unknown) => error);
+    expect(busy).toBeInstanceOf(SponsorRefused);
+    expect(busy).toHaveProperty('message', expect.stringContaining('settling'));
+
+    // A server error may follow a submission, so the client must not read it as "nothing was sent".
+    next = async () => {
+      throw new Error('journal write failed');
+    };
+    const crashed = await client.sponsor(operation([entry()])).catch((error: unknown) => error);
+    expect(crashed).toBeInstanceOf(Error);
+    expect(crashed).not.toBeInstanceOf(SponsorRefused);
 
     await expect(client.sponsor(operation([entry({ address: sponsorKey.publicKey() })])))
       .rejects.toThrow('sponsor does not authorize');

@@ -1,6 +1,6 @@
 import { Address, Contract, StrKey, authorizeEntry, scValToNative, type xdr } from '@stellar/stellar-sdk';
 import { assertAuthWindow } from './actions.js';
-import { signInvocation, simulateRead, type ContractRead } from './contract-call.js';
+import { assertInvocationTree, signInvocation, simulateRead, type ContractRead } from './contract-call.js';
 import { signingAddress } from './credentials.js';
 import {
   decodeAuditHead, decodeHashList, decodePolicy, decodePolicyState, encodeWalletArgs,
@@ -112,7 +112,14 @@ export async function signFundingAuthorization(input: FundingAuthorization): Pro
   if (!StrKey.isValidEd25519PublicKey(args.from) || signingAddress(entry) !== args.from) {
     throw new Error('Expected native authorization for the funding account');
   }
-  const root = entry.rootInvocation;
+  assertFundingTree(entry.rootInvocation, contractId, args);
+  return authorizeEntry(entry, signer, expirationLedger, networkPassphrase, args.from);
+}
+
+/** Throws unless `root` is `wallet.fund(from, asset, amount)` with the one child `asset.transfer(from, wallet, amount)`. */
+export function assertFundingTree(
+  root: xdr.SorobanAuthorizedInvocation, contractId: string, args: WalletArgs['fund'],
+): void {
   const call = contractCall(root);
   const expected = encodeWalletArgs('fund', args).map((arg) => arg.toXdr('hex'));
   if (call?.contract !== contractId || call.method !== 'fund' || call.args.join() !== expected.join()) {
@@ -127,7 +134,16 @@ export async function signFundingAuthorization(input: FundingAuthorization): Pro
     || transfer.args[2] !== expected[2]) {
     throw new Error('Funding authorization must cover exactly the asset transfer into the wallet');
   }
-  return authorizeEntry(entry, signer, expirationLedger, networkPassphrase, args.from);
+}
+
+/** The owner's tree check: exactly `wallet.method(args)` for an owner-only method, with no child invocations. */
+export function assertWalletTree<M extends WalletOwnerMethod>(
+  root: xdr.SorobanAuthorizedInvocation, contractId: string, method: M, args: WalletArgs[M],
+): void {
+  assertInvocationTree(root, {
+    contractId, method, methods: WALLET_OWNER_METHODS, expectedArgs: () => encodeWalletArgs(method, args),
+    label: 'smart wallet',
+  });
 }
 
 export type WalletRead = ContractRead;
