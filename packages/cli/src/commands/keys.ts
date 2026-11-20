@@ -10,6 +10,7 @@ export const keysCommands: Record<string, Command> = {
   create: {
     summary: 'Generate a named key: --name <name> [--fund] (Friendbot, local and testnet only)',
     options: { name: 'string', fund: 'boolean' },
+    dryRun: false,
     async run(runtime, values, flags) {
       const name = required(values['name'], 'name');
       let address: string;
@@ -33,6 +34,7 @@ export const keysCommands: Record<string, Command> = {
   fund: {
     summary: 'Fund a key with Friendbot (local and testnet only): --key <reference>',
     options: { key: 'string' },
+    dryRun: false,
     async run(runtime, values) {
       const { address } = await runtime.key(values['key'], 'key');
       await runtime.server.requestAirdrop(address);

@@ -1,5 +1,5 @@
 import { Address, Contract, StrKey, type authorizeEntry, type xdr } from '@stellar/stellar-sdk';
-import { signInvocation, simulateRead, type ContractRead } from './contract-call.js';
+import { assertInvocationTree, signInvocation, simulateRead, type ContractRead } from './contract-call.js';
 import { decodeProviderRecord, decodeVerification, encodeVerificationArgs } from './encoding.js';
 import {
   CHECK_KINDS, MAX_CHECKS, MAX_RISK_SCORE, SCHEMA_VERSION, SERIOUS_WALLET_RISK_MASK, VERIFICATION_AUTH_METHODS,
@@ -165,14 +165,32 @@ interface VerificationAuthorization<M extends VerificationAuthMethod> {
 export async function signVerificationAuthorization<M extends VerificationAuthMethod>(
   input: VerificationAuthorization<M>,
 ): Promise<xdr.SorobanAuthorizationEntry> {
-  const call = { method: input.method, args: input.args } as VerificationCall;
-  if ((call.method === 'publish' && call.args.result.provider !== input.address)
-    || (call.method === 'revoke' && call.args.provider !== input.address)) {
-    throw new Error('Only the named provider may authorize its own results');
-  }
+  assertOwnResult(input.method, input.args, input.address);
   return signInvocation({
     ...input, methods: VERIFICATION_AUTH_METHODS,
     expectedArgs: () => encodeVerificationArgs(input.method, input.args), label: 'verification registry',
+  });
+}
+
+function assertOwnResult<M extends VerificationAuthMethod>(method: M, args: VerificationArgs[M], address: string) {
+  const call = { method, args } as VerificationCall;
+  if ((call.method === 'publish' && call.args.result.provider !== address)
+    || (call.method === 'revoke' && call.args.provider !== address)) {
+    throw new Error('Only the named provider may authorize its own results');
+  }
+}
+
+/**
+ * Throws unless `root` is exactly `registry.method(args)` for an admin or provider method that `address` may
+ * authorize, with no child invocations.
+ */
+export function assertVerificationTree<M extends VerificationAuthMethod>(
+  root: xdr.SorobanAuthorizedInvocation, contractId: string, method: M, args: VerificationArgs[M], address: string,
+): void {
+  assertOwnResult(method, args, address);
+  assertInvocationTree(root, {
+    contractId, method, methods: VERIFICATION_AUTH_METHODS,
+    expectedArgs: () => encodeVerificationArgs(method, args), label: 'verification registry',
   });
 }
 

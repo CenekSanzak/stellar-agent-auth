@@ -32,7 +32,13 @@ export async function signActionAuthorization(input: ActionAuthorization): Promi
   if (!StrKey.isValidEd25519PublicKey(agentAddress) || signingAddress(entry) !== agentAddress) {
     throw new Error('Expected native authorization for the agent account');
   }
-  const root = entry.rootInvocation;
+  assertActionTree(entry.rootInvocation, request);
+
+  return authorizeEntry(entry, signer, expirationLedger, networkPassphrase, agentAddress);
+}
+
+/** Throws unless `root` is exactly `wallet.execute(request)` for a transfer, with no child invocations. */
+export function assertActionTree(root: xdr.SorobanAuthorizedInvocation, request: ActionRequest): void {
   const fn = root.function;
   if (!StrKey.isValidContract(request.wallet) || request.action.kind !== 'Transfer'
     || root.subInvocations.length !== 0 || fn.type !== 'sorobanAuthorizedFunctionTypeContractFn') {
@@ -45,6 +51,4 @@ export async function signActionAuthorization(input: ActionAuthorization): Promi
     || args.length !== 1 || args[0]!.toXdr('hex') !== encodeAction(request).toXdr('hex')) {
     throw new Error('Authorization invocation does not match the expected action');
   }
-
-  return authorizeEntry(entry, signer, expirationLedger, networkPassphrase, agentAddress);
 }

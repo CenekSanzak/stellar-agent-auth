@@ -1,5 +1,5 @@
 import { Contract, StrKey, type authorizeEntry, type xdr } from '@stellar/stellar-sdk';
-import { signInvocation, simulateRead as simulate, type ContractRead } from './contract-call.js';
+import { assertInvocationTree, signInvocation, simulateRead as simulate, type ContractRead } from './contract-call.js';
 import { decodeIdentity, encodeRegistryArgs } from './encoding.js';
 import {
   MAX_METADATA_URI_BYTES, REGISTRY_AUTH_METHODS,
@@ -93,6 +93,16 @@ export async function signRegistryAuthorization<M extends RegistryAuthMethod>(
 ): Promise<xdr.SorobanAuthorizationEntry> {
   return signInvocation({
     ...input, methods: REGISTRY_AUTH_METHODS, expectedArgs: () => encodeRegistryArgs(input.method, input.args),
+    label: 'agent registry',
+  });
+}
+
+/** Throws unless `root` is exactly `registry.method(args)` for a mutating method, with no child invocations. */
+export function assertRegistryTree<M extends RegistryAuthMethod>(
+  root: xdr.SorobanAuthorizedInvocation, contractId: string, method: M, args: RegistryArgs[M],
+): void {
+  assertInvocationTree(root, {
+    contractId, method, methods: REGISTRY_AUTH_METHODS, expectedArgs: () => encodeRegistryArgs(method, args),
     label: 'agent registry',
   });
 }

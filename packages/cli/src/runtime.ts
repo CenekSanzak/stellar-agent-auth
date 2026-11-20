@@ -2,8 +2,9 @@ import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { Keypair, StrKey, rpc, type xdr } from '@stellar/stellar-sdk';
 import {
-  AgentRegistryError, FeeCeilingExceeded, SimulationRejected, SponsorRefused, SubmissionUnsettled,
-  VerificationRegistryError, WalletError, buildTransaction, explainContractError, fromContractUnits, httpSponsor,
+  AgentRegistryError, FeeCeilingExceeded, SimulationRejected, SponsorOutcomeUnknown, SponsorRefused,
+  SubmissionUnsettled, VerificationRegistryError, WalletError, buildTransaction, explainContractError,
+  fromContractUnits, httpSponsor,
   invoke, invokeSigned, loadConfig, loadSource, networkContext, pipelineLimits, prepare, readAssetDecimals,
   settleScope, signForSponsor, simulate, sponsoredInvoke, toContractUnits,
   type ContractRead, type Environment, type Invocation, type NetworkContext, type PipelineLimits, type Signer,
@@ -20,8 +21,16 @@ export const EXIT = {
   rejected: 3,
   /** Submitted and definitively not applied: failed on the ledger, rejected by the network or expired. */
   failed: 4,
-  /** Submitted with an outcome not yet known. Do not retry; rerun the command later to settle it. */
+  /**
+   * Submitted, or possibly submitted, with an outcome not yet known. Never repeat the command to find out: that
+   * signs a new request. Query the hash with `tx status` until it settles.
+   */
   pending: 75,
+  /**
+   * An earlier submission in the same scope settled just now and is reported instead of running this command;
+   * nothing new was signed or sent. Run the command again only if its action is still wanted.
+   */
+  earlier: 76,
 } as const;
 
 export class UsageError extends Error {
@@ -191,6 +200,23 @@ export class Runtime {
   }
 
   /**
+   * Settle earlier submissions in `scope`. One still in flight throws `SubmissionUnsettled`. If any settled just
+   * now, their outcomes are reported and the command stops: the caller may be repeating a command whose first
+   * attempt was applied, and building a new request would apply it twice.
+   */
+  async settleEarlier(scope: string): Promise<void> {
+    const outcomes = await settleScope(await this.context(), this.journal, scope);
+    if (!outcomes.length) return;
+    throw new OutcomeError(EXIT.earlier,
+      `An earlier transaction in this scope settled just now (${outcomes.map(({ hash, status }) => `${hash}: ${status}`)
+        .join(', ')}). Nothing new was signed or sent. Run the command again only if its action is still wanted.`,
+      { status: 'earlier-settled', transactions: outcomes.map((outcome) => ({
+        transaction: outcome.hash, status: outcome.status, ledger: outcome.record.ledger ?? null,
+        ...(outcome.code || outcome.record.error ? { error: outcome.code ?? outcome.record.error } : {}),
+      })) });
+  }
+
+  /**
    * Run an invocation. With a sponsor, every entry is signed by its principal and the sponsor pays; otherwise
    * `payer` (the `--source` key, else the acting principal) is the transaction source and signs the envelope.
    * `--dry-run` stops after enforced simulation.
@@ -200,6 +226,7 @@ export class Runtime {
     limits: PipelineLimits = this.limits,
   ): Promise<Submitted> {
     const context = await this.context();
+    if (!this.options.dryRun) await this.settleEarlier(scope);
     const sponsor = mode === 'any' ? this.sponsor() : undefined;
     if (sponsor) {
       const endpoint = await sponsor;
@@ -214,13 +241,14 @@ export class Runtime {
       return { dryRun: { fee: prepared.fee, source: source.address, return_value: prepared.simulation.result.retval } };
     }
     // The record is kept under the action's scope, and the source's earlier submissions must settle first too.
-    await settleScope(context, this.journal, `source:${source.address}`);
+    await this.settleEarlier(`source:${source.address}`);
     return { outcome: await invoke(context, source, invocation, this.journal, { limits, scope }) };
   }
 
   /** Submit an operation whose entries are already signed. */
   async runSigned(operation: xdr.Operation, scope: string): Promise<Submitted> {
     const context = await this.context();
+    if (!this.options.dryRun) await this.settleEarlier(scope);
     const sponsor = this.sponsor();
     if (sponsor) {
       const endpoint = await sponsor;
@@ -230,7 +258,7 @@ export class Runtime {
     if (!this.options.source) throw new UsageError('Set --sponsor-url or SUBMITTER_URL, or pass --source to pay fees');
     const source = await this.key(this.options.source, 'source');
     if (this.options.dryRun) return this.dryRunSigned(operation, source.address);
-    await settleScope(context, this.journal, `source:${source.address}`);
+    await this.settleEarlier(`source:${source.address}`);
     return { outcome: await invokeSigned(context, source, operation, this.journal, scope, this.limits) };
   }
 
@@ -266,8 +294,8 @@ export function settled(submitted: Submitted, extra: (value: xdr.ScVal) => Recor
   const reason = outcome.code ? explainContractError(outcome.code) : outcome.record.error ?? 'no reason reported';
   const result = { ...base, ...(outcome.code ? { error: outcome.code } : {}), reason };
   if (outcome.status === 'pending' || outcome.status === 'unknown') {
-    throw new OutcomeError(EXIT.pending, `Transaction ${outcome.hash} is ${outcome.status}. Do not retry: rerun the `
-      + 'same command later, or query the hash, to settle it.', result);
+    throw new OutcomeError(EXIT.pending, `Transaction ${outcome.hash} is ${outcome.status} and may still be applied. `
+      + `Do not repeat the command; query it with "tx status --hash ${outcome.hash}" until it settles.`, result);
   }
   throw new OutcomeError(EXIT.failed, `Transaction ${outcome.hash} ${outcome.status}: ${reason}`, result);
 }
@@ -293,8 +321,17 @@ export function classify(error: unknown): { code: number; message: string; resul
   }
   if (error instanceof SubmissionUnsettled) {
     return {
-      code: EXIT.pending, message: `${error.message}. Rerun later; nothing new was submitted.`,
+      code: EXIT.pending,
+      message: `${error.message}. Query it with "tx status --hash ${error.record.hash}"; do not sign a new request `
+        + 'for this action until it settles.',
       result: { status: 'unsettled', transaction: error.record.hash, record_status: error.record.status },
+    };
+  }
+  if (error instanceof SponsorOutcomeUnknown) {
+    return {
+      code: EXIT.pending, message: error.message,
+      result: { status: 'unknown', stage: 'sponsor', auth_expiration_ledger: error.expirationLedger,
+        detail: error.cause instanceof Error ? error.cause.message : String(error.cause) },
     };
   }
   return { code: EXIT.error, message: error instanceof Error ? error.message : String(error), result: { status: 'error' } };

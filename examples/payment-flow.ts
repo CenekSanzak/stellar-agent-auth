@@ -24,7 +24,8 @@ import {
   Address, Asset, Operation, TransactionBuilder, hash, rpc, type xdr,
 } from '@stellar/stellar-sdk';
 import {
-  MemoryJournal, encodeVerificationConstructorArgs, fromContractUnits, invoke, keypairSigner, loadSource,
+  MemoryJournal, contractDeployment, encodeVerificationConstructorArgs, fromContractUnits, invoke, keypairSigner,
+  loadSource,
   networkContext, pipelineLimits, readAssetBalance, submit, uploadInvocation, verificationInvocation, verificationOperation,
   type NetworkContext, type Signer,
 } from '@stellar-agent-auth/sdk';
@@ -123,12 +124,8 @@ async function setup(context: NetworkContext, keys: Record<Role, Signer>, config
     const wasm = await readFile(join(WASM, `stellar_agent_auth_${name}.wasm`));
     const upload = await invoke(context, deployer, uploadInvocation(wasm), journal, { limits });
     if (upload.status !== 'success') throw new Error(`Upload ${name}: ${upload.status}`);
-    const created = await invoke(context, deployer, {
-      operation: Operation.createCustomContract({
-        address: Address.fromString(deployer.address), wasmHash: hash(wasm),
-        salt: hash(Buffer.from(`${name}:${Date.now()}:${Math.random()}`)), constructorArgs: args,
-      }),
-    }, journal, { limits });
+    const created = await invoke(context, deployer, contractDeployment(context.networkPassphrase, deployer.address,
+      hash(wasm), hash(Buffer.from(`${name}:${Date.now()}:${Math.random()}`)), args), journal, { limits });
     if (created.status !== 'success' || !created.returnValue) throw new Error(`Deploy ${name}: ${created.status}`);
     return Address.fromScVal(created.returnValue).toString();
   }
