@@ -1,6 +1,6 @@
 # P5 validation
 
-P5 is the SDK transaction pipeline, the fee sponsor and its `submitter` process, the `stellar-agent-auth` CLI and `examples/payment-flow.ts`. Its code was committed on 2026-11-05 (`eec515b`) without being run against a network. This record covers the first validation, on 2026-11-20, and the review that preceded it.
+P5 is the SDK transaction pipeline, the fee sponsor and its `submitter` process, the `stellar-agent-auth` CLI and `examples/payment-flow.ts`. Its code was committed on 2026-11-05 (`eec515b`). CI passed on that commit the same day, including the local-network job, but no validation record was written. This record covers a local run on 2026-11-20 and the review that preceded it.
 
 ## What was run
 
@@ -8,10 +8,11 @@ On 2026-11-20, on macOS arm64 with Node 24.22.2, Rust 1.98.0, Stellar CLI 30.0.1
 
 | Tree | `npm run check` | Local network (`npm run test:integration`) |
 | --- | --- | --- |
+| `eec515b` in CI (GitHub Actions run 42035022307, 2026-11-05, ubuntu-24.04) | Passed | Passed: 9 files, including the payment flow |
 | `eec515b` as committed | Passed, with its steps run one at a time: 412 unit tests in 13 files, 73 Rust tests, five WASM builds, 3 spec tests | Passed: 50 tests in 9 files |
 | With the changes below | Passed: 420 unit tests in 13 files, 73 Rust tests, five WASM builds, 3 spec tests | Passed: 50 tests in 9 files |
 
-The 50 local tests are the 43 from P1–P4, six in `tests/adversarial/sponsor.test.ts` and the CLI payment flow in `tests/integration/payment-flow.test.ts`. Each tree was run once; flakiness over repeated runs was not measured. The contracts are unchanged since P4, and their WASM sizes match the [P4 record](P4_VALIDATION.md).
+The 50 local tests are the 43 from P1–P4, six in `tests/adversarial/sponsor.test.ts` and the CLI payment flow in `tests/integration/payment-flow.test.ts`. Each tree was run once locally; flakiness over repeated runs was not measured. The contracts are unchanged since P4, and their WASM sizes match the [P4 record](P4_VALIDATION.md).
 
 To reproduce: `npm run check`, `npm run dev`, `npm run test:integration`, `npm run local:down`.
 
@@ -30,7 +31,7 @@ The payment flow test fetches the agent metadata from `raw.githubusercontent.com
 
 ## Findings from the review, and what changed
 
-The committed P5 code was reviewed before it was run. Four defects were confirmed by reading the code path and are fixed here, each with a unit test.
+The committed P5 code passed its tests, so these are defects the tests did not cover. Four were confirmed by reading the code path and are fixed here, each with a unit test.
 
 1. **Repeating a command after an uncertain outcome paid twice.** When a status query failed, the CLI exited 75 and told the user to "rerun the same command later". The rerun settled the earlier transaction silently, read the next policy sequence and signed a second payment. There was no command to query a hash.
    - `Runtime.settleEarlier` now stops a command when an earlier submission in its scope settled during this run. It reports that outcome with exit code 76 and signs nothing. A deliberate rerun then proceeds.

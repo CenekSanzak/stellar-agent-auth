@@ -99,7 +99,7 @@ The [Phase 4 validation record](P4_VALIDATION.md) covers 30 smart wallet host te
 
 ## P5 evidence
 
-The [Phase 5 validation record](P5_VALIDATION.md) covers the first run of the P5 code, the review findings fixed before it was recorded, and what is still open.
+The [Phase 5 validation record](P5_VALIDATION.md) covers the P5 test runs, the review findings fixed before it was recorded, and what is still open.
 
 - A24: sponsor tampering is shown with real signatures on the local network, and the client rejects a sponsor report it cannot tie to its own operation. Sequence collision across processes and recovery from a lost sponsor response are not shown.
 - A28: the SDK imports from outside the workspace, and the CLI example completes the flow on the local network with a separate key per role. The browser smoke test belongs to P7.
