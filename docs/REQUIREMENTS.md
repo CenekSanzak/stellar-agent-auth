@@ -1,6 +1,6 @@
 # Requirements and evidence ledger
 
-P0 infrastructure, the P1 ABI and authorization gate, the P2 agent registry, the P3 verification registry and limited verifier and the P4 smart wallet are implemented and validated locally. The P3 Testnet checkpoint has run; the wallet is not yet deployed to Testnet. Product acceptance remains tied to the verification, wallet and SDK flows below.
+P0 infrastructure, the P1 ABI and authorization gate, the P2 agent registry, the P3 verification registry and limited verifier, the P4 smart wallet and the P5 SDK pipeline, sponsor and CLI are implemented and validated locally. The P3 Testnet checkpoint has run; the wallet is not yet deployed to Testnet. P6–P9 are not built. Product acceptance remains tied to the verification, wallet and SDK flows below.
 
 | Source requirement | Acceptance IDs | Evidence required | Implementation phase |
 | --- | --- | --- | --- |
@@ -96,3 +96,11 @@ The [Phase 4 validation record](P4_VALIDATION.md) covers 30 smart wallet host te
 - A08–A20, A22: each has signed local-network evidence, host tests, or both, as listed in the validation record.
 - A21: archival and restoration are covered by host emulation of protocol 23 automatic restoration, together with TTL extension checks. Live-network archival is left to P8's maintenance evidence.
 - A23: the wallet ABI decoders are strict, every SDK signer handles CAP-71 AddressV2 credentials, and a full `execute` fits the network limits with large margins.
+
+## P5 evidence
+
+The [Phase 5 validation record](P5_VALIDATION.md) covers the first run of the P5 code, the review findings fixed before it was recorded, and what is still open.
+
+- A24: sponsor tampering is shown with real signatures on the local network, and the client rejects a sponsor report it cannot tie to its own operation. Sequence collision across processes and recovery from a lost sponsor response are not shown.
+- A28: the SDK imports from outside the workspace, and the CLI example completes the flow on the local network with a separate key per role. The browser smoke test belongs to P7.
+- F07 does not hold for the payment flow test, which fetches metadata from a public host.
