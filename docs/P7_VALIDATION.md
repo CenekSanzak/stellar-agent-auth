@@ -15,11 +15,11 @@ On 2026-11-25, on macOS arm64 with Node 24.22.2, Rust 1.98.0, Stellar CLI 30.0.1
 
 | Suite | Result |
 | --- | --- |
-| `npm run check` | Passed: 488 unit tests in 16 files, 100 Rust tests, six WASM builds, 4 spec tests |
-| `npm run test:integration`, protocol 29 Quickstart | Passed: 74 tests in 13 files |
+| `npm run check` | Passed: 503 unit tests in 16 files, 100 Rust tests, six WASM builds, 4 spec tests, and both package checks |
+| `npm run test:integration`, protocol 29 Quickstart | Passed: 74 tests in 13 files; 1 more is opt-in and was skipped |
 | `npm run test:browser`, headless Chrome on the same network | Passed: 8 tests |
 
-P7 adds 21 unit tests (`tests/unit/demo.test.ts`), 7 local-network tests (`tests/integration/demo-backend.test.ts`) and the 8 browser tests. No contract changed.
+P7 adds 21 unit tests (`tests/unit/demo.test.ts`), 7 local-network tests (`tests/integration/demo-backend.test.ts`) and the 8 browser tests. The same branch then closed most of what P5 had left open, which added 15 unit tests; see "Also in this branch" below. No contract changed.
 
 Each suite passed in its final run, which was made on a freshly started local network. Two things failed on the way and were fixed:
 
@@ -29,6 +29,25 @@ Each suite passed in its final run, which was made on a freshly started local ne
 Flakiness beyond that was not measured.
 
 To reproduce: `npm run check`, `npm run dev`, `npm run test:integration`, `npm run test:browser`, `npm run local:down`.
+
+## Also in this branch
+
+After the demo, the points [P5 validation](P5_VALIDATION.md) listed as still open were worked through; the decisions are in [ADR 0011](decisions/0011-sponsor-recovery-and-journal.md).
+
+| Point | What changed | Evidence |
+| --- | --- | --- |
+| A lost sponsor answer could lead to a second payment | A sponsor submits an operation once however often it is sent, and answers what it did with one. The client asks when an answer is lost; `tx status --operation` asks later. | Unit tests: one transaction for repeated sends, across a restart; recovery of a lost answer; a forged or foreign transaction still refused; a submitter without the route read as "cannot say" |
+| The gate test needed a public host | The example has an offline mode that runs the real verifier over a transport serving the metadata from the repository | `payment-flow.test.ts` on the local network; the online variant is opt-in |
+| `SUBMITTER_URL` captured owner commands | It applies to `execute`, `wallet fund` and `tx status --operation` only; `--direct` added | Unit tests over every command |
+| The journal depended on the working directory | User state directory, one journal per network, flushed writes, records name their network, `tx list` and `tx acknowledge` | Unit tests |
+| No total bound on a sponsor's spending | A fee budget over 24 hours, counted from the journal | Unit tests, including after a restart |
+| Two submitters on one key | A lock per key and state directory | Unit tests with a live and an exited holder |
+| The verifier had no fee ceiling | Checked before signing a publication or revocation | Unit test |
+| The CLI and services were not shown to install | `npm run check:service-packages` packs them, installs them outside the workspace and runs each | Part of `npm run check` |
+
+That last check found a real defect: a command installed in `node_modules/.bin` is a symbolic link, and every entry point compared its own path with the unresolved one. An installed `stellar-agent-auth` therefore did nothing and exited 0. All entry points now resolve the link first.
+
+The recovery of a lost sponsor answer is shown in unit tests with a stand-in RPC. It was not reproduced on a network by cutting a real connection.
 
 ## P7 gate
 
@@ -85,5 +104,5 @@ The browser test does cover two failure states in the real page: the demo server
 - **The server holds three keys in one process** and follows one owner at a time. It is a demo server.
 - **The sponsor and indexer run inside the demo server.** As separate processes they are tested by P5 and P6.
 - **Not reviewed by anyone else, and not usability-tested.** The wording was written and checked by the author.
-- **CI.** The browser test is added to the local-network job and uses the runner's Chrome. That step has not run in CI yet; the pull request's run is its first.
-- Open from earlier phases and unchanged: the lost sponsor response, the payment flow test's fetch from a public host, and the payee-side verification gate.
+- **CI.** The browser test is added to the local-network job and uses the runner's Chrome. The pull request's first run failed before reaching it: Friendbot answered 500 while the suites funded their accounts in parallel. Funding is now retried.
+- Open from earlier phases and unchanged: the payee-side verification gate and a real x402 client.

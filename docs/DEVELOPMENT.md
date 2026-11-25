@@ -33,7 +33,7 @@ npm run check
 
 Alternatively install the matching Stellar CLI release binary for your OS/architecture. `npm run build:contracts` rejects a different CLI version. Contract compilation uses `stellar contract build`, which applies the SDK's required WASM processing. The build creates the four application WASM files plus two local-only test contracts, the auth probe and the custom account spike ([ADR 0006](decisions/0006-custom-account-spike.md)), under `target/wasm32v1-none/release`. The shared types remain a library.
 
-`npm run check` typechecks source, deployments and tests; builds all TS workspaces; runs fast TS tests; runs Rust check, format, clippy and non-empty tests; and builds WASM. Fast checks need no network credentials. Rust and Node dependencies must be downloaded once.
+`npm run check` typechecks source, deployments and tests; builds all TS workspaces; packs the SDK, CLI and services and runs them outside the workspace; runs fast TS tests; runs Rust check, format, clippy and non-empty tests; and builds WASM. Fast checks need no network credentials. Rust and Node dependencies must be downloaded once.
 
 ## Local network
 
@@ -75,6 +75,7 @@ The first runs the smart wallet's account path ([ADR 0007](decisions/0007-accoun
 
 - `tests/unit`: deterministic configuration and ABI tests; SDK/service colocated tests also belong to the unit project.
 - `tests/local`, `tests/integration`, `tests/adversarial`: local-network suites, with explicit execution.
+- `tests/integration/payment-flow.test.ts` contacts no public host. Its variant that lets the verifier fetch the public metadata URL runs only with `RUN_ONLINE_TESTS=1`.
 - `tests/browser`: the owner demo in an installed Chrome against the local network; run with `npm run test:browser` after `npm run build`.
 - `tests/testnet`: opt-in public Testnet preflight.
 - Rust contract tests: native Soroban host dispatch; the wrapper rejects zero discovered tests.

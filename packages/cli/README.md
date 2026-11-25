@@ -20,7 +20,7 @@ node packages/cli/dist/index.js help
 | `policy` | `approve`, `show`, `revoke`, `replace` |
 | `execute` | `transfer`, `sign`, `submit` through the wallet's `execute`; `pay` on its account path |
 | `history` | Reads the wallet's audit events and verifies them against the stored audit head. `--start-ledger <n>` reads from the RPC, which reaches back only as far as it retains events; `--indexer <url>` reads the entries from an indexer and verifies them the same way |
-| `tx` | `status`: settle a journaled transaction by hash |
+| `tx` | `status`: settle a journaled transaction by hash, or ask a sponsor about a signed operation; `list`; `acknowledge` |
 | `keys` | `create`, `address`, `fund` (Friendbot; local and Testnet only) |
 
 Every command accepts `--help`. `--json` prints one JSON object; amounts are decimal strings and hashes are hex.
@@ -65,12 +65,12 @@ To sponsor these payments, the submitter must list the asset contract with the `
 | 2 | Usage error. | Fix the arguments. |
 | 3 | Refused before submission. Nothing was sent. | Fix the cause and run again. |
 | 4 | Submitted and definitively not applied: failed on the ledger, rejected or expired. | Safe to run again. |
-| 75 | Submitted, or possibly submitted, with an outcome not yet known. | Do not repeat the command. Run `tx status --hash <hash>` until it settles. |
+| 75 | Submitted, or possibly submitted, with an outcome not yet known. | Do not repeat the command. Run `tx status --hash <hash>` until it settles, or `tx status --operation <hash>` if the message names an operation. |
 | 76 | An earlier submission in the same scope settled during this run and is reported instead. Nothing new was signed. | Run again only if the action is still wanted. |
 
 Repeating a payment command signs a new request for the next sequence. Exit 76 exists so that a repeat after an uncertain outcome reports what happened to the first attempt instead of paying a second time.
 
-One case has no hash to query: if the sponsor does not answer, the CLI exits 75 and names the ledger until which the signed operation stays valid. Wait for that ledger, then read the policy state (`policy show`) or `history` before signing anything new.
+If a sponsor's answer is lost, the CLI first asks the sponsor what it did with the signed operation. If the sponsor built a transaction, the command carries on with it; if it says it submitted nothing, the command exits 3. If it cannot be reached, the CLI exits 75 and names the operation's hash and the ledger until which the operation stays valid. Run `tx status --operation <hash>` with the same sponsor to ask again. If the sponsor never answers, wait for that ledger, then read the policy state (`policy show`) or `history` before signing anything new.
 
 ## Dry run
 
@@ -78,4 +78,10 @@ One case has no hash to query: if the sponsor does not answer, the CLI exits 75 
 
 ## State
 
-The transaction journal lives in `--state-dir`, `STELLAR_AGENT_AUTH_STATE_DIR` or `.local/cli` under the working directory. It holds public envelopes and their status, never keys. Run commands for one deployment from one directory, or set the variable: a different directory means a different journal, which cannot see an earlier unsettled transaction.
+The transaction journal lives in `--state-dir`, `STELLAR_AGENT_AUTH_STATE_DIR`, or the user's state directory: `$XDG_STATE_HOME/stellar-agent-auth`, else `~/.local/state/stellar-agent-auth`. It does not depend on the directory a command is run from. Inside it there is one journal per network. It holds public envelopes and their status, never keys, and every record is flushed to disk before its envelope is sent.
+
+- `tx list` shows the transactions that still hold their scope; `--all` shows every record.
+- `tx status --hash <hash>` settles one. `tx status --operation <hash>` asks the sponsor what it did with a signed operation.
+- `tx acknowledge --hash <hash>` releases a record whose outcome can no longer be known: the RPC no longer covers it and its time bound has passed. Its status stays `unknown`. Read the on-chain state before signing a new request for that action.
+
+Keys are a separate matter: named keys still live in `STELLAR_AGENT_AUTH_KEY_DIR` or `.local/keys` under the working directory.

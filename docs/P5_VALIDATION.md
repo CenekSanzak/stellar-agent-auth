@@ -55,17 +55,26 @@ Three smaller fixes:
 
 ## Still open
 
-Found in the same review and not fixed yet. None was shown to let a sponsor or a third party move funds.
+*Revised on 2026-11-25.* Six of the eight points found in the review were closed before P8; the decisions are in [ADR 0011](decisions/0011-sponsor-recovery-and-journal.md).
 
-- **Lost sponsor response.** The client learns the transaction hash only from the sponsor's answer. If the answer is lost, nothing is journaled and the CLI exits 75 with the expiry ledger. A user who signs a new request before that ledger can pay twice. Closing this needs a lookup on the submitter by operation hash.
-- **Non-hermetic gate test.** `payment-flow.test.ts` needs a public host; serve the metadata from a local HTTPS fixture.
-- **`SUBMITTER_URL` captures every mutating command.** Owner commands are then sent to a sponsor that refuses them. The example works around it; the CLI needs an explicit direct mode.
-- **Journal.** The default location is relative to the working directory, records carry no network name, writes are not fsynced, and there is no command to acknowledge a permanently `unknown` record.
-- **Sequence numbers.** The sponsor serializes submissions within one process only. Two processes on one key collide with `txBAD_SEQ`; neither pays twice.
-- **Verifier publication** uses its own transaction path, without the SDK's fee ceiling or journal.
-- **Sponsor budget.** There is a per-transaction fee ceiling and a per-address rate limit, but no total budget.
-- **Packaging.** The SDK installs outside the workspace (`npm run check:sdk-package`); the CLI and submitter do not.
-- **Evidence gaps.** No test submits two simulation-valid requests for one sequence where only the sequence check can stop the second; A17's local test would pass on the daily cap alone. On-chain failure codes are decoded only from hand-built events. The verifier's real HTTPS transport runs only on the payment flow's success path.
+Closed:
+
+- **Lost sponsor response.** A sponsor now submits an operation once however often it is sent, and answers what it did with one by its hash. The client asks when an answer is lost, and `tx status --operation <hash>` asks later. What comes back is checked like any other answer.
+- **Non-hermetic gate test.** `payment-flow.test.ts` runs the real verifier over a transport that serves the metadata from the repository. The run that fetches the public URL is opt-in (`RUN_ONLINE_TESTS=1`).
+- **`SUBMITTER_URL` captured every mutating command.** It now applies to `execute`, `wallet fund` and `tx status --operation` only. `--direct` uses no sponsor.
+- **Journal.** It lives in the user's state directory, one journal per network; records name their network; writes are flushed; `tx list` and `tx acknowledge` exist.
+- **Sponsor budget.** A fee budget over any 24 hours, counted from the journal.
+- **Packaging.** The CLI, verifier, submitter and indexer are packed, installed outside the workspace and run there (`npm run check:service-packages`). This found that an installed command did nothing: an entry point reached through a symbolic link did not recognise that it had been run. Fixed.
+
+Narrowed:
+
+- **Sequence numbers.** A submitter takes a lock on its sponsor key and state directory, so a second process on the same pair is refused. Two submitters on one key with different state directories still collide with `txBAD_SEQ`; neither pays twice.
+- **Verifier publication** still uses its own transaction path and its own journal. It now has a fee ceiling, checked before signing.
+
+Still open:
+
+- A sponsor that is unreachable for good leaves a lost answer unknown until the operation expires.
+- The payee-side verification gate and a real x402 client, listed in [P9 validation](P9_VALIDATION.md).
 
 ## Acceptance cases
 
