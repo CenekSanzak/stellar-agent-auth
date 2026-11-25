@@ -7,7 +7,7 @@ import {
   readWalletOwner, readWalletRegistries, uploadInvocation, walletDeployment, type WalletOwnerMethod, type WalletArgs,
 } from '@stellar-agent-auth/sdk';
 import type { Command } from '../index.js';
-import { UsageError, address, contractAddress, settled, type Runtime } from '../runtime.js';
+import { OutcomeError, UsageError, address, contractAddress, settled, type Runtime } from '../runtime.js';
 
 /** Wallet custody: deploy, inspect, fund, withdraw, pause and resume. */
 
@@ -47,8 +47,14 @@ export const walletCommands: Record<string, Command> = {
       const wasmHash = hash(wasm);
       const uploaded = !(await installed(runtime, wasmHash));
       if (uploaded && !runtime.options.dryRun) {
-        settled(await runtime.run(uploadInvocation(wasm), owner, `source:${owner.address}`, 'direct',
-          runtime.deployLimits));
+        try {
+          settled(await runtime.run(uploadInvocation(wasm), owner, `source:${owner.address}`, 'direct',
+            runtime.deployLimits));
+        } catch (error) {
+          // Someone else installing the same code between this upload's simulation and its inclusion can make it
+          // fail: the simulated budget no longer fits. That is harmless exactly when the code is then installed.
+          if (!(error instanceof OutcomeError) || !(await installed(runtime, wasmHash))) throw error;
+        }
       }
       const salt = randomBytes(32);
       const deployment = walletDeployment(runtime.config.passphrase, owner.address, wasmHash, agentRegistry,
