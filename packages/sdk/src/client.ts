@@ -139,7 +139,7 @@ export function contractDeployment(
 ): Invocation {
   if (wasmHash.length !== 32 || salt.length !== 32) throw new Error('Expected a 32-byte WASM hash and salt');
   const operation = Operation.createCustomContract({
-    address: Address.fromString(deployer), wasmHash: Buffer.from(wasmHash), salt: Buffer.from(salt), constructorArgs,
+    address: Address.fromString(deployer), wasmHash, salt, constructorArgs,
   });
   const contract = deployedAddress(networkPassphrase, deployer, salt);
   return {
@@ -187,9 +187,9 @@ export function assertDeploymentTree(
 /** The contract address `createCustomContract` assigns for `deployer` and `salt` on this network. */
 export function deployedAddress(networkPassphrase: string, deployer: string, salt: Uint8Array): string {
   const preimage = xdr.HashIdPreimage.envelopeTypeContractId(new xdr.HashIdPreimageContractId({
-    networkId: hash(Buffer.from(networkPassphrase)),
+    networkId: hash(new TextEncoder().encode(networkPassphrase)),
     contractIdPreimage: xdr.ContractIdPreimage.contractIdPreimageFromAddress(
-      new xdr.ContractIdPreimageFromAddress({ address: Address.fromString(deployer).toScAddress(), salt: Buffer.from(salt) }),
+      new xdr.ContractIdPreimageFromAddress({ address: Address.fromString(deployer).toScAddress(), salt }),
     ),
   }));
   return StrKey.encodeContract(hash(preimage.toXDR()));

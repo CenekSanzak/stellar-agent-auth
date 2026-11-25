@@ -34,7 +34,7 @@ export function loadConfig(env: Environment) {
     throw new Error('RPC requires HTTPS except local loopback');
   }
 
-  const networkId = Buffer.from(hash(Buffer.from(passphrase))).toString('hex');
+  const networkId = Array.from(hash(new TextEncoder().encode(passphrase)), (byte) => byte.toString(16).padStart(2, '0')).join('');
   if (env['STELLAR_NETWORK_ID'] && env['STELLAR_NETWORK_ID'] !== networkId) {
     throw new Error('Network ID mismatch');
   }
