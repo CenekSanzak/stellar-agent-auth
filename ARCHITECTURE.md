@@ -2,7 +2,7 @@
 
 This project lets a wallet owner give an AI agent limited permission to use funds on Stellar. The owner keeps control of the wallet, while the agent can perform only the actions the owner has approved.
 
-**Current status:** The agent registry (P2), verification registry and limited verifier (P3), the smart wallet (P4), and the SDK pipeline, submitter and CLI (P5) are implemented and tested on a local network. The wallet's account payment path (P9), with a demo service and the CLI command for it, is built and tested on a local network. The indexer and demo below are still planned. The P3 registries are deployed on Testnet as a development checkpoint, recorded in `deployments/testnet/p3-checkpoint.json`.
+**Current status:** The agent registry (P2), verification registry and limited verifier (P3), the smart wallet (P4), and the SDK pipeline, submitter and CLI (P5) are implemented and tested on a local network. The wallet's account payment path (P9), with a demo service and the CLI command for it, is built and tested on a local network and on Testnet. The indexer and demo below are still planned. The P3 registries are deployed on Testnet as a development checkpoint, recorded in `deployments/testnet/p3-checkpoint.json`.
 
 ## Example: paying for services
 
@@ -107,7 +107,7 @@ The wallet supports it as a custom account. When an asset contract requires the 
 
 Two things differ from `execute`. The agent signs as a key, so the signer account's own signers and thresholds are not applied. And there is no policy sequence or request deadline; the host's nonce prevents replay. A refusal on this path reaches the caller only as an authorization failure, so the wallet also offers `check_payment`, which says in advance whether a payment would pass and why not.
 
-The design is in [ADR 0007](docs/decisions/0007-account-payment-path.md) and the spike behind it in [ADR 0006](docs/decisions/0006-custom-account-spike.md). It is tested on a local network and not deployed to Testnet yet.
+The design is in [ADR 0007](docs/decisions/0007-account-payment-path.md) and the spike behind it in [ADR 0006](docs/decisions/0006-custom-account-spike.md). It is tested on a local network and on Testnet from a throwaway deployment; the kept Testnet deployment is P8.
 
 ## History, storage, and trust
 

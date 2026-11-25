@@ -1,6 +1,6 @@
 # Development
 
-P0 supplies the build and test environment. P1 adds the v1 contract ABI, hash vectors and a local fixture that verifies native authorization and a sponsor-paid transfer. P2 adds the agent registry, its SDK helpers and a signed local registry flow. P3 adds the verification registry, the limited verifier CLI (`services/verifier`), the SDK verification client and a signed local verification flow. P4 adds the smart wallet, the SDK wallet and policy clients, and signed local wallet and adversarial suites; see [ADR 0005](decisions/0005-smart-wallet.md) for its storage maintenance notes. P5 adds the SDK transaction pipeline, the fee sponsor (`services/submitter`), the CLI (`packages/cli`) and `examples/payment-flow.ts`; see [P5 validation](P5_VALIDATION.md). The account payment path (P9), indexer (P6), demo (P7) and final Testnet deployment (P8) are not built yet; P9 comes first.
+P0 supplies the build and test environment. P1 adds the v1 contract ABI, hash vectors and a local fixture that verifies native authorization and a sponsor-paid transfer. P2 adds the agent registry, its SDK helpers and a signed local registry flow. P3 adds the verification registry, the limited verifier CLI (`services/verifier`), the SDK verification client and a signed local verification flow. P4 adds the smart wallet, the SDK wallet and policy clients, and signed local wallet and adversarial suites; see [ADR 0005](decisions/0005-smart-wallet.md) for its storage maintenance notes. P5 adds the SDK transaction pipeline, the fee sponsor (`services/submitter`), the CLI (`packages/cli`) and `examples/payment-flow.ts`; see [P5 validation](P5_VALIDATION.md). P9 adds the wallet's account payment path, service payments, one error code per cause and a total cap; see [P9 validation](P9_VALIDATION.md). The indexer (P6), demo (P7) and final Testnet deployment (P8) are not built yet.
 
 ## Pinned environment
 
@@ -62,13 +62,14 @@ RUN_TESTNET_TESTS=1 npm run test:testnet
 
 This is a read-only network compatibility preflight. It is excluded from required CI and makes no transactions. Public network outages cannot invalidate fast/local acceptance.
 
-One suite in the same project does submit transactions and is skipped unless it is enabled as well:
+Two suites in the same project do submit transactions. Each is skipped unless its own flag is set as well:
 
 ```sh
+RUN_TESTNET_TESTS=1 RUN_TESTNET_WALLET=1 npx vitest run --project testnet tests/testnet/account-path.test.ts
 RUN_TESTNET_TESTS=1 RUN_TESTNET_SPIKE=1 npx vitest run --project testnet tests/testnet/account-probe.test.ts
 ```
 
-It runs the custom account spike ([ADR 0006](decisions/0006-custom-account-spike.md)) on Testnet. It deploys throwaway registries, an asset and the test account from keys generated at runtime and funded by Friendbot, and keeps none of them.
+The first runs the smart wallet's account path ([ADR 0007](decisions/0007-account-payment-path.md)): both registries, an asset, the wallet and the demo service, then payments on both paths. The second runs the spike that preceded it ([ADR 0006](decisions/0006-custom-account-spike.md)). Both deploy from keys generated at runtime and funded by Friendbot, and keep none of them. They need `npm run build:contracts` first.
 
 ## Test layout
 

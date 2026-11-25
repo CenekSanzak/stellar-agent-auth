@@ -2,7 +2,7 @@
 
 The smart wallet gains a second way to pay. [ADR 0006](0006-custom-account-spike.md) decided it and showed it on a test contract; this record describes what is built into `contracts/smart-wallet`. The wallet's first path, `execute`, is unchanged and is described in [ADR 0005](0005-smart-wallet.md). The SDK side is `packages/sdk/src/account.ts`.
 
-**Status:** the contract path for both payment shapes, the demo service, the SDK helpers and the CLI command are built and tested on the local network. Finer error codes, the lifetime cap and a Testnet payment from the real wallet are the rest of P9 and are not built yet.
+**Status:** built, and tested on the local network and on Testnet. The evidence for the whole of P9 is in the [P9 validation record](../P9_VALIDATION.md). The contracts are not part of a kept Testnet deployment yet; that is P8.
 
 ## Why two paths
 
@@ -56,7 +56,7 @@ The wallet's credential carries an `AccountSignature { policy_hash, signature }`
 
 - **The agent signs as a key, not as an account.** `execute` uses `require_auth` on the signer's Stellar account, so the host applies that account's signers and thresholds. Here the wallet verifies the signature itself against the 32-byte key of the registered signer account. An account that has disabled or replaced its master key can still sign on this path. The owner-facing text must say so, and the verifier's `SignerAccount` check does not cover it.
 - **No sequence and no request deadline.** A plain transfer has no place for them. The host nonce prevents replay. The entry's expiry ledger bounds its life; the agent chooses it and `__check_auth` cannot see it. The SDK signs for at most 20 ledgers. The daily cap is checked when a payment executes, so entries signed ahead cannot exceed it together.
-- **A refusal is an authorization failure.** Every refusal from `__check_auth` reaches the caller as `HostError: Error(Auth, InvalidAction)`. The wallet's own code is only in the diagnostic events, which the public Testnet RPC does not return.
+- **A refusal is an authorization failure.** Every refusal from `__check_auth` reaches the caller as `HostError: Error(Auth, InvalidAction)`. The wallet's own code ([ADR 0008](0008-error-codes.md)) is only in the diagnostic events, which the public Testnet RPC does not return.
 
 ## Explaining a refusal: `check_payment`
 
@@ -81,10 +81,4 @@ Schema version 1 is kept, because no wallet has been deployed to Testnet. The po
 
 ## Evidence
 
-- **Host tests:** 16 in `contracts/smart-wallet/src/test_account.rs`, with authorization enforced. They make real `asset.transfer` and `pay_for_service` calls carrying a signed entry, and call `__check_auth` as the host would. The 30 existing wallet tests pass, with one updated: service policies are no longer refused. `contracts/demo-service` has 2 tests of its own.
-- **Unit tests:** `tests/unit/account.test.ts` for signing both shapes and for the payment check. The spec test compares the SDK's encoding of `AccountSignature`, `check_payment` and the service call with the published interfaces of the wallet and the demo service.
-- **Local network:** 5 tests in `tests/integration/account-path.test.ts`. The agent signs through the SDK and an SDK `Sponsor` that knows nothing about the wallet submits. `execute` and the account path alternate up to the daily cap and then both refuse. A service is paid in its own call; the same signed entry does not authorize the bare transfer, and the service's request for an allowance is refused.
-- **CLI example:** `examples/payment-flow.ts` now pays a service with `execute pay --service` and makes a plain account payment with `execute pay`, between the `execute` payment and the revocation. After the revocation both paths refuse, and the account path names the reason before signing. Its test runs the built CLI and submitter as separate processes.
-- **Cost on the local network:** 4,737,045 instructions and a minimum resource fee of 23,253 stroops for a plain account payment, against 4,849,451 instructions for `execute` in the [P4 record](../P4_VALIDATION.md). The figure was taken before service payments were added and has not been re-measured.
-
-Not shown yet: a Testnet payment from the real wallet, and protocol 30 credentials on the real wallet. The spike showed the latter on the test contract.
+The [P9 validation record](../P9_VALIDATION.md) has the counts, the Testnet transactions and what is not shown. In short: host tests with enforced authorization for every shape and refusal, unit and spec tests of the SDK side, a scenario that runs on the local network and on Testnet, and the CLI example driving the built CLI and submitter.

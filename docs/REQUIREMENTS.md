@@ -1,6 +1,6 @@
 # Requirements and evidence ledger
 
-P0 infrastructure, the P1 ABI and authorization gate, the P2 agent registry, the P3 verification registry and limited verifier, the P4 smart wallet and the P5 SDK pipeline, sponsor and CLI are implemented and validated locally. The P3 Testnet checkpoint has run; the wallet is not yet deployed to Testnet. P6–P9 are not built. P9 was redefined on 2026-11-25 as the wallet's account payment path and moved ahead of P6; see [ADR 0006](decisions/0006-custom-account-spike.md) and the revised [plan](IMPLEMENTATION_PLAN.md). It is in progress: the path, a demo service paid through it and the CLI command are built and shown on the local network ([ADR 0007](decisions/0007-account-payment-path.md)). A30 stays open until the same is recorded on Testnet. Product acceptance remains tied to the verification, wallet and SDK flows below.
+P0 infrastructure, the P1 ABI and authorization gate, the P2 agent registry, the P3 verification registry and limited verifier, the P4 smart wallet and the P5 SDK pipeline, sponsor and CLI are implemented and validated locally. The P3 Testnet checkpoint has run; the wallet is not yet deployed to Testnet. P6–P8 are not built. P9 was redefined on 2026-11-25 as the wallet's account payment path and moved ahead of P6; see [ADR 0006](decisions/0006-custom-account-spike.md) and the revised [plan](IMPLEMENTATION_PLAN.md). It is done; see the P9 evidence below. Product acceptance remains tied to the verification, wallet and SDK flows below.
 
 | Source requirement | Acceptance IDs | Evidence required | Implementation phase |
 | --- | --- | --- | --- |
@@ -104,3 +104,12 @@ The [Phase 5 validation record](P5_VALIDATION.md) covers the P5 test runs, the r
 - A24: sponsor tampering is shown with real signatures on the local network, and the client rejects a sponsor report it cannot tie to its own operation. Sequence collision across processes and recovery from a lost sponsor response are not shown.
 - A28: the SDK imports from outside the workspace, and the CLI example completes the flow on the local network with a separate key per role. The browser smoke test belongs to P7.
 - F07 does not hold for the payment flow test, which fetches metadata from a public host.
+
+## P9 evidence
+
+The [Phase 9 validation record](P9_VALIDATION.md) covers the wallet's account payment path, service payments, the error codes and the total cap. Rules are in [ADR 0007](decisions/0007-account-payment-path.md) and [ADR 0008](decisions/0008-error-codes.md).
+
+- A30: a service is paid through the wallet in the service's own call, with a real agent signature, on the local network and on Testnet. Every other context, service, method, argument, policy and signature is refused in host tests with enforced authorization, and the main ones on both networks. `execute` and the account path share one budget.
+- A15, A16: the per-payment cap and the daily cap now have their own error codes, and a total cap bounds a policy's whole life on both paths.
+- A22: the owner's exposure view reports what is left of the total caps.
+- A29 is not met by P9. Its Testnet payments are from a throwaway deployment; the kept deployment with its records is P8.
