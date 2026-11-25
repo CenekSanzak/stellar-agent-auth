@@ -495,6 +495,7 @@ const WALLET_ENCODERS: { [M in WalletMethod]: (args: WalletArgs[M]) => xdr.ScVal
   policies: () => [],
   policy: (a) => [bytes32(a.policy_hash)],
   policy_state: (a) => [bytes32(a.policy_hash)],
+  check_payment: (a) => [bytes32(a.policy_hash), address(a.asset), address(a.recipient), positiveAmount(a.amount)],
   audit_head: () => [],
 };
 
@@ -539,6 +540,12 @@ function auditOutcome(outcome: AuditOutcome): xdr.ScVal {
         policy_hash: bytes32(outcome.policy_hash),
         action_hash: bytes32(outcome.action_hash),
         action: actionScVal(outcome.action),
+      })]);
+    case 'AccountPayment':
+      return vec([sym(outcome.kind), record({
+        policy_hash: bytes32(outcome.policy_hash),
+        authorization: bytes32(outcome.authorization),
+        transfer: transferScVal(outcome.transfer),
       })]);
     default:
       throw new Error('Unknown audit outcome');
@@ -622,9 +629,25 @@ function decodeAuditOutcome(value: xdr.ScVal): AuditOutcome {
         action: decodeActionValue(field('action')),
       };
     }
+    case 'AccountPayment': {
+      const field = fields(payload, ['authorization', 'policy_hash', 'transfer'] as const, 'AccountPayment');
+      return {
+        kind: tag, policy_hash: decodeBytes32(field('policy_hash')),
+        authorization: decodeBytes32(field('authorization')), transfer: decodeTransfer(field('transfer')),
+      };
+    }
     default:
       throw new Error('Unknown ABI variant');
   }
+}
+
+/**
+ * The wallet's `AccountSignature`: the signature value of its own credential on the account path. It names the
+ * policy and carries the agent key's ed25519 signature over the host payload followed by that policy hash.
+ */
+export function encodeAccountSignature(policyHash: Hash32, signature: Uint8Array): xdr.ScVal {
+  if (!(signature instanceof Uint8Array) || signature.length !== 64) throw new Error('Expected a 64-byte signature');
+  return record({ policy_hash: bytes32(policyHash), signature: xdr.ScVal.scvBytes(signature) });
 }
 
 const AUDIT_FIELDS = [

@@ -1,4 +1,5 @@
 import { Address, Contract, Operation, StrKey, hash, scValToNative, xdr } from '@stellar/stellar-sdk';
+import { accountPaymentOperation, signAccountPayment, type AccountPayment } from './account.js';
 import { assertActionTree, signActionAuthorization } from './actions.js';
 import { assertRegistryTree, signRegistryAuthorization } from './agents.js';
 import { simulateRead, type ContractRead } from './contract-call.js';
@@ -70,6 +71,23 @@ export function executeInvocation(network: NetworkContext, request: ActionReques
       }),
     },
     checks: { [agent.address]: (root) => assertActionTree(root, request) },
+  };
+}
+
+/**
+ * A payment on the wallet's account path: a plain `asset.transfer(wallet, recipient, amount)` whose one entry is the
+ * wallet's own, signed by the policy's agent key. The wallet is never the transaction source, so there is no source
+ * check: a sponsor or another fee payer submits it and authorizes nothing.
+ */
+export function accountPaymentInvocation(network: NetworkContext, payment: AccountPayment, agent: Signer): Invocation {
+  return {
+    operation: accountPaymentOperation(payment),
+    authorizers: {
+      [payment.wallet]: (entry, window) => signAccountPayment({
+        entry, payment, agent, networkPassphrase: network.networkPassphrase, latestLedger: window.latestLedger,
+        expirationLedger: window.expirationLedger,
+      }),
+    },
   };
 }
 

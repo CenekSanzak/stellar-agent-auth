@@ -3,8 +3,8 @@ import { contract, type xdr } from '@stellar/stellar-sdk';
 import { describe, expect, it } from 'vitest';
 import {
   decodeAuditHead, decodeHashList, decodeIdentity, decodePolicy, decodePolicyState, decodeProviderRecord,
-  decodeVerification, encodeRegistryArgs, encodeVerificationArgs, encodeVerificationConstructorArgs,
-  encodeWalletArgs, encodeWalletConstructorArgs,
+  decodeVerification, encodeAccountSignature, encodeRegistryArgs, encodeVerificationArgs,
+  encodeVerificationConstructorArgs, encodeWalletArgs, encodeWalletConstructorArgs,
 } from '../../packages/sdk/src/encoding.js';
 import { canonicalPolicy } from '../../packages/sdk/src/policies.js';
 import {
@@ -140,6 +140,7 @@ const walletCases: Case<WalletArgs> = {
   policies: { sdk: {}, native: {} },
   policy: { sdk: { policy_hash: bytes(6) }, native: { policy_hash: buf(bytes(6)) } },
   policy_state: { sdk: { policy_hash: bytes(6) }, native: { policy_hash: buf(bytes(6)) } },
+  check_payment: { sdk: { policy_hash: bytes(6), ...transfer }, native: { policy_hash: buf(bytes(6)), ...transfer } },
   audit_head: { sdk: {}, native: {} },
 };
 
@@ -147,7 +148,8 @@ const hex = (values: xdr.ScVal[]) => values.map((value) => value.toXdr('hex'));
 
 function checkArguments<A>(name: string, cases: Case<A>, encode: (method: keyof A, args: A[keyof A]) => xdr.ScVal[]) {
   const interfaceSpec = spec(name);
-  const exported = interfaceSpec.funcs().map((fn) => fn.name.toString()).filter((fn) => fn !== '__constructor').sort();
+  // Host-invoked functions (`__constructor`, `__check_auth`) are not entry points a client calls.
+  const exported = interfaceSpec.funcs().map((fn) => fn.name.toString()).filter((fn) => !fn.startsWith('__')).sort();
   expect(exported, `${name} entry points`).toEqual(Object.keys(cases).sort());
   for (const method of Object.keys(cases) as (keyof A & string)[]) {
     const { sdk, native } = cases[method];
@@ -208,5 +210,14 @@ describe('SDK conformance with the contracts\' published interfaces', () => {
     });
     expect(hex(encodeWalletConstructorArgs(account(1), contractId(2), contractId(3)))).toEqual(hex(constructor));
     expect(interfaceSpec.events().map((event) => event.name.toString())).toContain('WalletAudit');
+    // The account path: the signature value the wallet's `__check_auth` expects, and what `check_payment` returns.
+    const signature = new Uint8Array(64).fill(7);
+    const [, expected] = interfaceSpec.funcArgsToScVals('__check_auth', {
+      signature_payload: buf(bytes(8)), signature: { policy_hash: buf(bytes(6)), signature: buf(signature) },
+      auth_contexts: [],
+    });
+    expect(encodeAccountSignature(bytes(6), signature).toXdr('hex')).toBe(expected!.toXdr('hex'));
+    expect(decodePolicyState(returned(interfaceSpec, 'check_payment', { ...state, policy_hash: buf(state.policy_hash) })))
+      .toEqual(state);
   });
 });

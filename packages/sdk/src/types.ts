@@ -137,7 +137,9 @@ export type AuditOutcome =
   | { kind: 'PolicyCreated' | 'PolicyRevoked'; policy_hash: Hash32 }
   | { kind: 'PauseChanged'; paused: boolean }
   | { kind: 'OwnerWithdrawal'; transfer: Transfer }
-  | { kind: 'Executed'; policy_hash: Hash32; action_hash: Hash32; action: Action };
+  | { kind: 'Executed'; policy_hash: Hash32; action_hash: Hash32; action: Action }
+  /** A transfer the wallet authorized as an account; `authorization` is the host's payload hash for it. */
+  | { kind: 'AccountPayment'; policy_hash: Hash32; authorization: Hash32; transfer: Transfer };
 
 /** The latest audit entry's sequence and hash; sequence 0 and 32 zero bytes at genesis. */
 export interface AuditHead {
@@ -215,6 +217,7 @@ export interface WalletArgs {
   policies: Record<string, never>;
   policy: { policy_hash: Hash32 };
   policy_state: { policy_hash: Hash32 };
+  check_payment: { policy_hash: Hash32; asset: string; recipient: string; amount: bigint };
   audit_head: Record<string, never>;
 }
 export type WalletMethod = keyof WalletArgs;
