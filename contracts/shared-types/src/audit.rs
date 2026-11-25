@@ -10,6 +10,17 @@ pub struct ExecutedAction {
     pub action: Action,
 }
 
+/// A transfer the wallet authorized as an account, for an asset contract that required its
+/// authorization. `authorization` is the host's signature payload hash for that authorization, which
+/// is unique to it: it covers the network, a nonce, the expiry and the exact transfer.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AccountPayment {
+    pub policy_hash: BytesN<32>,
+    pub authorization: BytesN<32>,
+    pub transfer: crate::action::Transfer,
+}
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[allow(
@@ -22,6 +33,7 @@ pub enum AuditOutcome {
     PauseChanged(bool),
     OwnerWithdrawal(crate::action::Transfer),
     Executed(ExecutedAction),
+    AccountPayment(AccountPayment),
 }
 
 #[contracttype]

@@ -49,6 +49,17 @@ pub struct ActionRequest {
     pub action: Action,
 }
 
+/// The signature value of the wallet's own credential on its account path, where the wallet
+/// authorizes a plain asset transfer as a custom account. It names the policy the agent acts under
+/// and carries the policy signer's ed25519 signature over the host's signature payload followed by
+/// that policy hash. The payload alone does not say which policy applies.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AccountSignature {
+    pub policy_hash: BytesN<32>,
+    pub signature: BytesN<64>,
+}
+
 impl Transfer {
     pub(crate) fn validate_amount(&self) -> Result<(), Error> {
         if self.amount <= 0 {

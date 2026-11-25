@@ -1785,6 +1785,7 @@ dependencies = [
 name = "stellar-agent-auth-smart-wallet"
 version = "0.0.0"
 dependencies = [
+ "ed25519-dalek",
  "soroban-sdk",
  "stellar-agent-auth-agent-registry",
  "stellar-agent-auth-shared-types",

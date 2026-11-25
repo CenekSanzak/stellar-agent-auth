@@ -8,18 +8,28 @@
 //! window. `execute` runs one request signed by that signer only while every condition holds
 //! against live state. Every successful owner action and execution extends a hash-linked audit
 //! chain whose head is stored on-chain.
+//!
+//! The wallet is also a custom account with one narrow power: under the same policies and the same
+//! budgets it authorizes a transfer of a policy asset that an asset contract asks it to authorize.
+//! That lets a service pull its payment from the wallet; see `account`.
 
 use soroban_sdk::{
-    contract, contractimpl, panic_with_error, token::TokenClient, Address, BytesN, Env, Vec,
+    auth::{Context, CustomAccountInterface},
+    contract, contractimpl,
+    crypto::Hash,
+    panic_with_error,
+    token::TokenClient,
+    Address, BytesN, Env, Vec,
 };
 use stellar_agent_auth_shared_types::{
-    action::{ActionRequest, Transfer},
+    action::{AccountSignature, ActionRequest, Transfer},
     audit::{AuditHead, AuditOutcome},
     errors::Error,
     identity::require_contract,
     policy::{Policy, PolicyState},
 };
 
+pub mod account;
 pub mod audit;
 pub mod authorization;
 pub mod execution;
@@ -28,6 +38,8 @@ pub mod storage;
 
 #[cfg(test)]
 mod test;
+#[cfg(test)]
+mod test_account;
 
 #[contract]
 pub struct SmartWallet;
@@ -151,6 +163,30 @@ impl SmartWallet {
         execution::execute(&env, &hash, policy, request)
     }
 
+    /// What a payment of `amount` of `asset` to `recipient` under the policy would leave as the
+    /// policy's state, or the error that would refuse it now. It applies every rule both payment
+    /// paths share and authenticates nobody, so it says why a payment would be refused before
+    /// anything is signed. A refusal on the account path otherwise reaches the caller only as a
+    /// host authorization failure.
+    pub fn check_payment(
+        env: Env,
+        policy_hash: BytesN<32>,
+        asset: Address,
+        recipient: Address,
+        amount: i128,
+    ) -> Result<PolicyState, Error> {
+        storage::extend_instance(&env);
+        account::preview(
+            &env,
+            &policy_hash,
+            &Transfer {
+                asset,
+                recipient,
+                amount,
+            },
+        )
+    }
+
     pub fn owner(env: Env) -> Address {
         storage::extend_instance(&env);
         storage::owner(&env)
@@ -194,6 +230,26 @@ impl SmartWallet {
     pub fn audit_head(env: Env) -> AuditHead {
         storage::extend_instance(&env);
         storage::audit_head(&env)
+    }
+}
+
+#[contractimpl]
+impl CustomAccountInterface for SmartWallet {
+    type Signature = AccountSignature;
+    type Error = Error;
+
+    /// Called by the host when a contract requires this wallet's authorization. Authorizes one
+    /// thing: a transfer of a policy asset out of the wallet, signed by that policy's agent key,
+    /// within the policy. See `account::authorize`.
+    #[allow(non_snake_case)]
+    fn __check_auth(
+        env: Env,
+        signature_payload: Hash<32>,
+        signature: AccountSignature,
+        auth_contexts: Vec<Context>,
+    ) -> Result<(), Error> {
+        storage::extend_instance(&env);
+        account::authorize(&env, signature_payload, signature, auth_contexts)
     }
 }
 
