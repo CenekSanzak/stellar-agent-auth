@@ -360,10 +360,14 @@ export function encodePolicy(policy: Policy): xdr.ScVal {
     max_risk_score: riskScore(policy.max_risk_score),
     assets: vec(assets.map((limit) => {
       if (limit.per_transaction > limit.per_day) throw new Error('Daily cap is below the per-transaction cap');
+      if (limit.total !== null && limit.total < limit.per_transaction) {
+        throw new Error('Total cap is below the per-transaction cap');
+      }
       return record({
         asset: address(limit.asset),
         per_transaction: positiveAmount(limit.per_transaction),
         per_day: positiveAmount(limit.per_day),
+        total: limit.total === null ? xdr.ScVal.scvVoid() : positiveAmount(limit.total),
       });
     })),
     allowed_recipients: vec(sortedUnique(policy.allowed_recipients, addressKey).map(address)),
@@ -394,11 +398,13 @@ function decodeAmount(value: xdr.ScVal) {
 }
 
 function decodeAssetLimit(value: xdr.ScVal): AssetLimit {
-  const field = fields(value, ['asset', 'per_day', 'per_transaction'] as const, 'AssetLimit');
+  const field = fields(value, ['asset', 'per_day', 'per_transaction', 'total'] as const, 'AssetLimit');
+  const total = field('total');
   return {
     asset: decodeAddress(field('asset')),
     per_transaction: decodeAmount(field('per_transaction')),
     per_day: decodeAmount(field('per_day')),
+    total: total.type === 'scvVoid' ? null : decodeAmount(total),
   };
 }
 
@@ -443,25 +449,31 @@ export function encodePolicyState(state: PolicyState): xdr.ScVal {
     revoked: bool(state.revoked),
     next_sequence: u64(state.next_sequence),
     utc_day: u64(state.utc_day),
-    daily_spend: vec(state.daily_spend.map(({ asset, amount }) => record({
-      asset: address(asset), amount: positiveAmount(amount),
-    }))),
+    daily_spend: vec(state.daily_spend.map(spendScVal)),
+    total_spend: vec(state.total_spend.map(spendScVal)),
   });
+}
+
+const spendScVal = ({ asset, amount }: { asset: string; amount: bigint }) => record({
+  asset: address(asset), amount: positiveAmount(amount),
+});
+
+function decodeSpend(spend: xdr.ScVal) {
+  const entry = fields(spend, ['amount', 'asset'] as const, 'AssetSpend');
+  return { asset: decodeAddress(entry('asset')), amount: decodeAmount(entry('amount')) };
 }
 
 /** Strict inverse of `encodePolicyState`. */
 export function decodePolicyState(value: xdr.ScVal): PolicyState {
-  const field = fields(value, ['daily_spend', 'next_sequence', 'policy_hash', 'revoked', 'utc_day'] as const,
-    'PolicyState');
+  const field = fields(value,
+    ['daily_spend', 'next_sequence', 'policy_hash', 'revoked', 'total_spend', 'utc_day'] as const, 'PolicyState');
   const state: PolicyState = {
     policy_hash: decodeBytes32(field('policy_hash')),
     revoked: decodeBool(field('revoked')),
     next_sequence: decodeU64(field('next_sequence')),
     utc_day: decodeU64(field('utc_day')),
-    daily_spend: decodeVec(field('daily_spend'), 'spend').map((spend) => {
-      const entry = fields(spend, ['amount', 'asset'] as const, 'AssetSpend');
-      return { asset: decodeAddress(entry('asset')), amount: decodeAmount(entry('amount')) };
-    }),
+    daily_spend: decodeVec(field('daily_spend'), 'spend').map(decodeSpend),
+    total_spend: decodeVec(field('total_spend'), 'spend').map(decodeSpend),
   };
   if (encodePolicyState(state).toXdr('hex') !== value.toXdr('hex')) throw new Error('Non-canonical PolicyState');
   return state;

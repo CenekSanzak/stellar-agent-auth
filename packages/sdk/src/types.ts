@@ -110,6 +110,11 @@ export interface AssetLimit {
   asset: string;
   per_transaction: bigint;
   per_day: bigint;
+  /**
+   * The most that may ever be spent of this asset under the policy, or `null` for no such cap. The daily cap bounds
+   * a day; this bounds the policy's whole life.
+   */
+  total: bigint | null;
 }
 
 export interface Policy {
@@ -137,6 +142,8 @@ export interface PolicyState {
   next_sequence: bigint;
   utc_day: bigint;
   daily_spend: readonly { asset: string; amount: bigint }[];
+  /** Everything spent under the policy since its approval, per asset. Never reset. */
+  total_spend: readonly { asset: string; amount: bigint }[];
 }
 
 export type AuditOutcome =
@@ -175,7 +182,7 @@ export const CONTRACT_ERRORS = [
   // 15 onwards name one cause each, where the codes above used to cover several.
   'AgentDisabled', 'ProviderNotApproved', 'ProviderDisabled', 'ResultRevoked', 'ResultExpired', 'RiskFlagged',
   'CheckNotPassed', 'RiskTooHigh', 'RequestExpired', 'NotYetValid', 'AssetNotAllowed', 'RecipientNotAllowed',
-  'PaymentLimitExceeded', 'DailyLimitExceeded',
+  'PaymentLimitExceeded', 'DailyLimitExceeded', 'TotalLimitExceeded',
 ] as const;
 export type ContractErrorName = (typeof CONTRACT_ERRORS)[number];
 

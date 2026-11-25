@@ -40,6 +40,8 @@ The v1 ABI has carried `ServicePermission::Restricted(ServiceRule { contract, se
 
 `execute` and the account path run the same two functions, `execution::gate` and `execution::permit`, on the same stored policy state. Neither can spend what the other has spent, and a rule changed in one place changes for both.
 
+That budget is the per-payment cap, the daily cap and, where the policy sets one, the total cap for the policy's whole life ([ADR 0008](0008-error-codes.md)).
+
 The account path does not use or advance the policy sequence. The sequence orders `execute` requests, and an account payment must not invalidate one that is already signed.
 
 ## The signature

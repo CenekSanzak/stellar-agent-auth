@@ -253,7 +253,7 @@ describe('service payments', () => {
 
 describe('payment check', () => {
   const state = { policy_hash: payment.policyHash, revoked: false, next_sequence: 4n, utc_day: 20_833n,
-    daily_spend: [{ asset, amount: 30_000_000n }] };
+    daily_spend: [{ asset, amount: 30_000_000n }], total_spend: [{ asset, amount: 90_000_000n }] };
   const read = (response: unknown) => ({
     server: { simulateTransaction: async () => response as rpc.Api.SimulateTransactionResponse },
     contractId: wallet, source: Keypair.random().publicKey(), networkPassphrase: passphrase,

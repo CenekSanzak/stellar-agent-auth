@@ -61,4 +61,6 @@ pub enum Error {
     PaymentLimitExceeded = 27,
     /// The amount would take today's spend of this asset above the policy's daily cap.
     DailyLimitExceeded = 28,
+    /// The amount would take everything spent of this asset under the policy above its total cap.
+    TotalLimitExceeded = 29,
 }

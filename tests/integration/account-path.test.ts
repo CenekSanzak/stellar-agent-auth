@@ -125,7 +125,8 @@ describe('account payment path', () => {
     expect(after.recipient).toBe(before.recipient + 3n * UNIT);
     expect(after.wallet).toBe(before.wallet - 3n * UNIT);
     // The spend is charged. The policy sequence, which orders `execute` requests, is untouched.
-    expect(after.state).toEqual({ ...before.state, daily_spend: [{ asset, amount: 3n * UNIT }] });
+    const spent = [{ asset, amount: 3n * UNIT }];
+    expect(after.state).toEqual({ ...before.state, daily_spend: spent, total_spend: spent });
     expect(after.state).toEqual(preview);
 
     // One operation from the sponsor, carrying one entry, and that entry is the wallet's own.

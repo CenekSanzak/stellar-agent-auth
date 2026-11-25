@@ -19,7 +19,7 @@ import { ownerCall, walletId } from './wallet.js';
  *   "required_checks": ["Metadata", "SignerAccount"],
  *   "max_assessment_age_seconds": 86400,
  *   "max_risk_score": 10,
- *   "assets": [{ "asset": "C...", "per_transfer": "5", "per_day": "20" }],
+ *   "assets": [{ "asset": "C...", "per_transfer": "5", "per_day": "20", "total": "100" }],   // "total" is optional
  *   "allowed_recipients": ["G..."],
  *   "blocked_recipients": [],
  *   "valid_for_seconds": 604800,           // or "valid_after" / "valid_until" in Unix seconds
@@ -43,7 +43,7 @@ interface PolicyFile {
   required_checks: string[];
   max_assessment_age_seconds: string | number;
   max_risk_score: number;
-  assets: { asset: string; per_transfer: string; per_day: string }[];
+  assets: { asset: string; per_transfer: string; per_day: string; total?: string }[];
   allowed_recipients?: string[];
   blocked_recipients?: string[];
   valid_after?: string | number;
@@ -91,6 +91,7 @@ export async function loadPolicy(runtime: Runtime, path: string, wallet: string)
     assets.push({
       asset, per_transaction: await runtime.units(asset, limit.per_transfer, 'assets[].per_transfer'),
       per_day: await runtime.units(asset, limit.per_day, 'assets[].per_day'),
+      total: limit.total === undefined ? null : await runtime.units(asset, limit.total, 'assets[].total'),
     });
   }
   if (file.service === undefined && file.plain_transfers === false) {

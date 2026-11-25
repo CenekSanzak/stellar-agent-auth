@@ -45,6 +45,7 @@ pub fn approve(env: &Env, owner: &Address, policy: Policy) -> Result<BytesN<32>,
         next_sequence: 1,
         utc_day: utc_day(now),
         daily_spend: Vec::new(env),
+        total_spend: Vec::new(env),
     };
     storage::add_policy(env, &hash, &policy, &state);
     active.push_back(hash.clone());
@@ -129,25 +130,45 @@ pub fn as_of(env: &Env, mut state: PolicyState, now: u64) -> PolicyState {
     state
 }
 
-/// Adds `amount` of `asset` to today's spend, failing with `DailyLimitExceeded` above `per_day` and
-/// `ArithmeticOverflow` on overflow. Spend is per asset and never combined across assets.
+/// Adds `amount` of `asset` to today's spend and to the policy's total spend, failing with
+/// `DailyLimitExceeded` above `per_day`, `TotalLimitExceeded` above `total` when the policy sets
+/// one, and `ArithmeticOverflow` on overflow. Spend is per asset and never combined across assets.
 pub fn add_spend(state: &mut PolicyState, limit: &AssetLimit, amount: i128) -> Result<(), Error> {
-    let index = state
-        .daily_spend
-        .iter()
-        .position(|spend| spend.asset == limit.asset);
-    let spent = index.map_or(0, |i| state.daily_spend.get_unchecked(i as u32).amount);
-    let total = spent.checked_add(amount).ok_or(Error::ArithmeticOverflow)?;
-    if total > limit.per_day {
+    let today = add(&state.daily_spend, &limit.asset, amount)?;
+    if today.1 > limit.per_day {
         return Err(Error::DailyLimitExceeded);
     }
+    let total = add(&state.total_spend, &limit.asset, amount)?;
+    if limit.total.is_some_and(|cap| total.1 > cap) {
+        return Err(Error::TotalLimitExceeded);
+    }
+    put(&mut state.daily_spend, &limit.asset, today);
+    put(&mut state.total_spend, &limit.asset, total);
+    Ok(())
+}
+
+/// Where `asset` sits in `spends`, if it does, and what it would hold after adding `amount`.
+fn add(
+    spends: &Vec<AssetSpend>,
+    asset: &Address,
+    amount: i128,
+) -> Result<(Option<u32>, i128), Error> {
+    let index = spends
+        .iter()
+        .position(|spend| spend.asset == *asset)
+        .map(|index| index as u32);
+    let spent = index.map_or(0, |i| spends.get_unchecked(i).amount);
+    let sum = spent.checked_add(amount).ok_or(Error::ArithmeticOverflow)?;
+    Ok((index, sum))
+}
+
+fn put(spends: &mut Vec<AssetSpend>, asset: &Address, (index, amount): (Option<u32>, i128)) {
     let spend = AssetSpend {
-        asset: limit.asset.clone(),
-        amount: total,
+        asset: asset.clone(),
+        amount,
     };
     match index {
-        Some(i) => state.daily_spend.set(i as u32, spend),
-        None => state.daily_spend.push_back(spend),
+        Some(i) => spends.set(i, spend),
+        None => spends.push_back(spend),
     }
-    Ok(())
 }

@@ -52,6 +52,8 @@ export interface FlowConfig {
     max_risk_score: number;
     per_transfer: string;
     per_day: string;
+    /** The most the agent may ever spend under the policy. */
+    total: string;
     valid_for_seconds: number;
   };
   payment: string;
@@ -260,7 +262,10 @@ export async function runPaymentFlow(config: FlowConfig, log: Log = console.log)
   await writeFile(policyFile, `${JSON.stringify({
     agent_id: identity.agent_id, provider: keys.provider.address, required_checks: config.policy.required_checks,
     max_assessment_age_seconds: config.policy.max_assessment_age_seconds, max_risk_score: config.policy.max_risk_score,
-    assets: [{ asset: contracts.asset, per_transfer: config.policy.per_transfer, per_day: config.policy.per_day }],
+    assets: [{
+      asset: contracts.asset, per_transfer: config.policy.per_transfer, per_day: config.policy.per_day,
+      total: config.policy.total,
+    }],
     allowed_recipients: [keys.recipient.address], valid_for_seconds: config.policy.valid_for_seconds,
     // The agent may also pay this one service in the service's own call, under the same caps.
     service: { contract: contracts.service, service_id: contracts.serviceId },

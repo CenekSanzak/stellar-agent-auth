@@ -48,7 +48,9 @@ function nativePolicy(value: Policy) {
     revision: value.revision, signer: value.signer, provider: value.provider,
     required_checks: value.required_checks.map(unit), max_assessment_age: value.max_assessment_age,
     max_risk_score: value.max_risk_score,
-    assets: value.assets.map(({ asset, per_transaction, per_day }) => ({ asset, per_transaction, per_day })),
+    assets: value.assets.map(({ asset, per_transaction, per_day, total }) => ({
+      asset, per_transaction, per_day, total: total ?? undefined,
+    })),
     allowed_recipients: [...value.allowed_recipients], blocked_recipients: [...value.blocked_recipients],
     valid_after: value.valid_after, valid_until: value.valid_until, action_kinds: value.action_kinds.map(unit),
     service: value.service === null ? unit('Disabled')
@@ -199,6 +201,7 @@ describe('SDK conformance with the contracts\' published interfaces', () => {
     const state = {
       policy_hash: bytes(6), revoked: false, next_sequence: 3n, utc_day: 19_675n,
       daily_spend: [{ asset: contractId(15), amount: 20n }],
+      total_spend: [{ asset: contractId(15), amount: 60n }, { asset: contractId(16), amount: 7n }],
     };
     expect(decodePolicyState(returned(interfaceSpec, 'policy_state', { ...state, policy_hash: buf(state.policy_hash) })))
       .toEqual(state);

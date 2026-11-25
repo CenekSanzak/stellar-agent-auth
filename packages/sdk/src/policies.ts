@@ -64,6 +64,9 @@ export function canonicalPolicy(policy: Policy): Policy {
     if (limit.per_transaction <= 0n || limit.per_transaction > limit.per_day || limit.per_day > I128_MAX) {
       fail('InvalidInput', 'Each asset needs a positive per-transfer cap no greater than its daily cap');
     }
+    if (limit.total !== null && (limit.total < limit.per_transaction || limit.total > I128_MAX)) {
+      fail('InvalidInput', 'A total cap must be at least the per-transfer cap');
+    }
   }
   return {
     ...policy,
@@ -157,7 +160,7 @@ export function evaluateRequest(
   if (policy.blocked_recipients.includes(transfer.recipient) || !policy.allowed_recipients.includes(transfer.recipient)) {
     fail('RecipientNotAllowed', 'Recipient is not approved by the policy');
   }
-  const { per_transaction, per_day } = limit as AssetLimit;
+  const { per_transaction, per_day, total } = limit as AssetLimit;
   if (transfer.amount > per_transaction) {
     fail('PaymentLimitExceeded', `Amount exceeds the per-transfer cap ${per_transaction}`);
   }
@@ -165,6 +168,11 @@ export function evaluateRequest(
   if (spent + transfer.amount > I128_MAX) fail('ArithmeticOverflow', 'Daily spend overflows');
   if (spent + transfer.amount > per_day) {
     fail('DailyLimitExceeded', `Amount exceeds today's remaining ${per_day - spent}`);
+  }
+  const ever = current.total_spend.find(({ asset }) => asset === transfer.asset)?.amount ?? 0n;
+  if (ever + transfer.amount > I128_MAX) fail('ArithmeticOverflow', 'Total spend overflows');
+  if (total !== null && ever + transfer.amount > total) {
+    fail('TotalLimitExceeded', `Amount exceeds the policy's remaining total ${total - ever}`);
   }
 }
 
@@ -178,6 +186,11 @@ export interface Exposure {
   remaining_today: bigint;
   /** The largest single transfer any policy allows. */
   largest_transfer: bigint;
+  /**
+   * What the agents could still move over the policies' whole lives, summed over their total caps, or `null` if any
+   * policy has no total cap: the exposure is then bounded only day by day.
+   */
+  remaining_total: bigint | null;
   policies: number;
 }
 
@@ -194,8 +207,12 @@ export function policyExposure(entries: readonly { policy: Policy; state: Policy
     for (const limit of policy.assets) {
       const spent = current.daily_spend.find(({ asset }) => asset === limit.asset)?.amount ?? 0n;
       const row = rows.get(limit.asset) ?? {
-        asset: limit.asset, daily_cap: 0n, spent_today: 0n, remaining_today: 0n, largest_transfer: 0n, policies: 0,
+        asset: limit.asset, daily_cap: 0n, spent_today: 0n, remaining_today: 0n, largest_transfer: 0n,
+        remaining_total: 0n as bigint | null, policies: 0,
       };
+      const ever = current.total_spend.find(({ asset }) => asset === limit.asset)?.amount ?? 0n;
+      row.remaining_total = limit.total === null || row.remaining_total === null ? null
+        : row.remaining_total + (limit.total > ever ? limit.total - ever : 0n);
       row.daily_cap += limit.per_day;
       row.spent_today += spent;
       row.remaining_today += limit.per_day > spent ? limit.per_day - spent : 0n;

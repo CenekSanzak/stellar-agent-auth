@@ -132,7 +132,7 @@ it('confirms native agent authorization and a sponsor-paid token transfer on loc
   const policy: Policy = {
     schema_version: 1, policy_id: bytes(1), agent_id: 1n, revision: 1n,
     signer: agent.publicKey(), provider: account(34), required_checks: ['Endpoint', 'Metadata'],
-    max_assessment_age: 600n, max_risk_score: 10, assets: [{ asset, per_transaction: 500n, per_day: 1_000n }],
+    max_assessment_age: 600n, max_risk_score: 10, assets: [{ asset, per_transaction: 500n, per_day: 1_000n, total: null }],
     allowed_recipients: [recipient.publicKey()], blocked_recipients: [],
     valid_after: now, valid_until: now + 3_600n, action_kinds: ['Transfer'], service: null,
   };
@@ -150,7 +150,7 @@ it('confirms native agent authorization and a sponsor-paid token transfer on loc
     ...policy,
     required_checks: [...CHECK_KINDS].reverse(),
     assets: Array.from({ length: MAX_ASSETS }, (_, i) => ({
-      asset: contract(70 - i), per_transaction: (1n << 126n) - 1n, per_day: (1n << 127n) - 1n,
+      asset: contract(70 - i), per_transaction: (1n << 126n) - 1n, per_day: (1n << 127n) - 1n, total: (1n << 127n) - 1n,
     })),
     allowed_recipients: Array.from({ length: MAX_RECIPIENTS }, (_, i) => account(150 - i)),
     blocked_recipients: Array.from({ length: MAX_RECIPIENTS }, (_, i) => account(200 - i)),

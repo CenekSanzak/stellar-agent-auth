@@ -78,7 +78,7 @@ A policy defines:
 - **Who:** agent ID, identity revision, and signing address.
 - **Verification:** trusted provider, required checks, maximum result age, and maximum risk score.
 - **Actions:** allowed assets, methods, contracts, and recipients, with explicit blocked targets.
-- **Limits:** per-transaction and daily spending caps for each asset.
+- **Limits:** per-transaction and daily spending caps for each asset, and optionally a total for the policy's whole life.
 - **Lifetime:** activation time, expiry, and revocation status.
 
 The risk threshold is called `max_risk_score`. This preserves ERC-8196's rule that scores above the policy threshold are rejected.

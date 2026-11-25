@@ -18,8 +18,8 @@ export const policy: Policy = {
   max_assessment_age: 120n,
   max_risk_score: 25,
   assets: [
-    { asset: contract(16), per_transaction: 70n, per_day: 100n },
-    { asset: contract(15), per_transaction: 9_007_199_254_740_993n, per_day: (1n << 127n) - 1n },
+    { asset: contract(16), per_transaction: 70n, per_day: 100n, total: 1_000n },
+    { asset: contract(15), per_transaction: 9_007_199_254_740_993n, per_day: (1n << 127n) - 1n, total: null },
   ],
   allowed_recipients: [contract(19), account(18), account(17)],
   blocked_recipients: [contract(21), account(20)],

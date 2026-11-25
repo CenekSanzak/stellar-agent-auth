@@ -230,6 +230,7 @@ impl Test {
                     asset: self.asset.clone(),
                     per_transaction: 5,
                     per_day: 20,
+                    total: None,
                 },
             ],
             allowed_recipients: vec![env, self.recipient.clone()],
@@ -692,6 +693,7 @@ fn approval_stores_a_canonical_policy_and_fresh_state() {
             next_sequence: 1,
             utc_day: NOW / DAY,
             daily_spend: Vec::new(&t.env),
+            total_spend: Vec::new(&t.env),
         }
     );
     for key in [
@@ -758,6 +760,7 @@ fn approval_rejects_policies_the_wallet_cannot_enforce() {
                     asset: account(env),
                     per_transaction: 1,
                     per_day: 1,
+                    total: None,
                 },
             ]
         }),
@@ -772,6 +775,7 @@ fn approval_rejects_policies_the_wallet_cannot_enforce() {
                     asset: t.asset.clone(),
                     per_transaction: 0,
                     per_day: 1,
+                    total: None,
                 },
             )
         }),
@@ -782,6 +786,7 @@ fn approval_rejects_policies_the_wallet_cannot_enforce() {
                     asset: t.asset.clone(),
                     per_transaction: 6,
                     per_day: 5,
+                    total: None,
                 },
             )
         }),
@@ -839,6 +844,7 @@ fn policy_ids_are_never_reused_and_active_policies_are_bounded() {
             asset: t.asset.clone(),
             per_transaction: 1,
             per_day: 1,
+            total: None,
         },
     );
     failed(t.try_approve(&same_id), Error::Duplicate);
@@ -889,6 +895,7 @@ fn signed_three_unit_payment_succeeds_once() {
             next_sequence: 2,
             utc_day: NOW / DAY,
             daily_spend: t.spend(3),
+            total_spend: t.spend(3),
         }
     );
     // Replaying the confirmed request fails on the wallet sequence, whatever authorization is
@@ -1074,6 +1081,7 @@ fn spend_arithmetic_is_checked() {
             asset: token.clone(),
             per_transaction: i128::MAX,
             per_day: i128::MAX,
+            total: None,
         },
     ];
     let hash = t.approve(&policy);
@@ -1126,6 +1134,7 @@ fn budgets_are_independent_per_asset_and_policy() {
         asset: t.other_asset.clone(),
         per_transaction: 5,
         per_day: 10,
+        total: None,
     });
     let first = t.approve(&policy);
     let second = t.approve(&t.policy(2));
@@ -1448,6 +1457,7 @@ fn failed_token_call_rolls_back_sequence_budget_and_audit() {
         asset: token.clone(),
         per_transaction: 5,
         per_day: 20,
+        total: None,
     });
     let hash = t.approve(&policy);
     t.execute(&t.payment(&hash, 1, 2)).unwrap().unwrap();

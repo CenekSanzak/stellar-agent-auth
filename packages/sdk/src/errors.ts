@@ -39,6 +39,8 @@ export const CONTRACT_ERROR_HELP: Readonly<Record<ContractErrorName, string>> = 
   PaymentLimitExceeded: 'The amount is above the policy\'s cap for a single payment of this asset.',
   DailyLimitExceeded: 'The amount would take today\'s spend of this asset above the policy\'s daily cap. The budget '
     + 'resets at midnight UTC.',
+  TotalLimitExceeded: 'The amount would take everything spent of this asset under the policy above its total cap. '
+    + 'That cap never resets; the owner must approve a new policy.',
 };
 
 /** The v1 error code (1-based) for `name`. */

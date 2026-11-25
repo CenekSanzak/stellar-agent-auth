@@ -52,6 +52,8 @@ Before signing, `execute pay` asks the wallet whether the payment would pass. A 
 
 A policy file permits a service with an optional `"service": { "contract": "C...", "service_id": "<64 hex>" }`. Add `"plain_transfers": false` to permit the service only.
 
+Each asset in a policy file has `per_transfer` and `per_day`, and may have `total`: the most the agent may ever spend of it under the policy. Without it the exposure is bounded only day by day, and `policy show` says so.
+
 To sponsor these payments, the submitter must list the asset contract with the `transfer` method, or the service contract with `pay_for_service`.
 
 ## Exit codes

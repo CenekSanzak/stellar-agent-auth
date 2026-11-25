@@ -191,6 +191,7 @@ impl Test {
                     asset: self.asset.clone(),
                     per_transaction,
                     per_day,
+                    total: None,
                 },
             ],
             allowed_recipients: vec![env, self.recipient.clone()],
@@ -456,6 +457,13 @@ fn pays_a_plain_transfer_and_records_it() {
             next_sequence: 1,
             utc_day: NOW / DAY,
             daily_spend: vec![
+                &t.env,
+                AssetSpend {
+                    asset: t.asset.clone(),
+                    amount: 3
+                }
+            ],
+            total_spend: vec![
                 &t.env,
                 AssetSpend {
                     asset: t.asset.clone(),
@@ -816,6 +824,99 @@ fn check_payment_explains_a_refusal_without_authorization() {
 
     t.as_owner(|| t.client().pause());
     assert_eq!(check(&t.asset, &t.recipient, 1), Err(Error::Paused));
+}
+
+// --- Total cap ----------------------------------------------------------------------------------
+
+#[test]
+fn a_total_cap_bounds_both_paths_for_the_life_of_the_policy() {
+    let t = setup(100);
+    // 5 a payment, 20 a day, 12 in total.
+    let mut terms = t.terms(7, 5, 20);
+    terms.assets.set(
+        0,
+        AssetLimit {
+            asset: t.asset.clone(),
+            per_transaction: 5,
+            per_day: 20,
+            total: Some(12),
+        },
+    );
+    let policy = t.as_owner(|| t.client().approve_policy(&terms));
+    let signature = t.sign(&t.key, &PAYLOAD, &policy);
+    let on_account = |amount| t.check(&signature, vec![&t.env, t.transfer(&t.recipient, amount)]);
+    let execute = |amount| {
+        let request = ActionRequest {
+            schema_version: 1,
+            wallet: t.wallet.clone(),
+            policy_hash: policy.clone(),
+            sequence: t.client().policy_state(&policy).next_sequence,
+            deadline: t.env.ledger().timestamp() + 300,
+            action: pay(&t.asset, &t.recipient, amount),
+        };
+        t.as_owner(|| {
+            t.client()
+                .try_execute(&request)
+                .map(|_| ())
+                .map_err(|e| e.unwrap())
+        })
+    };
+    let preview = |amount| {
+        t.client()
+            .try_check_payment(&policy, &pay(&t.asset, &t.recipient, amount))
+            .map(|_| ())
+            .map_err(|error| error.unwrap())
+    };
+
+    assert_eq!(execute(5), Ok(()));
+    assert_eq!(on_account(5), Ok(()));
+    // Ten of twelve are spent: three would pass the daily cap and the per-payment cap, not the total.
+    assert_eq!(on_account(3), Err(Ok(Error::TotalLimitExceeded)));
+    assert_eq!(execute(3), Err(Error::TotalLimitExceeded));
+    assert_eq!(preview(3), Err(Error::TotalLimitExceeded));
+    assert_eq!(preview(2), Ok(()));
+    assert_eq!(on_account(2), Ok(()));
+
+    // A new day frees the daily budget. The total stays spent, on both paths, for good.
+    t.env.ledger().set_timestamp(NOW + UNTIL_MIDNIGHT);
+    let state = t.client().policy_state(&policy);
+    assert_eq!(state.daily_spend.len(), 0);
+    assert_eq!(state.total_spend.get_unchecked(0).amount, 12);
+    assert_eq!(on_account(1), Err(Ok(Error::TotalLimitExceeded)));
+    assert_eq!(execute(1), Err(Error::TotalLimitExceeded));
+
+    // A policy without a total cap still counts what it has spent.
+    assert_eq!(t.check_transfer(&t.recipient, 4), Ok(()));
+    assert_eq!(t.state().total_spend.get_unchecked(0).amount, 4);
+}
+
+#[test]
+fn a_total_cap_below_one_payment_is_refused() {
+    let t = setup(100);
+    let with_total = |id, total| {
+        let mut terms = t.terms(id, 5, 20);
+        terms.assets.set(
+            0,
+            AssetLimit {
+                asset: t.asset.clone(),
+                per_transaction: 5,
+                per_day: 20,
+                total,
+            },
+        );
+        t.as_owner(|| {
+            t.client()
+                .try_approve_policy(&terms)
+                .map(|_| ())
+                .map_err(|e| e.unwrap())
+        })
+    };
+    assert_eq!(with_total(7, Some(4)), Err(Error::InvalidInput));
+    assert_eq!(with_total(7, Some(0)), Err(Error::InvalidInput));
+    assert_eq!(with_total(7, Some(-1)), Err(Error::InvalidInput));
+    // Exactly one payment's worth, and more than a day's worth, are both fine.
+    assert_eq!(with_total(7, Some(5)), Ok(()));
+    assert_eq!(with_total(8, Some(1_000)), Ok(()));
 }
 
 // --- Service payments ---------------------------------------------------------------------------

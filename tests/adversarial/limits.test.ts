@@ -87,10 +87,25 @@ describe('smart wallet limits and races', () => {
     await w.expectRejected(await w.payment(empty, 1n, UNIT), 'RecipientNotAllowed', 'empty allowlist');
   }, TIMEOUT);
 
+  it('holds a total cap for the life of the policy', async () => {
+    const { asset } = w;
+    // 3 a payment, 5 a day, 4 in total: the second payment fits the day and not the total.
+    const policyHash = await w.approve(await w.policy(20, {
+      assets: [{ asset, per_transaction: 3n * UNIT, per_day: 5n * UNIT, total: 4n * UNIT }],
+    }));
+    await w.execute(await w.payment(policyHash, 1n, 3n * UNIT));
+    const state = await readPolicyState(w.read, policyHash);
+    expect(state.total_spend).toEqual([{ asset, amount: 3n * UNIT }]);
+    await w.expectRejected(await w.payment(policyHash, 2n, 2n * UNIT), 'TotalLimitExceeded', 'above the total');
+    await w.execute(await w.payment(policyHash, 2n, UNIT));
+    await w.expectRejected(await w.payment(policyHash, 3n, 1n), 'TotalLimitExceeded', 'the total is spent');
+    expect((await readPolicyState(w.read, policyHash)).total_spend).toEqual([{ asset, amount: 4n * UNIT }]);
+  }, TIMEOUT);
+
   it('commits one of two requests signed for the same sequence when both are submitted together', async () => {
     const { roles: { sponsor, stranger, recipient }, net, asset } = w;
     const policyHash = await w.approve(await w.policy(5, {
-      assets: [{ asset, per_transaction: 3n * UNIT, per_day: 5n * UNIT }],
+      assets: [{ asset, per_transaction: 3n * UNIT, per_day: 5n * UNIT, total: null }],
     }));
     const recipientBefore = await w.balanceOf(recipient.publicKey());
     const walletBefore = await readWalletBalance(w.read, asset);

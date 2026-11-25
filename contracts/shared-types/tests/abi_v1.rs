@@ -57,11 +57,13 @@ fn v1_hashes_match_the_typescript_vectors() {
                 asset: contract(16),
                 per_transaction: 70,
                 per_day: 100,
+                total: Some(1_000),
             },
             AssetLimit {
                 asset: contract(15),
                 per_transaction: 9_007_199_254_740_993,
                 per_day: i128::MAX,
+                total: None,
             },
         ],
         allowed_recipients: vec![&env, contract(19), account(18), account(17)],

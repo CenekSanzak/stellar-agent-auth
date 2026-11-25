@@ -1,6 +1,6 @@
-# ADR 0008 · One error code per cause
+# ADR 0008 · One error code per cause, and a total cap
 
-Decided on 2026-11-25, in P9, before any wallet is deployed to Testnet.
+Decided on 2026-11-25, in P9, before any wallet is deployed to Testnet. Both parts change the v1 interface, so they are made together.
 
 ## Problem
 
@@ -8,7 +8,7 @@ The v1 error list in [ADR 0002](0002-v1-abi-and-authorization.md) had 14 codes, 
 
 ## Decision
 
-Keep codes 1 to 14 and their numbers. Add 14 codes, 15 to 28, so that each names one cause. The five overloaded codes keep one meaning each.
+Keep codes 1 to 14 and their numbers. Add codes 15 to 29, so that each names one cause. The five overloaded codes keep one meaning each. Code 29 belongs to the total cap described below.
 
 | Code | Name | Raised by | Meaning |
 | --- | --- | --- | --- |
@@ -31,15 +31,28 @@ Keep codes 1 to 14 and their numbers. Add 14 codes, 15 to 28, so that each names
 | 26 | `RecipientNotAllowed` | wallet | The recipient is not on the allowlist, or is on the blocklist |
 | 27 | `PaymentLimitExceeded` | wallet | The amount is above the cap for one payment |
 | 28 | `DailyLimitExceeded` | wallet | The amount would take today's spend above the daily cap |
+| 29 | `TotalLimitExceeded` | wallet | The amount would take everything spent under the policy above its total cap |
 
 The other codes (`UnsupportedVersion`, `InvalidInput`, `Duplicate`, `NotFound`, `InvalidSequence`, `IdentityChanged`, `Paused`, `ArithmeticOverflow`, `TransferFailed`) are unchanged.
 
 The wallet passes a registry's error through unchanged, so an agent payment refused for a revoked result fails with `ResultRevoked` at the wallet too.
 
+## A total cap
+
+A policy bounded each payment and each day, but not its whole life. A seven-day policy at 20 a day exposed 140, and nothing in the policy said so. A calendar-day budget also lets an agent spend one day's cap just before midnight UTC and another just after.
+
+Each asset limit now has an optional `total`: the most that may ever be spent of that asset under the policy. The policy state keeps `total_spend` per asset, which never resets. Both payment paths charge it, after the daily cap, through the same `add_spend`.
+
+- `total` must be at least the per-payment cap; a total that one payment could not fit under is refused at approval (`InvalidInput`). It may be below the daily cap.
+- A policy without a `total` behaves as before. Its total spend is still counted.
+- Replacing a policy starts a fresh total, as it starts a fresh daily budget. The owner's exposure view sums what is left of the totals, and says so when any policy has none.
+
+This changes the policy and policy-state encodings, so the policy hash vector changed. Rust and TypeScript each computed the new one independently before the fixture was updated. The action and audit vectors are unchanged.
+
 ## What did not change
 
-- The order of checks in every contract. Only the code a check returns changed.
-- Schema version 1, the policy, action and audit encodings, and their hash vectors.
+- The order of checks in every contract, apart from the total cap being checked after the daily cap. Only the code a check returns changed.
+- Schema version 1, and the action and audit encodings and their hash vectors.
 - `ResultExpired` still covers both a result past its own expiry and one older than the policy's maximum age. Both have the same remedy: run the verifier again.
 
 ## Consequences
@@ -51,4 +64,4 @@ The wallet passes a registry's error through unchanged, so an agent payment refu
 
 ## Evidence
 
-Every Rust and TypeScript test that asserts a refusal now asserts the specific code: 98 Rust tests, 434 unit tests, 4 spec tests and 59 local-network tests passed on 2026-11-25.
+Every Rust and TypeScript test that asserts a refusal asserts the specific code. The total cap has host tests on both payment paths across a day boundary, unit tests of the SDK mirror and the exposure view, and a local-network test. The counts for the whole of P9 are in the [P9 validation record](../P9_VALIDATION.md).

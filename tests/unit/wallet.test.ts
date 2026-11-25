@@ -32,7 +32,8 @@ function expectCode(run: () => unknown, code: ContractErrorName) {
 }
 
 const freshState = (overrides: Partial<PolicyState> = {}): PolicyState => ({
-  policy_hash: policyHash, revoked: false, next_sequence: 1n, utc_day: utcDay(NOW), daily_spend: [], ...overrides,
+  policy_hash: policyHash, revoked: false, next_sequence: 1n, utc_day: utcDay(NOW), daily_spend: [], total_spend: [],
+  ...overrides,
 });
 
 const request = (overrides: Partial<ActionRequest> = {}, amount = 3n, to = recipient, token = asset): ActionRequest => ({
@@ -90,27 +91,27 @@ describe('wallet ABI encoding', () => {
 describe('policy rules mirror the wallet contract', () => {
   it('canonicalizes sets in the contract order and keeps the hash input stable', () => {
     const canonical = canonicalPolicy(transferPolicy({
-      assets: [{ asset: otherAsset, per_transaction: 1n, per_day: 1n }, { asset, per_transaction: 5n, per_day: 20n }],
+      assets: [{ asset: otherAsset, per_transaction: 1n, per_day: 1n, total: null }, { asset, per_transaction: 5n, per_day: 20n, total: null }],
       allowed_recipients: [contract(9), stranger, recipient],
     }));
     expect(canonical.assets.map(({ asset: token }) => token)).toEqual([asset, otherAsset]);
     // Accounts sort before contracts, then by key bytes.
     expect(canonical.allowed_recipients).toEqual([recipient, stranger, contract(9)]);
     expect(encodePolicy(canonical).toXdr('hex')).toBe(encodePolicy(transferPolicy({
-      assets: [{ asset, per_transaction: 5n, per_day: 20n }, { asset: otherAsset, per_transaction: 1n, per_day: 1n }],
+      assets: [{ asset, per_transaction: 5n, per_day: 20n, total: null }, { asset: otherAsset, per_transaction: 1n, per_day: 1n, total: null }],
       allowed_recipients: [recipient, contract(9), stranger],
     })).toXdr('hex'));
   });
 
   it.each<[string, Partial<Policy>, ContractErrorName]>([
     ['schema', { schema_version: 2 }, 'UnsupportedVersion'],
-    ['too many assets', { assets: [1, 2, 3, 4, 5].map((i) => ({ asset: contract(i), per_transaction: 1n, per_day: 1n })) }, 'LimitExceeded'],
+    ['too many assets', { assets: [1, 2, 3, 4, 5].map((i) => ({ asset: contract(i), per_transaction: 1n, per_day: 1n, total: null })) }, 'LimitExceeded'],
     ['empty window', { valid_after: NOW, valid_until: NOW }, 'InvalidInput'],
     ['zero age', { max_assessment_age: 0n }, 'InvalidInput'],
     ['risk above 100', { max_risk_score: 101 }, 'InvalidInput'],
     ['no required checks', { required_checks: [] }, 'InvalidInput'],
-    ['zero cap', { assets: [{ asset, per_transaction: 0n, per_day: 1n }] }, 'InvalidInput'],
-    ['cap above daily', { assets: [{ asset, per_transaction: 6n, per_day: 5n }] }, 'InvalidInput'],
+    ['zero cap', { assets: [{ asset, per_transaction: 0n, per_day: 1n, total: null }] }, 'InvalidInput'],
+    ['cap above daily', { assets: [{ asset, per_transaction: 6n, per_day: 5n, total: null }] }, 'InvalidInput'],
     ['service without rule', { action_kinds: ['ServicePayment'] }, 'InvalidInput'],
     ['duplicate recipient', { allowed_recipients: [recipient, recipient] }, 'Duplicate'],
     ['duplicate check', { required_checks: ['Endpoint', 'Endpoint'] }, 'Duplicate'],
@@ -123,7 +124,7 @@ describe('policy rules mirror the wallet contract', () => {
     ['the wallet as the service', { action_kinds: ['ServicePayment'], service: { contract: walletAddress, service_id: bytes(3) } }, 'InvalidInput'],
     ['contract signer', { signer: contract(4) }, 'InvalidInput'],
     ['owner as signer', { signer: owner }, 'InvalidInput'],
-    ['account asset', { assets: [{ asset: recipient, per_transaction: 1n, per_day: 1n }] }, 'InvalidInput'],
+    ['account asset', { assets: [{ asset: recipient, per_transaction: 1n, per_day: 1n, total: null }] }, 'InvalidInput'],
     ['wallet as recipient', { allowed_recipients: [walletAddress] }, 'InvalidInput'],
     ['wallet as blocked recipient', { blocked_recipients: [walletAddress] }, 'InvalidInput'],
     ['ended window', { valid_after: NOW - 100n, valid_until: NOW }, 'Expired'],
@@ -178,6 +179,27 @@ describe('request evaluation mirrors wallet execution', () => {
     expectCode(() => evaluateRequest(...input()), code);
   });
 
+  it('holds the total cap across days, and reports it after the daily cap', () => {
+    const capped = canonicalPolicy(transferPolicy({ assets: [{ asset, per_transaction: 5n, per_day: 20n, total: 12n }] }));
+    const state = (today: bigint, ever: bigint) => freshState({
+      daily_spend: today ? [{ asset, amount: today }] : [], total_spend: [{ asset, amount: ever }],
+    });
+    evaluateRequest(capped, state(0n, 7n), request({}, 5n), context());
+    expectCode(() => evaluateRequest(capped, state(0n, 8n), request({}, 5n), context()), 'TotalLimitExceeded');
+    // A new day frees the daily budget, not the total.
+    const tomorrow = NOW + 86_400n;
+    expectCode(() => evaluateRequest(capped, state(0n, 12n), request({ deadline: tomorrow + 300n }, 1n),
+      context({ now: tomorrow })), 'TotalLimitExceeded');
+    // When both would refuse, the wallet checks the day first.
+    expectCode(() => evaluateRequest(capped, state(18n, 10n), request({}, 3n), context()), 'DailyLimitExceeded');
+    // A total below one payment could never be spent.
+    expectCode(() => canonicalPolicy(transferPolicy({ assets: [{ asset, per_transaction: 5n, per_day: 20n, total: 4n }] })),
+      'InvalidInput');
+    const exact = canonicalPolicy(transferPolicy({ assets: [{ asset, per_transaction: 5n, per_day: 20n, total: 5n }] }));
+    expect(decodePolicy(encodePolicy(exact))).toEqual(exact);
+    expect(decodePolicyState(encodePolicyState(state(3n, 9n)))).toEqual(state(3n, 9n));
+  });
+
   it('resets the day at UTC midnight', () => {
     const spent = freshState({ daily_spend: [{ asset, amount: 20n }] });
     const midnight = (utcDay(NOW) + 1n) * 86_400n;
@@ -193,7 +215,7 @@ describe('owner exposure', () => {
   it('adds budgets across active policies and leaves out revoked and ended ones', () => {
     const first = canonicalPolicy(transferPolicy());
     const second = canonicalPolicy(transferPolicy({
-      policy_id: bytes(2), assets: [{ asset, per_transaction: 2n, per_day: 4n }, { asset: otherAsset, per_transaction: 1n, per_day: 3n }],
+      policy_id: bytes(2), assets: [{ asset, per_transaction: 2n, per_day: 4n, total: null }, { asset: otherAsset, per_transaction: 1n, per_day: 3n, total: null }],
     }));
     const ended = canonicalPolicy(transferPolicy({ policy_id: bytes(3), valid_after: NOW - 100n, valid_until: NOW }));
     const rows = policyExposure([
@@ -203,9 +225,26 @@ describe('owner exposure', () => {
       { policy: ended, state: freshState() },
     ], NOW);
     expect(rows).toEqual([
-      { asset, daily_cap: 24n, spent_today: 7n, remaining_today: 17n, largest_transfer: 5n, policies: 2 },
-      { asset: otherAsset, daily_cap: 3n, spent_today: 0n, remaining_today: 3n, largest_transfer: 1n, policies: 1 },
+      // No policy here has a total cap, so the exposure is bounded only day by day.
+      { asset, daily_cap: 24n, spent_today: 7n, remaining_today: 17n, largest_transfer: 5n, remaining_total: null,
+        policies: 2 },
+      { asset: otherAsset, daily_cap: 3n, spent_today: 0n, remaining_today: 3n, largest_transfer: 1n,
+        remaining_total: null, policies: 1 },
     ]);
+  });
+
+  it('states what is left of the total caps, when every policy has one', () => {
+    const capped = (id: number, total: bigint | null) => canonicalPolicy(transferPolicy({
+      policy_id: bytes(id), assets: [{ asset, per_transaction: 5n, per_day: 20n, total }],
+    }));
+    const spent = (amount: bigint) => freshState({ total_spend: [{ asset, amount }] });
+    expect(policyExposure([
+      { policy: capped(1, 100n), state: spent(30n) }, { policy: capped(2, 50n), state: spent(50n) },
+    ], NOW)[0]).toMatchObject({ remaining_total: 70n, policies: 2 });
+    // One uncapped policy makes the whole exposure open-ended.
+    expect(policyExposure([
+      { policy: capped(1, 100n), state: spent(30n) }, { policy: capped(2, null), state: spent(0n) },
+    ], NOW)[0]).toMatchObject({ remaining_total: null });
   });
 });
 
