@@ -1,13 +1,13 @@
 # Requirements and evidence ledger
 
-P0 infrastructure, the P1 ABI and authorization gate, the P2 agent registry, the P3 verification registry and limited verifier, the P4 smart wallet and the P5 SDK pipeline, sponsor and CLI are implemented and validated locally. The P3 Testnet checkpoint has run; the wallet is not yet deployed to Testnet. P6–P9 are not built. Product acceptance remains tied to the verification, wallet and SDK flows below.
+P0 infrastructure, the P1 ABI and authorization gate, the P2 agent registry, the P3 verification registry and limited verifier, the P4 smart wallet and the P5 SDK pipeline, sponsor and CLI are implemented and validated locally. The P3 Testnet checkpoint has run; the wallet is not yet deployed to Testnet. P6–P9 are not built. P9 was redefined on 2026-11-25 as the wallet's account payment path and moved ahead of P6; see [ADR 0006](decisions/0006-custom-account-spike.md) and the revised [plan](IMPLEMENTATION_PLAN.md). Product acceptance remains tied to the verification, wallet and SDK flows below.
 
 | Source requirement | Acceptance IDs | Evidence required | Implementation phase |
 | --- | --- | --- | --- |
 | SOW D1 / README M1: identities, signer and time-limited approved verifier | A01-A07, A25 | Signed registration/result readback; provider/revision/expiry failures; coverage mapping | P2-P3 |
 | SOW D2 / README M2: custody, limits, approved assets/recipients, pause and revocation | A08-A22 | Signed success and rejections; exact balance/state assertions; rollback and restoration | P4 |
 | SOW D3: developer kit, demo, tests, deployment and guide | A23-A29 | External SDK import, CLI/browser flow, Testnet IDs/links, clean setup and recording | P5-P8 |
-| README M3: restricted service-contract integration | A30 | Actual service transaction and method/argument/auth rejection tests | P9 |
+| README M3: service-contract integration paid through the wallet's account path | A30 | Actual service payment and context/argument/auth rejection tests | P9 |
 | README M4 / architecture: durable audit and all CI acceptance | A26-A30 | Reconstructed audit head, gap/restart tests, CI results and final deployment evidence | P6-P9 |
 | Architecture: per-asset UTC budgets and combined exposure | A15-A17, A22 | Boundary/concurrency tests and owner policy display | P4, P7 |
 | Architecture: persistent revocation and storage maintenance | A18-A21 | Archived/restored security state and maintenance guide | P4, P8 |
@@ -18,7 +18,7 @@ P0 infrastructure, the P1 ABI and authorization gate, the P2 agent registry, the
 
 | ID | Case | Required evidence |
 | --- | --- | --- |
-| Additional repository milestone work | One restricted service-contract adapter and its argument/auth tests; complete the corresponding SDK/CLI/demo flow | Required before claiming README milestone 3 in full |
+| Additional repository milestone work | The wallet's account payment path and one service contract paid through it, with their tests; complete the corresponding SDK/CLI/demo flow | Required before claiming README milestone 3 in full |
 | A01 | Register/read identity; unauthorized update; new signer proof | Registry tests plus signed integration |
 | A02 | Metadata/key/disable revision changes | Old verification and already signed old-policy requests fail |
 | A03 | Unapproved/disabled/wrong provider; unauthorized publish/revoke | Registry and signed authorization tests |
@@ -48,7 +48,7 @@ P0 infrastructure, the P1 ABI and authorization gate, the P2 agent registry, the
 | A27 | Audit mutation/missing entries/retention gap | Correct mismatch or incomplete status; no false completeness |
 | A28 | Clean checkout SDK import/CLI example/browser smoke | Full verify -> authorize -> execute -> revoke workflow |
 | A29 | Testnet SOW scenario and deployment/readback | Contract IDs, real transaction/result evidence and guide |
-| A30 | Restricted service call and all argument/auth bypass attempts | P9 tests plus actual service-call evidence for milestone 3 |
+| A30 | Service paid through the wallet's account path; every other context, argument, policy and signature refused; budgets shared with `execute` | P9 tests plus actual service-payment evidence for milestone 3 |
 
 ## P0 evidence
 

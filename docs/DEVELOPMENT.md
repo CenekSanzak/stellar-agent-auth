@@ -1,6 +1,6 @@
 # Development
 
-P0 supplies the build and test environment. P1 adds the v1 contract ABI, hash vectors and a local fixture that verifies native authorization and a sponsor-paid transfer. P2 adds the agent registry, its SDK helpers and a signed local registry flow. P3 adds the verification registry, the limited verifier CLI (`services/verifier`), the SDK verification client and a signed local verification flow. P4 adds the smart wallet, the SDK wallet and policy clients, and signed local wallet and adversarial suites; see [ADR 0005](decisions/0005-smart-wallet.md) for its storage maintenance notes. P5 adds the SDK transaction pipeline, the fee sponsor (`services/submitter`), the CLI (`packages/cli`) and `examples/payment-flow.ts`; see [P5 validation](P5_VALIDATION.md). The indexer, demo, final Testnet deployment and service adapter (P6–P9) are not built yet.
+P0 supplies the build and test environment. P1 adds the v1 contract ABI, hash vectors and a local fixture that verifies native authorization and a sponsor-paid transfer. P2 adds the agent registry, its SDK helpers and a signed local registry flow. P3 adds the verification registry, the limited verifier CLI (`services/verifier`), the SDK verification client and a signed local verification flow. P4 adds the smart wallet, the SDK wallet and policy clients, and signed local wallet and adversarial suites; see [ADR 0005](decisions/0005-smart-wallet.md) for its storage maintenance notes. P5 adds the SDK transaction pipeline, the fee sponsor (`services/submitter`), the CLI (`packages/cli`) and `examples/payment-flow.ts`; see [P5 validation](P5_VALIDATION.md). The account payment path (P9), indexer (P6), demo (P7) and final Testnet deployment (P8) are not built yet; P9 comes first.
 
 ## Pinned environment
 
@@ -31,7 +31,7 @@ cargo install stellar-cli --version 30.0.1 --locked
 npm run check
 ```
 
-Alternatively install the matching Stellar CLI release binary for your OS/architecture. `npm run build:contracts` rejects a different CLI version. Contract compilation uses `stellar contract build`, which applies the SDK's required WASM processing. The build creates the four application WASM files plus the local-only auth probe under `target/wasm32v1-none/release`. The shared types remain a library.
+Alternatively install the matching Stellar CLI release binary for your OS/architecture. `npm run build:contracts` rejects a different CLI version. Contract compilation uses `stellar contract build`, which applies the SDK's required WASM processing. The build creates the four application WASM files plus two local-only test contracts, the auth probe and the custom account spike ([ADR 0006](decisions/0006-custom-account-spike.md)), under `target/wasm32v1-none/release`. The shared types remain a library.
 
 `npm run check` typechecks source, deployments and tests; builds all TS workspaces; runs fast TS tests; runs Rust check, format, clippy and non-empty tests; and builds WASM. Fast checks need no network credentials. Rust and Node dependencies must be downloaded once.
 
@@ -60,7 +60,15 @@ Local mode defaults to loopback RPC and the standalone passphrase. Testnet mode 
 RUN_TESTNET_TESTS=1 npm run test:testnet
 ```
 
-This is a read-only network compatibility preflight. It is excluded from required CI and makes no transactions. P0 has no deployment command. Public network outages cannot invalidate fast/local acceptance.
+This is a read-only network compatibility preflight. It is excluded from required CI and makes no transactions. Public network outages cannot invalidate fast/local acceptance.
+
+One suite in the same project does submit transactions and is skipped unless it is enabled as well:
+
+```sh
+RUN_TESTNET_TESTS=1 RUN_TESTNET_SPIKE=1 npx vitest run --project testnet tests/testnet/account-probe.test.ts
+```
+
+It runs the custom account spike ([ADR 0006](decisions/0006-custom-account-spike.md)) on Testnet. It deploys throwaway registries, an asset and the test account from keys generated at runtime and funded by Friendbot, and keeps none of them.
 
 ## Test layout
 

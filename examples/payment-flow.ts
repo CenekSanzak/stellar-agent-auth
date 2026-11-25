@@ -21,7 +21,7 @@ import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
-  Address, Asset, Operation, TransactionBuilder, hash, rpc, type xdr,
+  Address, Asset, Operation, TransactionBuilder, hash, rpc, xdr,
 } from '@stellar/stellar-sdk';
 import {
   MemoryJournal, contractDeployment, encodeVerificationConstructorArgs, fromContractUnits, invoke, keypairSigner,
@@ -115,15 +115,23 @@ function startSubmitter(env: NodeJS.ProcessEnv, wallet: string, stateDirectory: 
 }
 
 /** Local infrastructure the CLI expects to exist: both registries, an approved Live provider and a test asset. */
-async function setup(context: NetworkContext, keys: Record<Role, Signer>, config: FlowConfig, log: Log) {
+async function setup(
+  context: NetworkContext, server: rpc.Server, keys: Record<Role, Signer>, config: FlowConfig, log: Log,
+) {
   const journal = new MemoryJournal();
   const limits = pipelineLimits({ maxFee: 100_000_000n });
   const keypair = async (role: Role) => loadKeypair(role, process.env);
 
   async function deploy(name: string, deployer: Signer, args: xdr.ScVal[]) {
     const wasm = await readFile(join(WASM, `stellar_agent_auth_${name}.wasm`));
-    const upload = await invoke(context, deployer, uploadInvocation(wasm), journal, { limits });
-    if (upload.status !== 'success') throw new Error(`Upload ${name}: ${upload.status}`);
+    // Install the code unless it is already there. Another deployer installing the same code at the same moment
+    // can fail this upload after simulation; that is harmless exactly when the code is then installed.
+    const code = xdr.LedgerKey.contractCode(new xdr.LedgerKeyContractCode({ hash: hash(wasm) }));
+    const installed = async () => (await server.getLedgerEntries(code)).entries.length > 0;
+    if (!(await installed())) {
+      const upload = await invoke(context, deployer, uploadInvocation(wasm), journal, { limits });
+      if (upload.status !== 'success' && !(await installed())) throw new Error(`Upload ${name}: ${upload.status}`);
+    }
     const created = await invoke(context, deployer, contractDeployment(context.networkPassphrase, deployer.address,
       hash(wasm), hash(Buffer.from(`${name}:${Date.now()}:${Math.random()}`)), args), journal, { limits });
     if (created.status !== 'success' || !created.returnValue) throw new Error(`Deploy ${name}: ${created.status}`);
@@ -195,7 +203,7 @@ export async function runPaymentFlow(config: FlowConfig, log: Log = console.log)
     keys[role] = keypairSigner(await loadKeypair(role, baseEnv));
     await server.requestAirdrop(keys[role].address);
   }
-  const contracts = await setup(context, keys, config, log);
+  const contracts = await setup(context, server, keys, config, log);
   const env: NodeJS.ProcessEnv = {
     ...baseEnv, AGENT_REGISTRY_ID: contracts.agentRegistry, VERIFICATION_REGISTRY_ID: contracts.verificationRegistry,
     VERIFIER_PUBLIC_ADDRESS: keys.provider.address,

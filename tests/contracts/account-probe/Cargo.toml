@@ -1,0 +1,18 @@
+[package]
+name = "stellar-agent-auth-account-probe"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+soroban-sdk.workspace = true
+stellar-agent-auth-shared-types.workspace = true
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+stellar-agent-auth-agent-registry = { path = "../../../contracts/agent-registry" }
+stellar-agent-auth-verification-registry = { path = "../../../contracts/verification-registry" }
+ed25519-dalek = "2"
