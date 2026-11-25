@@ -2,9 +2,9 @@
 import { stat, readFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { Keypair, StrKey, rpc } from '@stellar/stellar-sdk';
 import { loadConfig, readAuditHead, type Environment } from '@stellar-agent-auth/sdk';
+import { isMainModule } from '@stellar-agent-auth/sdk/node';
 import { createHandler, type IndexerState } from './api.js';
 import { verifyWallet, type AuditReport } from './audit.js';
 import { ingest, networkIdOf, type IngestReport, type StreamConfig } from './events.js';
@@ -174,7 +174,7 @@ export async function startIndexer(env: Environment, options: { poll?: boolean }
   };
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMainModule(import.meta.url)) {
   startIndexer(process.env).then(({ url, store, state }) => {
     console.log(JSON.stringify({
       status: 'listening', url, database: store.path, ingested_ledger: state.ingestion?.ingested_ledger ?? null,

@@ -2,10 +2,11 @@
 import { createServer, type Server } from 'node:http';
 import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { createBackend } from './backend.js';
 import { loadDeployment } from './deployment.js';
 import { demoDirectory, recordPath } from './setup.js';
+import { isMainModule } from '@stellar-agent-auth/sdk/node';
 
 export { createBackend, type BackendOptions } from './backend.js';
 export { DemoAgent, SCENARIOS, type Scenario, type ScenarioResult, type Step } from './agent.js';
@@ -50,7 +51,7 @@ export async function startDemo(
   };
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMainModule(import.meta.url)) {
   startDemo(process.env).then(({ url }) => {
     console.log(JSON.stringify({ status: 'listening', url }));
   }, (error: unknown) => {

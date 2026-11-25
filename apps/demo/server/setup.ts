@@ -2,7 +2,7 @@
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import {
   Address, Asset, Operation, TransactionBuilder, hash, nativeToScVal, rpc, xdr,
 } from '@stellar/stellar-sdk';
@@ -12,7 +12,7 @@ import {
   submit, toContractUnits, uploadInvocation, verificationInvocation, verificationOperation,
   type CheckResult, type Invocation, type Signer,
 } from '@stellar-agent-auth/sdk';
-import { createNamedKey, loadKeypair } from '@stellar-agent-auth/sdk/node';
+import { createNamedKey, isMainModule, loadKeypair } from '@stellar-agent-auth/sdk/node';
 import { bytesToHex, saveDeployment, type Deployment } from './deployment.js';
 
 /**
@@ -228,7 +228,7 @@ export async function setupDeployment(options: SetupOptions): Promise<Deployment
 export const demoDirectory = (env: Record<string, string | undefined>) => resolve(env['DEMO_DIRECTORY'] ?? '.local/demo');
 export const recordPath = (env: Record<string, string | undefined>) => join(demoDirectory(env), 'deployment.json');
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMainModule(import.meta.url)) {
   const run = new Date().toISOString().replace(/[:.]/g, '-');
   setupDeployment({
     env: process.env, directory: join(demoDirectory(process.env), run), record: recordPath(process.env),

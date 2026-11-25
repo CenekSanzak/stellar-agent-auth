@@ -1,4 +1,8 @@
+import { spawnSync } from 'node:child_process';
 import { once } from 'node:events';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createServer, type Server } from 'node:http';
 import { Account, Address, Asset, Keypair, Operation, xdr } from '@stellar/stellar-sdk';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -12,7 +16,9 @@ import {
   MemoryJournal, SimulationRejected, SubmissionUnsettled, buildTransaction, operationHash, type TransactionRecord,
   type TransactionStatus,
 } from '../../packages/sdk/src/transactions.js';
-import { RateLimiter, admit, createHandler, submitterConfig } from '../../services/submitter/src/index.js';
+import {
+  RateLimiter, acquireSponsorLock, admit, createHandler, submitterConfig,
+} from '../../services/submitter/src/index.js';
 import { contract } from '../fixtures/abi-v1.js';
 import { FakeRpc, hex, success } from './support/fake-rpc.js';
 
@@ -509,6 +515,35 @@ describe('submitter HTTP adapter', () => {
     expect((await post(JSON.stringify({ operation: operation([entry()]), extra: 1 }))).status).toBe(400);
     expect((await post('x'.repeat(70_000))).status).toBe(413);
     expect((await post(JSON.stringify({ operation: operation([entry()]) }))).status).toBe(429);
+  });
+
+  it('lets one process at a time use a sponsor key and state directory', async () => {
+    const state = await mkdtemp(join(tmpdir(), 'saa-lock-'));
+    try {
+      const address = sponsorKey.publicKey();
+      const lock = join(state, `sponsor-${address}.lock`);
+      const release = await acquireSponsorLock(state, address);
+      expect((await readFile(lock, 'utf8')).trim()).toBe(String(process.pid));
+      await release();
+      await expect(readFile(lock, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+
+      // Held by a process that is running: refused, and the lock is left alone.
+      await writeFile(lock, `${process.ppid}\n`);
+      await expect(acquireSponsorLock(state, address)).rejects.toThrow(`process ${process.ppid}`);
+      expect((await readFile(lock, 'utf8')).trim()).toBe(String(process.ppid));
+
+      // Left by a process that has exited: taken over.
+      const gone = spawnSync(process.execPath, ['-e', 'console.log(process.pid)'], { encoding: 'utf8' });
+      await writeFile(lock, gone.stdout);
+      const taken = await acquireSponsorLock(state, address);
+      expect((await readFile(lock, 'utf8')).trim()).toBe(String(process.pid));
+      // A release never removes a lock that has since passed to another process.
+      await writeFile(lock, `${process.ppid}\n`);
+      await taken();
+      expect((await readFile(lock, 'utf8')).trim()).toBe(String(process.ppid));
+    } finally {
+      await rm(state, { recursive: true, force: true });
+    }
   });
 
   it('has a fee budget unless told otherwise, and refuses one below a single transaction', () => {

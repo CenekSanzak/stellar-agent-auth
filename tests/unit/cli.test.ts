@@ -1,6 +1,7 @@
-import { chmod, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { Account, Contract, Keypair } from '@stellar/stellar-sdk';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { COMMANDS, main, type Command } from '../../packages/cli/src/index.js';
@@ -8,7 +9,7 @@ import { txCommands } from '../../packages/cli/src/commands/tx.js';
 import {
   EXIT, OutcomeError, Runtime, UsageError, classify, defaultStateDirectory, settled,
 } from '../../packages/cli/src/runtime.js';
-import { FileJournal, KeyReferenceError, createNamedKey, loadKey } from '../../packages/sdk/src/node.js';
+import { FileJournal, KeyReferenceError, createNamedKey, isMainModule, loadKey } from '../../packages/sdk/src/node.js';
 import { WalletError } from '../../packages/sdk/src/policies.js';
 import { SponsorOutcomeUnknown, SponsorRefused } from '../../packages/sdk/src/sponsor.js';
 import {
@@ -244,6 +245,25 @@ describe('command line', () => {
     await expect(settle(rpc.context(), other)).rejects.toThrow('another network');
     const same = record({ network_id: networkIdOf(rpc.context().networkPassphrase), max_time: '1' });
     expect((await settle(rpc.context(), same)).status).toBe('expired');
+  });
+
+  it('knows it was run directly even through a symbolic link, as an installed command is', async () => {
+    const script = join(directory, 'tool.js');
+    const link = join(directory, 'tool-link');
+    await writeFile(script, '');
+    await symlink(script, link);
+    const original = process.argv[1];
+    try {
+      process.argv[1] = link;
+      expect(isMainModule(pathToFileURL(script).href)).toBe(true);
+      process.argv[1] = script;
+      expect(isMainModule(pathToFileURL(script).href)).toBe(true);
+      expect(isMainModule(pathToFileURL(join(directory, 'other.js')).href)).toBe(false);
+      process.argv[1] = join(directory, 'missing.js');
+      expect(isMainModule(pathToFileURL(script).href)).toBe(false);
+    } finally {
+      process.argv[1] = original!;
+    }
   });
 
   it('finds a record by its operation and flushes what it writes', async () => {

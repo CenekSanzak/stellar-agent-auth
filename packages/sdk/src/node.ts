@@ -1,5 +1,7 @@
 import { chmod, mkdir, open, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Keypair, StrKey } from '@stellar/stellar-sdk';
 import { keypairSigner, type Signer } from './signers.js';
 import { holdsScope, newestForOperation, type TransactionJournal, type TransactionRecord } from './transactions.js';
@@ -146,3 +148,18 @@ export async function createNamedKey(name: string, env: Record<string, string | 
 
 /** Resolve a path against `base` unless it is already absolute. */
 export const resolvePath = (base: string, path: string) => (isAbsolute(path) ? path : resolve(base, path));
+
+/**
+ * Whether the module at `moduleUrl` (its `import.meta.url`) is the script Node was started with. The script path
+ * may be a symbolic link to the module, as it is for a command installed in `node_modules/.bin`, so both are
+ * resolved before they are compared. Comparing them as given makes an installed command do nothing at all.
+ */
+export function isMainModule(moduleUrl: string): boolean {
+  const script = process.argv[1];
+  if (!script) return false;
+  try {
+    return realpathSync(fileURLToPath(moduleUrl)) === realpathSync(script);
+  } catch {
+    return false;
+  }
+}

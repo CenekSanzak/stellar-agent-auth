@@ -2,13 +2,13 @@
 import { readFile, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { pathToFileURL } from 'node:url';
 import { BASE_FEE, Keypair, TransactionBuilder, rpc } from '@stellar/stellar-sdk';
 import {
   contractErrorName, decodeVerification, loadConfig, readAgent, readCurrent, readLatestResult,
   verificationOperation, VerificationRegistryError,
   type AgentIdentity, type Environment, type RegistryRead, type VerificationResult,
 } from '@stellar-agent-auth/sdk';
+import { isMainModule } from '@stellar-agent-auth/sdk/node';
 import {
   PublicationPending, ReportStore, assertFeeWithin, prepareAssessment, publishResult, readAccountSnapshot,
   settlePending, nextResultSequence, type Assessment, type Published, type PublishTarget,
@@ -232,7 +232,7 @@ export async function main(argv: string[], env: Environment): Promise<number> {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMainModule(import.meta.url)) {
   main(process.argv.slice(2), process.env).then((code) => { process.exitCode = code; }, (error: unknown) => {
     if (error instanceof PublicationPending) {
       console.error(`${error.message}\nThe report is stored; rerun the same command to settle the publication.`);

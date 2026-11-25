@@ -25,7 +25,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { Readable } from 'node:stream';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import {
   Address, Asset, Operation, TransactionBuilder, hash, nativeToScVal, rpc, xdr,
 } from '@stellar/stellar-sdk';
@@ -36,7 +36,7 @@ import {
   verificationOperation,
   type NetworkContext, type Signer,
 } from '@stellar-agent-auth/sdk';
-import { createNamedKey, loadKeypair } from '@stellar-agent-auth/sdk/node';
+import { createNamedKey, isMainModule, loadKeypair } from '@stellar-agent-auth/sdk/node';
 import { ReportStore, assess, readCapped, type NetworkOptions } from '@stellar-agent-auth/verifier';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -413,7 +413,7 @@ export async function runPaymentFlow(config: FlowConfig, log: Log = console.log)
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMainModule(import.meta.url)) {
   const { values } = parseArgs({ options: { config: { type: 'string' } } });
   const path = resolve(values.config ?? join(ROOT, 'examples/payment-flow.local.json'));
   runPaymentFlow(JSON.parse(await readFile(path, 'utf8')) as FlowConfig).catch((error: unknown) => {

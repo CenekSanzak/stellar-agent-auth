@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { parseArgs, type ParseArgsConfig } from 'node:util';
-import { pathToFileURL } from 'node:url';
 import type { Environment } from '@stellar-agent-auth/sdk';
+import { isMainModule } from '@stellar-agent-auth/sdk/node';
 import { agentCommands } from './commands/agent.js';
 import { executeCommands } from './commands/execute.js';
 import { historyCommand } from './commands/history.js';
@@ -147,7 +147,7 @@ export async function main(argv: string[], env: Environment, io: Io = defaultIo)
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMainModule(import.meta.url)) {
   main(process.argv.slice(2), process.env).then((code) => { process.exitCode = code; }, (error: unknown) => {
     process.stderr.write(`stellar-agent-auth: ${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = EXIT.error;
