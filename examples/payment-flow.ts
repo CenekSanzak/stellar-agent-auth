@@ -246,7 +246,16 @@ export async function runPaymentFlow(config: FlowConfig, log: Log = console.log)
   for (const role of ROLES) {
     await createNamedKey(role, baseEnv);
     keys[role] = keypairSigner(await loadKeypair(role, baseEnv));
-    await server.requestAirdrop(keys[role].address);
+    // A busy Friendbot answers 500; asking again is safe, since it does nothing for an account that exists.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await server.requestAirdrop(keys[role].address);
+        break;
+      } catch (error) {
+        if (attempt >= 6) throw error;
+        await new Promise((retry) => setTimeout(retry, 500 * attempt));
+      }
+    }
   }
   const contracts = await setup(context, server, keys, config, log);
   const env: NodeJS.ProcessEnv = {

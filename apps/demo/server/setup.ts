@@ -43,6 +43,22 @@ const ROLES = ['admin', 'provider', 'controller', 'agent', 'funder', 'issuer', '
 type Role = (typeof ROLES)[number];
 
 export const FIXTURE_LABEL = 'SIMULATED fixture - not a real assessment';
+
+/**
+ * Ask Friendbot to fund `address`, trying again when it fails: a busy Friendbot answers 500. Asking again is safe,
+ * since for an account that already exists it does nothing.
+ */
+export async function airdrop(server: rpc.Server, address: string, attempts = 6) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await server.requestAirdrop(address);
+      return;
+    } catch (error) {
+      if (attempt >= attempts) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+    }
+  }
+}
 const DAY = 86_400n;
 
 /** What the project's limited verifier covers, all implemented checks passing. */
@@ -89,7 +105,7 @@ export async function setupDeployment(options: SetupOptions): Promise<Deployment
   for (const role of ROLES) {
     await createNamedKey(role, keyEnv);
     keys[role] = keypairSigner(await loadKeypair(role, keyEnv));
-    await server.requestAirdrop(keys[role].address);
+    await airdrop(server, keys[role].address);
   }
 
   const run = async (source: Signer, invocation: Invocation, label: string) => {

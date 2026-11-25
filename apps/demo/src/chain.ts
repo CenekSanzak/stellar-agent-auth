@@ -115,9 +115,17 @@ export function createChain(config: Config, journal: TransactionJournal) {
     }
   }
 
-  /** Ask Friendbot for test XLM. Only test networks have one. */
+  /** Ask Friendbot for test XLM, trying again if it is busy. Only test networks have one. */
   async function requestTestXlm(address: string) {
-    await server.requestAirdrop(address);
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await server.requestAirdrop(address);
+        return;
+      } catch (error) {
+        if (attempt >= 4) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+      }
+    }
   }
 
   async function walletExists(wallet: string, owner: string): Promise<boolean> {

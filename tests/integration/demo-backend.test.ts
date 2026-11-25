@@ -16,7 +16,7 @@ import { keypairSigner } from '../../packages/sdk/src/signers.js';
 import { MemoryJournal, invoke, networkContext, pipelineLimits, type NetworkContext } from '../../packages/sdk/src/transactions.js';
 import type { Policy, WalletArgs, WalletOwnerMethod } from '../../packages/sdk/src/types.js';
 import { readWalletBalance } from '../../packages/sdk/src/wallet.js';
-import { localNetwork } from './support/local-network.js';
+import { airdrop, localNetwork } from './support/local-network.js';
 
 const TIMEOUT = 240_000;
 const UNIT = 10_000_000n;
@@ -72,7 +72,7 @@ describe('demo backend on local Stellar', () => {
     http = createServer((request, response) => { void backend.handler(request, response); });
     await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve));
     base = `http://127.0.0.1:${(http.address() as AddressInfo).port}/`;
-    await server.requestAirdrop(owner.publicKey());
+    await airdrop(server, owner.publicKey());
   }, TIMEOUT);
 
   afterAll(async () => {

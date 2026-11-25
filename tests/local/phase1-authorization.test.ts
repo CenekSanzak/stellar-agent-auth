@@ -15,7 +15,7 @@ import {
   type ActionRequest, type AgentIdentity, type AuditEntry, type Policy, type Transfer, type VerificationResult,
 } from '../../packages/sdk/src/types.js';
 import { account, bytes, contract } from '../fixtures/abi-v1.js';
-import { ensureNativeAssetContract } from '../integration/support/local-network.js';
+import { airdrop, ensureNativeAssetContract } from '../integration/support/local-network.js';
 import { assertResourceFit, resourceLimits } from './phase1-resources.js';
 
 function successfulSimulation(response: rpc.Api.SimulateTransactionResponse) {
@@ -62,7 +62,7 @@ it('confirms native agent authorization and a sponsor-paid token transfer on loc
   const recipient = Keypair.random();
   const passphrase = config.passphrase;
   for (const role of [owner, agent, sponsor, recipient]) {
-    await server.requestAirdrop(role.publicKey());
+    await airdrop(server, role.publicKey());
   }
 
   async function build(source: Keypair, operation: xdr.Operation): Promise<Transaction> {
