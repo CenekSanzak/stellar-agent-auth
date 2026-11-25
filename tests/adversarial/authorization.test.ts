@@ -118,7 +118,7 @@ describe('smart wallet authorization attacks', () => {
     expect(expired).toHaveProperty('error', expect.stringMatching(AUTH_ERROR));
 
     const late = { ...request, deadline: await w.ledgerTime() };
-    expectContractError(await w.enforceExecute(await w.agentAuthByHand(late), encodeAction(late)), 'Expired',
+    expectContractError(await w.enforceExecute(await w.agentAuthByHand(late), encodeAction(late)), 'RequestExpired',
       'deadline reached');
   }, TIMEOUT);
 

@@ -16,6 +16,12 @@ export interface Signer {
   signTransaction(tx: Transaction, networkPassphrase: string): Promise<Transaction>;
   /** The Ed25519 signature of `payload`, the SHA-256 of the authorization preimage. */
   signAuthEntry(preimage: xdr.HashIdPreimage, payload: Uint8Array): Promise<Uint8Array>;
+  /**
+   * The Ed25519 signature of `message` exactly as given. Only headless keys offer this. The wallet's account path
+   * needs it: there the agent key signs the authorization payload followed by a policy hash, which is not a
+   * message a wallet's `signAuthEntry` produces.
+   */
+  signMessage?(message: Uint8Array): Promise<Uint8Array>;
 }
 
 const toHex = (bytes: Uint8Array) => Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
@@ -40,6 +46,9 @@ export function keypairSigner(keypair: Keypair): Signer {
     },
     async signAuthEntry(_preimage, payload) {
       return keypair.sign(payload);
+    },
+    async signMessage(message) {
+      return keypair.sign(message);
     },
   };
 }

@@ -519,7 +519,7 @@ fn disable_and_reactivate_require_controller_and_bump_revision() {
             ..registered.clone()
         }
     );
-    failed(client.try_current(&1, &2), Error::Revoked);
+    failed(client.try_current(&1, &2), Error::AgentDisabled);
     failed(client.try_current(&1, &1), Error::IdentityChanged);
     failed(t.disable(1, 2), Error::Duplicate);
     failed(t.disable(1, 1), Error::IdentityChanged);
@@ -566,7 +566,7 @@ fn disabled_identity_supports_recovery() {
         .unwrap()
         .unwrap();
     assert_eq!((updated.revision, updated.disabled), (4, true));
-    failed(client.try_current(&1, &4), Error::Revoked);
+    failed(client.try_current(&1, &4), Error::AgentDisabled);
     let reactivated = t.reactivate(1, 4).unwrap().unwrap();
     assert_eq!(reactivated.signer, new_signer);
     assert_eq!(client.current(&1, &5), reactivated);

@@ -64,6 +64,9 @@ export function canonicalPolicy(policy: Policy): Policy {
     if (limit.per_transaction <= 0n || limit.per_transaction > limit.per_day || limit.per_day > I128_MAX) {
       fail('InvalidInput', 'Each asset needs a positive per-transfer cap no greater than its daily cap');
     }
+    if (limit.total !== null && (limit.total < limit.per_transaction || limit.total > I128_MAX)) {
+      fail('InvalidInput', 'A total cap must be at least the per-transfer cap');
+    }
   }
   return {
     ...policy,
@@ -83,15 +86,16 @@ export interface PolicyContext {
 }
 
 /**
- * Mirrors the wallet's approval checks that need no ledger reads: `canonicalPolicy`, then the v1 wallet rules
- * (transfers only, a standard-account signer other than the owner, contract assets, never the wallet as a
- * recipient), then an unexpired window. The contract additionally rejects a reused policy ID, a full active set and
+ * Mirrors the wallet's approval checks that need no ledger reads: `canonicalPolicy`, then the wallet's own rules
+ * (a permitted service that is a contract other than the wallet, a standard-account signer other than the owner,
+ * contract assets, never the wallet as a recipient), then an unexpired window. The contract additionally rejects a reused policy ID, a full active set and
  * an identity whose live revision or signer differs.
  */
 export function validatePolicy(policy: Policy, context: PolicyContext): Policy {
   const canonical = canonicalPolicy(policy);
-  if (canonical.action_kinds.length !== 1 || canonical.action_kinds[0] !== 'Transfer' || canonical.service !== null) {
-    fail('InvalidInput', 'The v1 wallet executes plain transfers only');
+  if (canonical.service && (!StrKey.isValidContract(canonical.service.contract)
+    || canonical.service.contract === context.wallet)) {
+    fail('InvalidInput', 'A permitted service must be a contract other than the wallet');
   }
   if (!StrKey.isValidEd25519PublicKey(canonical.signer) || canonical.signer === context.owner) {
     fail('InvalidInput', 'The agent signer must be a standard account other than the owner');
@@ -143,21 +147,33 @@ export function evaluateRequest(
   if (request.sequence !== current.next_sequence) {
     fail('InvalidSequence', `Expected sequence ${current.next_sequence}`);
   }
-  if (context.now >= request.deadline || context.now >= policy.valid_until) fail('Expired', 'Request or policy expired');
-  if (context.now < policy.valid_after) fail('PolicyDenied', 'Policy is not yet valid');
-  if (!policy.action_kinds.includes(request.action.kind) || request.action.kind !== 'Transfer') {
+  if (context.now >= request.deadline) fail('RequestExpired', 'The request deadline has passed');
+  // `execute` pushes plain transfers; a service payment goes through the wallet's account path.
+  if (request.action.kind !== 'Transfer') fail('PolicyDenied', 'execute does not make service payments');
+  if (context.now >= policy.valid_until) fail('Expired', 'The policy window has ended');
+  if (context.now < policy.valid_after) fail('NotYetValid', 'Policy is not yet valid');
+  if (!policy.action_kinds.includes(request.action.kind)) {
     fail('PolicyDenied', `Policy does not permit ${request.action.kind}`);
   }
   const limit = policy.assets.find(({ asset }) => asset === transfer.asset);
-  if (!limit) fail('PolicyDenied', 'Asset is not approved by the policy');
+  if (!limit) fail('AssetNotAllowed', 'Asset is not approved by the policy');
   if (policy.blocked_recipients.includes(transfer.recipient) || !policy.allowed_recipients.includes(transfer.recipient)) {
-    fail('PolicyDenied', 'Recipient is not approved by the policy');
+    fail('RecipientNotAllowed', 'Recipient is not approved by the policy');
   }
-  const { per_transaction, per_day } = limit as AssetLimit;
-  if (transfer.amount > per_transaction) fail('LimitExceeded', `Amount exceeds the per-transfer cap ${per_transaction}`);
+  const { per_transaction, per_day, total } = limit as AssetLimit;
+  if (transfer.amount > per_transaction) {
+    fail('PaymentLimitExceeded', `Amount exceeds the per-transfer cap ${per_transaction}`);
+  }
   const spent = current.daily_spend.find(({ asset }) => asset === transfer.asset)?.amount ?? 0n;
   if (spent + transfer.amount > I128_MAX) fail('ArithmeticOverflow', 'Daily spend overflows');
-  if (spent + transfer.amount > per_day) fail('LimitExceeded', `Amount exceeds today's remaining ${per_day - spent}`);
+  if (spent + transfer.amount > per_day) {
+    fail('DailyLimitExceeded', `Amount exceeds today's remaining ${per_day - spent}`);
+  }
+  const ever = current.total_spend.find(({ asset }) => asset === transfer.asset)?.amount ?? 0n;
+  if (ever + transfer.amount > I128_MAX) fail('ArithmeticOverflow', 'Total spend overflows');
+  if (total !== null && ever + transfer.amount > total) {
+    fail('TotalLimitExceeded', `Amount exceeds the policy's remaining total ${total - ever}`);
+  }
 }
 
 export interface Exposure {
@@ -170,6 +186,11 @@ export interface Exposure {
   remaining_today: bigint;
   /** The largest single transfer any policy allows. */
   largest_transfer: bigint;
+  /**
+   * What the agents could still move over the policies' whole lives, summed over their total caps, or `null` if any
+   * policy has no total cap: the exposure is then bounded only day by day.
+   */
+  remaining_total: bigint | null;
   policies: number;
 }
 
@@ -186,8 +207,12 @@ export function policyExposure(entries: readonly { policy: Policy; state: Policy
     for (const limit of policy.assets) {
       const spent = current.daily_spend.find(({ asset }) => asset === limit.asset)?.amount ?? 0n;
       const row = rows.get(limit.asset) ?? {
-        asset: limit.asset, daily_cap: 0n, spent_today: 0n, remaining_today: 0n, largest_transfer: 0n, policies: 0,
+        asset: limit.asset, daily_cap: 0n, spent_today: 0n, remaining_today: 0n, largest_transfer: 0n,
+        remaining_total: 0n as bigint | null, policies: 0,
       };
+      const ever = current.total_spend.find(({ asset }) => asset === limit.asset)?.amount ?? 0n;
+      row.remaining_total = limit.total === null || row.remaining_total === null ? null
+        : row.remaining_total + (limit.total > ever ? limit.total - ever : 0n);
       row.daily_cap += limit.per_day;
       row.spent_today += spent;
       row.remaining_today += limit.per_day > spent ? limit.per_day - spent : 0n;

@@ -87,8 +87,8 @@ describe('smart wallet on local Stellar', () => {
 
   it('rejects an over-limit payment and an unapproved recipient', async () => {
     const { roles: { stranger } } = w;
-    await w.expectRejected(await w.payment(gate, 2n, 6n * UNIT), 'LimitExceeded', 'above 5 per payment');
-    await w.expectRejected(await w.payment(gate, 2n, 1n * UNIT, stranger.publicKey()), 'PolicyDenied',
+    await w.expectRejected(await w.payment(gate, 2n, 6n * UNIT), 'PaymentLimitExceeded', 'above 5 per payment');
+    await w.expectRejected(await w.payment(gate, 2n, 1n * UNIT, stranger.publicKey()), 'RecipientNotAllowed',
       'unapproved recipient');
     expect((await readPolicyState(w.read, gate)).next_sequence).toBe(2n);
   }, TIMEOUT);
@@ -147,7 +147,7 @@ describe('smart wallet on local Stellar', () => {
     const { roles: { owner }, net, wallet, asset } = w;
     const [old] = await readActivePolicies(w.read);
     const replacement = await w.policy(3, {
-      assets: [{ asset, per_transaction: 2n * UNIT, per_day: 4n * UNIT }],
+      assets: [{ asset, per_transaction: 2n * UNIT, per_day: 4n * UNIT, total: null }],
     });
     const replaced = await w.ownerCall('replace_policy', { old_policy_hash: old!, policy: replacement });
     const fresh = policyHash(net.passphrase, wallet, replacement);
@@ -164,10 +164,10 @@ describe('smart wallet on local Stellar', () => {
     })));
     expect(policyExposure(entries, now)).toEqual([{
       asset, daily_cap: 4n * UNIT, spent_today: 0n, remaining_today: 4n * UNIT, largest_transfer: 2n * UNIT,
-      policies: 1,
+      remaining_total: null, policies: 1,
     }]);
     await w.expectRejected(await w.payment(old!, 2n, UNIT), 'Revoked', 'replaced policy');
-    await w.expectRejected(await w.payment(fresh, 1n, 3n * UNIT), 'LimitExceeded', 'new per-transfer cap');
+    await w.expectRejected(await w.payment(fresh, 1n, 3n * UNIT), 'PaymentLimitExceeded', 'new per-transfer cap');
   }, TIMEOUT);
 
   it('rolls back sequence, budget and audit head when the asset transfer fails on chain', async () => {

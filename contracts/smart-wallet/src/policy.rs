@@ -1,6 +1,5 @@
 use soroban_sdk::{Address, BytesN, Env, Vec};
 use stellar_agent_auth_shared_types::{
-    action::ActionKind,
     audit::AuditOutcome,
     encoding::policy_hash,
     errors::Error,
@@ -46,6 +45,7 @@ pub fn approve(env: &Env, owner: &Address, policy: Policy) -> Result<BytesN<32>,
         next_sequence: 1,
         utc_day: utc_day(now),
         daily_spend: Vec::new(env),
+        total_spend: Vec::new(env),
     };
     storage::add_policy(env, &hash, &policy, &state);
     active.push_back(hash.clone());
@@ -81,21 +81,21 @@ pub fn revoke(env: &Env, owner: &Address, hash: &BytesN<32>) -> Result<PolicySta
     Ok(state)
 }
 
-/// Rules beyond the shared canonical shape. In v1 the wallet executes plain transfers only, so a
-/// policy naming service payments is refused until the restricted service path exists. The signer
-/// must be a standard account other than the owner, every asset a contract, and no recipient the
-/// wallet itself.
+/// Rules beyond the shared canonical shape. The signer must be a standard account other than the
+/// owner, every asset a contract, and no recipient the wallet itself. A policy that permits service
+/// payments names one service contract, which must be a contract other than the wallet; the
+/// canonical shape already ties that permission to the `ServicePayment` action kind.
 fn validate_for_wallet(
     env: &Env,
     wallet: &Address,
     owner: &Address,
     policy: &Policy,
 ) -> Result<(), Error> {
-    if policy.action_kinds.len() != 1
-        || policy.action_kinds.get_unchecked(0) != ActionKind::Transfer
-        || policy.service != ServicePermission::Disabled
-    {
-        return Err(Error::InvalidInput);
+    if let ServicePermission::Restricted(rule) = &policy.service {
+        require_contract(env, &rule.contract)?;
+        if rule.contract == *wallet {
+            return Err(Error::InvalidInput);
+        }
     }
     require_account(env, &policy.signer)?;
     if policy.signer == *owner {
@@ -110,13 +110,13 @@ fn validate_for_wallet(
     Ok(())
 }
 
-/// The policy's limit for `asset`, or `PolicyDenied` for an asset the policy does not name.
+/// The policy's limit for `asset`, or `AssetNotAllowed` for an asset the policy does not name.
 pub fn asset_limit(policy: &Policy, asset: &Address) -> Result<AssetLimit, Error> {
     policy
         .assets
         .iter()
         .find(|limit| limit.asset == *asset)
-        .ok_or(Error::PolicyDenied)
+        .ok_or(Error::AssetNotAllowed)
 }
 
 /// The state as of ledger time `now`: a stored day before today has spent nothing today. Used for
@@ -130,25 +130,45 @@ pub fn as_of(env: &Env, mut state: PolicyState, now: u64) -> PolicyState {
     state
 }
 
-/// Adds `amount` of `asset` to today's spend, failing with `LimitExceeded` above `per_day` and
-/// `ArithmeticOverflow` on overflow. Spend is per asset and never combined across assets.
+/// Adds `amount` of `asset` to today's spend and to the policy's total spend, failing with
+/// `DailyLimitExceeded` above `per_day`, `TotalLimitExceeded` above `total` when the policy sets
+/// one, and `ArithmeticOverflow` on overflow. Spend is per asset and never combined across assets.
 pub fn add_spend(state: &mut PolicyState, limit: &AssetLimit, amount: i128) -> Result<(), Error> {
-    let index = state
-        .daily_spend
-        .iter()
-        .position(|spend| spend.asset == limit.asset);
-    let spent = index.map_or(0, |i| state.daily_spend.get_unchecked(i as u32).amount);
-    let total = spent.checked_add(amount).ok_or(Error::ArithmeticOverflow)?;
-    if total > limit.per_day {
-        return Err(Error::LimitExceeded);
+    let today = add(&state.daily_spend, &limit.asset, amount)?;
+    if today.1 > limit.per_day {
+        return Err(Error::DailyLimitExceeded);
     }
+    let total = add(&state.total_spend, &limit.asset, amount)?;
+    if limit.total.is_some_and(|cap| total.1 > cap) {
+        return Err(Error::TotalLimitExceeded);
+    }
+    put(&mut state.daily_spend, &limit.asset, today);
+    put(&mut state.total_spend, &limit.asset, total);
+    Ok(())
+}
+
+/// Where `asset` sits in `spends`, if it does, and what it would hold after adding `amount`.
+fn add(
+    spends: &Vec<AssetSpend>,
+    asset: &Address,
+    amount: i128,
+) -> Result<(Option<u32>, i128), Error> {
+    let index = spends
+        .iter()
+        .position(|spend| spend.asset == *asset)
+        .map(|index| index as u32);
+    let spent = index.map_or(0, |i| spends.get_unchecked(i).amount);
+    let sum = spent.checked_add(amount).ok_or(Error::ArithmeticOverflow)?;
+    Ok((index, sum))
+}
+
+fn put(spends: &mut Vec<AssetSpend>, asset: &Address, (index, amount): (Option<u32>, i128)) {
     let spend = AssetSpend {
-        asset: limit.asset.clone(),
-        amount: total,
+        asset: asset.clone(),
+        amount,
     };
     match index {
-        Some(i) => state.daily_spend.set(i as u32, spend),
-        None => state.daily_spend.push_back(spend),
+        Some(i) => spends.set(i, spend),
+        None => spends.push_back(spend),
     }
-    Ok(())
 }

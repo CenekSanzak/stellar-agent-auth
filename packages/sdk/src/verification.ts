@@ -80,7 +80,7 @@ export function validatePublication(result: VerificationResult, now?: bigint): v
   if (result.expires_at <= result.issued_at) fail('InvalidInput', 'Expiry must follow the issue time');
   if (now === undefined) return;
   if (result.issued_at > now) fail('InvalidInput', 'Issue time is in the future');
-  if (result.expires_at <= now) fail('Expired', 'Result has already expired');
+  if (result.expires_at <= now) fail('ResultExpired', 'Result has already expired');
 }
 
 /** Mirrors `validate_requirement`: one to eight distinct checks, a positive age and a threshold of at most 100. */
@@ -100,18 +100,18 @@ export function validateRequirement(requirement: VerificationRequirement): void 
  */
 export function evaluateResult(result: VerificationResult, now: bigint, requirement: VerificationRequirement): void {
   validateRequirement(requirement);
-  if (result.revoked) fail('Revoked', 'Result is revoked');
-  if (now >= result.expires_at) fail('Expired', 'Result has expired');
+  if (result.revoked) fail('ResultRevoked', 'Result is revoked');
+  if (now >= result.expires_at) fail('ResultExpired', 'Result has expired');
   if (now < result.issued_at) fail('InvalidInput', 'Result is issued in the future');
-  if (now - result.issued_at > requirement.max_age) fail('Expired', 'Result is older than the maximum age');
-  if (result.serious_wallet_risks !== 0) fail('VerificationDenied', 'A serious wallet risk is flagged');
+  if (now - result.issued_at > requirement.max_age) fail('ResultExpired', 'Result is older than the maximum age');
+  if (result.serious_wallet_risks !== 0) fail('RiskFlagged', 'A serious wallet risk is flagged');
   for (const kind of requirement.required_checks) {
     if (!result.checks.some((check) => check.kind === kind && check.outcome === 'Passed')) {
-      fail('VerificationDenied', `Required check ${kind} did not pass`);
+      fail('CheckNotPassed', `Required check ${kind} did not pass`);
     }
   }
   if (result.risk_score === null || result.risk_score > requirement.max_risk_score) {
-    fail('VerificationDenied', 'Risk score is absent or above the threshold');
+    fail('RiskTooHigh', 'Risk score is absent or above the threshold');
   }
 }
 

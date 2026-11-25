@@ -18,7 +18,7 @@ node packages/cli/dist/index.js help
 | `verify` | `run` (add `--publish` to publish as a provider), `show`, `revoke` |
 | `wallet` | `create`, `show`, `balance`, `fund`, `withdraw`, `pause`, `resume` |
 | `policy` | `approve`, `show`, `revoke`, `replace` |
-| `execute` | `transfer`, `sign`, `submit` |
+| `execute` | `transfer`, `sign`, `submit` through the wallet's `execute`; `pay` on its account path |
 | `history` | Reads the wallet's audit events and verifies them against the stored audit head |
 | `tx` | `status`: settle a journaled transaction by hash |
 | `keys` | `create`, `address`, `fund` (Friendbot; local and Testnet only) |
@@ -40,6 +40,21 @@ A secret, or anything shaped like one, is refused and never printed.
 - With `--sponsor-url` or `SUBMITTER_URL`, the acting key signs its authorization and the [submitter](../../services/submitter/README.md) pays. The sponsor sponsors `execute` and `fund` by default, so set the variable only for those commands; owner commands sent to it are refused.
 - With `--source <key>`, that account pays and signs the envelope. It authorizes nothing else.
 - Otherwise the acting key pays for its own call. The CLI checks the exact call the envelope signature will authorize and refuses anything more.
+
+## Two ways to pay
+
+- `execute transfer` pushes a payment: the agent signs a request and the wallet moves the funds. Requests are ordered by a policy sequence and carry a deadline. `execute sign` and `execute submit` split it in two.
+- `execute pay` is for a payment that is pulled. The wallet authorizes it as an account, under the same policy and the same budget.
+  - Plain: `--to`, `--asset`, `--amount`. The result is an `asset.transfer` that anyone holding the signed entry can submit.
+  - To a service: add `--service <C...> --service-id <hex>`. The wallet authorizes the service's own `pay_for_service` call with the transfer inside it, so the payment and what the service gives for it happen together or not at all. The policy must permit that service.
+
+Before signing, `execute pay` asks the wallet whether the payment would pass. A refusal there exits 3 with the wallet's own reason. On this path the agent signs as a key: the signer account's own signers and thresholds are not applied.
+
+A policy file permits a service with an optional `"service": { "contract": "C...", "service_id": "<64 hex>" }`. Add `"plain_transfers": false` to permit the service only.
+
+Each asset in a policy file has `per_transfer` and `per_day`, and may have `total`: the most the agent may ever spend of it under the policy. Without it the exposure is bounded only day by day, and `policy show` says so.
+
+To sponsor these payments, the submitter must list the asset contract with the `transfer` method, or the service contract with `pay_for_service`.
 
 ## Exit codes
 

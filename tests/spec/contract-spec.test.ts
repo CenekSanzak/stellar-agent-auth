@@ -3,9 +3,10 @@ import { contract, type xdr } from '@stellar/stellar-sdk';
 import { describe, expect, it } from 'vitest';
 import {
   decodeAuditHead, decodeHashList, decodeIdentity, decodePolicy, decodePolicyState, decodeProviderRecord,
-  decodeVerification, encodeRegistryArgs, encodeVerificationArgs, encodeVerificationConstructorArgs,
-  encodeWalletArgs, encodeWalletConstructorArgs,
+  decodeVerification, encodeAccountSignature, encodeRegistryArgs, encodeVerificationArgs,
+  encodeVerificationConstructorArgs, encodeWalletArgs, encodeWalletConstructorArgs,
 } from '../../packages/sdk/src/encoding.js';
+import { accountPaymentOperation } from '../../packages/sdk/src/account.js';
 import { canonicalPolicy } from '../../packages/sdk/src/policies.js';
 import {
   CONTRACT_ERRORS, type ActionRequest, type AgentIdentity, type Policy, type RegistryArgs, type VerificationArgs,
@@ -47,7 +48,9 @@ function nativePolicy(value: Policy) {
     revision: value.revision, signer: value.signer, provider: value.provider,
     required_checks: value.required_checks.map(unit), max_assessment_age: value.max_assessment_age,
     max_risk_score: value.max_risk_score,
-    assets: value.assets.map(({ asset, per_transaction, per_day }) => ({ asset, per_transaction, per_day })),
+    assets: value.assets.map(({ asset, per_transaction, per_day, total }) => ({
+      asset, per_transaction, per_day, total: total ?? undefined,
+    })),
     allowed_recipients: [...value.allowed_recipients], blocked_recipients: [...value.blocked_recipients],
     valid_after: value.valid_after, valid_until: value.valid_until, action_kinds: value.action_kinds.map(unit),
     service: value.service === null ? unit('Disabled')
@@ -140,6 +143,10 @@ const walletCases: Case<WalletArgs> = {
   policies: { sdk: {}, native: {} },
   policy: { sdk: { policy_hash: bytes(6) }, native: { policy_hash: buf(bytes(6)) } },
   policy_state: { sdk: { policy_hash: bytes(6) }, native: { policy_hash: buf(bytes(6)) } },
+  check_payment: {
+    sdk: { policy_hash: bytes(6), action: { kind: 'Transfer', transfer } },
+    native: { policy_hash: buf(bytes(6)), action: tuple('Transfer', nativeTransfer(transfer)) },
+  },
   audit_head: { sdk: {}, native: {} },
 };
 
@@ -147,7 +154,8 @@ const hex = (values: xdr.ScVal[]) => values.map((value) => value.toXdr('hex'));
 
 function checkArguments<A>(name: string, cases: Case<A>, encode: (method: keyof A, args: A[keyof A]) => xdr.ScVal[]) {
   const interfaceSpec = spec(name);
-  const exported = interfaceSpec.funcs().map((fn) => fn.name.toString()).filter((fn) => fn !== '__constructor').sort();
+  // Host-invoked functions (`__constructor`, `__check_auth`) are not entry points a client calls.
+  const exported = interfaceSpec.funcs().map((fn) => fn.name.toString()).filter((fn) => !fn.startsWith('__')).sort();
   expect(exported, `${name} entry points`).toEqual(Object.keys(cases).sort());
   for (const method of Object.keys(cases) as (keyof A & string)[]) {
     const { sdk, native } = cases[method];
@@ -193,6 +201,7 @@ describe('SDK conformance with the contracts\' published interfaces', () => {
     const state = {
       policy_hash: bytes(6), revoked: false, next_sequence: 3n, utc_day: 19_675n,
       daily_spend: [{ asset: contractId(15), amount: 20n }],
+      total_spend: [{ asset: contractId(15), amount: 60n }, { asset: contractId(16), amount: 7n }],
     };
     expect(decodePolicyState(returned(interfaceSpec, 'policy_state', { ...state, policy_hash: buf(state.policy_hash) })))
       .toEqual(state);
@@ -208,5 +217,44 @@ describe('SDK conformance with the contracts\' published interfaces', () => {
     });
     expect(hex(encodeWalletConstructorArgs(account(1), contractId(2), contractId(3)))).toEqual(hex(constructor));
     expect(interfaceSpec.events().map((event) => event.name.toString())).toContain('WalletAudit');
+    // The account path: the signature value the wallet's `__check_auth` expects, and what `check_payment` returns.
+    const signature = new Uint8Array(64).fill(7);
+    const [, expected] = interfaceSpec.funcArgsToScVals('__check_auth', {
+      signature_payload: buf(bytes(8)), signature: { policy_hash: buf(bytes(6)), signature: buf(signature) },
+      auth_contexts: [],
+    });
+    expect(encodeAccountSignature(bytes(6), signature).toXdr('hex')).toBe(expected!.toXdr('hex'));
+    expect(decodePolicyState(returned(interfaceSpec, 'check_payment', { ...state, policy_hash: buf(state.policy_hash) })))
+      .toEqual(state);
+    // A service payment is checked as the same `Action` the audit entry records.
+    const service = { contract: contractId(21), service_id: bytes(22) };
+    const [, servicePayment] = interfaceSpec.funcArgsToScVals('check_payment', {
+      policy_hash: buf(bytes(6)),
+      action: tuple('ServicePayment', {
+        service: { contract: service.contract, service_id: buf(service.service_id) }, payment: nativeTransfer(transfer),
+      }),
+    });
+    expect(encodeWalletArgs('check_payment', {
+      policy_hash: bytes(6), action: { kind: 'ServicePayment', service, payment: transfer },
+    })[1]!.toXdr('hex')).toBe(servicePayment!.toXdr('hex'));
+  });
+
+  it('demo service', () => {
+    // The SDK calls a service through the one method a wallet's service permission covers.
+    const service = spec('demo_service');
+    const payment = {
+      wallet: contractId(1), policyHash: bytes(6), asset: transfer.asset, recipient: transfer.recipient,
+      amount: transfer.amount, service: { contract: contractId(21), service_id: bytes(22) },
+    };
+    const { body } = accountPaymentOperation(payment);
+    if (body.type !== 'invokeHostFunction' || body.invokeHostFunctionOp.hostFunction.type !== 'hostFunctionTypeInvokeContract') {
+      throw new Error('Expected a contract call');
+    }
+    const call = body.invokeHostFunctionOp.hostFunction.invokeContract;
+    expect(call.functionName.toString()).toBe('pay_for_service');
+    expect(hex(call.args)).toEqual(hex(service.funcArgsToScVals('pay_for_service', {
+      wallet: payment.wallet, asset: payment.asset, recipient: payment.recipient, amount: payment.amount,
+      service_id: buf(payment.service.service_id),
+    })));
   });
 });

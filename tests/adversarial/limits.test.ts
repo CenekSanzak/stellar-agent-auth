@@ -42,7 +42,7 @@ describe('smart wallet limits and races', () => {
   it('accepts exactly the per-transfer cap and rejects above it, zero and negative amounts', async () => {
     const { roles: { signer }, net } = w;
     const policyHash = await w.approve(await w.policy(1));
-    await w.expectRejected(await w.payment(policyHash, 1n, 5n * UNIT + 1n), 'LimitExceeded', 'one above the cap');
+    await w.expectRejected(await w.payment(policyHash, 1n, 5n * UNIT + 1n), 'PaymentLimitExceeded', 'one above the cap');
     await w.execute(await w.payment(policyHash, 1n, 5n * UNIT));
 
     const request = await w.payment(policyHash, 2n, UNIT);
@@ -64,7 +64,7 @@ describe('smart wallet limits and races', () => {
     for (const sequence of [1n, 2n, 3n, 4n]) await w.execute(await w.payment(policyHash, sequence, 5n * UNIT));
     const state = await readPolicyState(w.read, policyHash);
     expect(state.daily_spend).toEqual([{ asset: w.asset, amount: 20n * UNIT }]);
-    await w.expectRejected(await w.payment(policyHash, 5n, 1n), 'LimitExceeded', 'one unit over the day');
+    await w.expectRejected(await w.payment(policyHash, 5n, 1n), 'DailyLimitExceeded', 'one unit over the day');
   }, TIMEOUT);
 
   it('fails closed for unapproved assets, blocked recipients and an empty allowlist', async () => {
@@ -79,18 +79,33 @@ describe('smart wallet limits and races', () => {
     }));
     const unapprovedAsset = { ...await w.payment(policyHash, 1n, UNIT) };
     if (unapprovedAsset.action.kind === 'Transfer') unapprovedAsset.action.transfer.asset = nativeAsset;
-    await w.expectRejected(unapprovedAsset, 'PolicyDenied', 'unapproved asset');
-    await w.expectRejected(await w.payment(policyHash, 1n, UNIT, stranger.publicKey()), 'PolicyDenied',
+    await w.expectRejected(unapprovedAsset, 'AssetNotAllowed', 'unapproved asset');
+    await w.expectRejected(await w.payment(policyHash, 1n, UNIT, stranger.publicKey()), 'RecipientNotAllowed',
       'allowed and blocked recipient');
 
     const empty = await w.approve(await w.policy(4, { allowed_recipients: [] }));
-    await w.expectRejected(await w.payment(empty, 1n, UNIT), 'PolicyDenied', 'empty allowlist');
+    await w.expectRejected(await w.payment(empty, 1n, UNIT), 'RecipientNotAllowed', 'empty allowlist');
+  }, TIMEOUT);
+
+  it('holds a total cap for the life of the policy', async () => {
+    const { asset } = w;
+    // 3 a payment, 5 a day, 4 in total: the second payment fits the day and not the total.
+    const policyHash = await w.approve(await w.policy(20, {
+      assets: [{ asset, per_transaction: 3n * UNIT, per_day: 5n * UNIT, total: 4n * UNIT }],
+    }));
+    await w.execute(await w.payment(policyHash, 1n, 3n * UNIT));
+    const state = await readPolicyState(w.read, policyHash);
+    expect(state.total_spend).toEqual([{ asset, amount: 3n * UNIT }]);
+    await w.expectRejected(await w.payment(policyHash, 2n, 2n * UNIT), 'TotalLimitExceeded', 'above the total');
+    await w.execute(await w.payment(policyHash, 2n, UNIT));
+    await w.expectRejected(await w.payment(policyHash, 3n, 1n), 'TotalLimitExceeded', 'the total is spent');
+    expect((await readPolicyState(w.read, policyHash)).total_spend).toEqual([{ asset, amount: 4n * UNIT }]);
   }, TIMEOUT);
 
   it('commits one of two requests signed for the same sequence when both are submitted together', async () => {
     const { roles: { sponsor, stranger, recipient }, net, asset } = w;
     const policyHash = await w.approve(await w.policy(5, {
-      assets: [{ asset, per_transaction: 3n * UNIT, per_day: 5n * UNIT }],
+      assets: [{ asset, per_transaction: 3n * UNIT, per_day: 5n * UNIT, total: null }],
     }));
     const recipientBefore = await w.balanceOf(recipient.publicKey());
     const walletBefore = await readWalletBalance(w.read, asset);
@@ -114,7 +129,7 @@ describe('smart wallet limits and races', () => {
 
     // A request signed in advance for the next sequence still meets the cap when it arrives.
     const next = await w.payment(policyHash, 2n, 3n * UNIT);
-    expectContractError(await w.enforceExecute(await w.agentAuthByHand(next), encodeAction(next)), 'LimitExceeded',
+    expectContractError(await w.enforceExecute(await w.agentAuthByHand(next), encodeAction(next)), 'DailyLimitExceeded',
       'signed ahead, over the remaining budget');
   }, TIMEOUT);
 
@@ -122,7 +137,7 @@ describe('smart wallet limits and races', () => {
     const { net } = w;
     const now = await w.ledgerTime();
     const later = await w.approve(await w.policy(6, { valid_after: now + DAY, valid_until: now + 2n * DAY }));
-    await w.expectRejected(await w.payment(later, 1n, UNIT), 'PolicyDenied', 'before valid_after');
+    await w.expectRejected(await w.payment(later, 1n, UNIT), 'NotYetValid', 'before valid_after');
 
     const ended = await w.policy(7, { valid_after: now - 2n * DAY, valid_until: now - DAY });
     const auth = await w.ownerAuthByHand('approve_policy', { policy: ended });

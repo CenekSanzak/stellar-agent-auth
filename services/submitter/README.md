@@ -45,6 +45,10 @@ Network settings come from the same variables as the SDK (`STELLAR_NETWORK`, `ST
 
 A settled result is 200 whatever its status, and a pending or unknown one is 202. Every 4xx means nothing was submitted for the request: 400 and 413 for the body, 401 for the token, 403 for a refused call, 409 while an earlier transaction is still settling, 422 for a simulation rejection, 429 for the rate limit. A 5xx can follow a submission, so a client must treat it as an unknown outcome.
 
+## Sponsoring account payments
+
+A payment on the wallet's account path is not a call on the wallet. It is `transfer` on the asset contract, or `pay_for_service` on a service contract, carrying the wallet's own entry. To sponsor them, list those contracts in `SUBMITTER_CONTRACTS` and those methods in `SUBMITTER_METHODS`. The submitter does not need to know the wallet. Note that listing an asset's `transfer` sponsors that transfer for any payer whose entry simulates, not only for one wallet.
+
 ## Limits to know
 
 - Submissions are serialized inside one process. Do not run two submitters on one key.

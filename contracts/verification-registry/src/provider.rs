@@ -8,7 +8,7 @@ use stellar_agent_auth_shared_types::{
 use crate::storage;
 
 /// Approves a provider address that has never been approved. Disabling is terminal: a disabled
-/// address returns `Revoked` and a replacement provider needs a new address.
+/// address returns `ProviderDisabled` and a replacement provider needs a new address.
 pub fn approve(
     env: &Env,
     provider: Address,
@@ -16,7 +16,7 @@ pub fn approve(
 ) -> Result<ProviderRecord, Error> {
     match storage::provider(env, &provider) {
         Some(record) if record.approved => Err(Error::Duplicate),
-        Some(_) => Err(Error::Revoked),
+        Some(_) => Err(Error::ProviderDisabled),
         None => commit(
             env,
             provider,
@@ -37,13 +37,13 @@ pub fn disable(env: &Env, provider: Address) -> Result<ProviderRecord, Error> {
     commit(env, provider, record)
 }
 
-/// The record of a provider whose results may be published or used: `VerificationDenied` if it
-/// was never approved, `Revoked` once disabled.
+/// The record of a provider whose results may be published or used: `ProviderNotApproved` if it
+/// was never approved, `ProviderDisabled` once disabled.
 pub fn require_approved(env: &Env, provider: &Address) -> Result<ProviderRecord, Error> {
     match storage::provider(env, provider) {
         Some(record) if record.approved => Ok(record),
-        Some(_) => Err(Error::Revoked),
-        None => Err(Error::VerificationDenied),
+        Some(_) => Err(Error::ProviderDisabled),
+        None => Err(Error::ProviderNotApproved),
     }
 }
 

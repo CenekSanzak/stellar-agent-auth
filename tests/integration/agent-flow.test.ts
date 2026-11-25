@@ -341,7 +341,7 @@ describe('agent registry on local Stellar', () => {
     expect(disabled).toMatchObject({ signer: newSigner.publicKey(), revision: 4n, disabled: true });
     await expectUnexpired(recording.latestLedger + MAX_AUTH_WINDOW_LEDGERS);
     expectContractError(await enforce('update_metadata', stale, staleAuth), 'IdentityChanged', 'update signed before disable');
-    await expectRegistryError(readCurrent(read, 1n, 4n), 'Revoked');
+    await expectRegistryError(readCurrent(read, 1n, 4n), 'AgentDisabled');
     await expectRegistryError(readCurrent(read, 1n, 3n), 'IdentityChanged');
     expectContractError(await recordCall('disable', { agent_id: 1n, expected_revision: 4n }), 'Duplicate', 'disable twice');
 

@@ -1,17 +1,22 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { Address, scValToNative, xdr } from '@stellar/stellar-sdk';
 import {
-  actionHash, decodeAction, evaluateRequest, executeInvocation, readPaused, readPolicy, readPolicyState,
-  signForSponsor, stateAsOf, transferRequest, type ActionRequest, type Hash32,
+  accountPaymentAction, accountPaymentInvocation, actionHash, decodeAction, evaluateRequest, executeInvocation,
+  readPaused, readPaymentCheck, readPolicy, readPolicyState, signForSponsor, stateAsOf, transferRequest,
+  type AccountPayment, type ActionRequest, type Hash32,
 } from '@stellar-agent-auth/sdk';
 import type { Command } from '../index.js';
 import { UsageError, address, contractAddress, hex32, integer, required, settled, type Runtime } from '../runtime.js';
 import { walletId } from './wallet.js';
 
 /**
- * Agent transfers. The agent key signs one authorization entry bound to the exact request; the sponsor (or a
- * `--source` fee payer) submits it. Every request in a policy uses the next sequence, so an unsettled earlier
- * submission for the same policy blocks a new one: a request is never rebuilt while its predecessor might commit.
+ * Agent payments. `transfer`, `sign` and `submit` push a payment through the wallet's `execute`: the agent key signs
+ * one authorization entry bound to the exact request, and the sponsor (or a `--source` fee payer) submits it. Every
+ * request in a policy uses the next sequence, so an unsettled earlier submission for the same policy blocks a new
+ * one: a request is never rebuilt while its predecessor might commit.
+ *
+ * `pay` uses the wallet's account path instead, for a payment that is pulled: a plain asset transfer that anyone
+ * holding the signed entry can make, or a service's own call with the transfer inside it.
  */
 
 const scopeOf = (wallet: string, policy: Hash32) => `execute:${wallet}:${Buffer.from(policy).toString('hex')}`;
@@ -99,6 +104,52 @@ export const executeCommands: Record<string, Command> = {
       const result = settled(await runtime.run(executeInvocation(context, request, agent), undefined, scope),
         actionResult(runtime, request));
       return { ...result, request: describe(runtime, request) };
+    },
+  },
+  pay: {
+    summary: 'Pay on the account path: --agent-key <key> --policy <hash> --to <address> --asset <C...> '
+      + '--amount <decimal> [--service <C...> --service-id <hex>]',
+    options: {
+      wallet: 'string', 'agent-key': 'string', policy: 'string', to: 'string', asset: 'string', amount: 'string',
+      service: 'string', 'service-id': 'string',
+    },
+    async run(runtime, values) {
+      if ((values['service'] === undefined) !== (values['service-id'] === undefined)) {
+        throw new UsageError('--service and --service-id go together');
+      }
+      const wallet = walletId(runtime, values['wallet']);
+      const policyHash = hex32(values['policy'], 'policy');
+      const agent = await runtime.key(values['agent-key'], 'agent-key');
+      const asset = contractAddress(values['asset'], 'asset');
+      const payment: AccountPayment = {
+        wallet, policyHash, asset, recipient: address(values['to'], 'to'),
+        amount: await runtime.units(asset, values['amount'], 'amount'),
+        ...(values['service'] === undefined ? {} : {
+          service: {
+            contract: contractAddress(values['service'], 'service'),
+            service_id: hex32(values['service-id'], 'service-id'),
+          },
+        }),
+      };
+      const read = runtime.read(wallet);
+      if ((await readPolicy(read, policyHash)).signer !== agent.address) {
+        throw new UsageError('--agent-key is not the signer this policy names');
+      }
+      // Ask the wallet first. A refusal on the account path itself reaches us only as an authorization failure,
+      // and a public RPC does not say why; this names the rule.
+      const after = await readPaymentCheck(read, { policy_hash: policyHash, action: accountPaymentAction(payment) });
+      const context = await runtime.context();
+      const scope = `account:${wallet}:${Buffer.from(policyHash).toString('hex')}`;
+      const result = settled(await runtime.run(accountPaymentInvocation(context, payment, agent), undefined, scope),
+        (value) => (payment.service ? { receipt: scValToNative(value) as unknown } : {}));
+      return {
+        ...result,
+        payment: {
+          wallet, policy_hash: policyHash, asset, recipient: payment.recipient, units: payment.amount,
+          ...(payment.service ? { service: payment.service.contract, service_id: payment.service.service_id } : {}),
+        },
+        spent_today: after.daily_spend,
+      };
     },
   },
   sign: {

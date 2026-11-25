@@ -21,6 +21,10 @@ pub struct AssetLimit {
     pub asset: Address,
     pub per_transaction: i128,
     pub per_day: i128,
+    /// The most that may ever be spent of this asset under the policy, or `None` for no such cap.
+    /// The daily cap bounds a day; this bounds the policy's whole life, so the owner's exposure is
+    /// a stated amount and not the daily cap times the days the policy runs.
+    pub total: Option<i128>,
 }
 
 #[contracttype]
@@ -66,6 +70,8 @@ pub struct PolicyState {
     pub next_sequence: u64,
     pub utc_day: u64,
     pub daily_spend: Vec<AssetSpend>,
+    /// Everything spent under the policy since its approval, per asset. Never reset.
+    pub total_spend: Vec<AssetSpend>,
 }
 
 impl Policy {
@@ -95,6 +101,13 @@ impl Policy {
         }
         for asset in self.assets.iter() {
             if asset.per_transaction <= 0 || asset.per_transaction > asset.per_day {
+                return Err(Error::InvalidInput);
+            }
+            // A total below one payment could never be spent.
+            if asset
+                .total
+                .is_some_and(|total| total < asset.per_transaction)
+            {
                 return Err(Error::InvalidInput);
             }
         }

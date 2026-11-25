@@ -43,6 +43,7 @@ pub fn audit_hash(env: &Env, entry: &AuditEntry) -> Result<BytesN<32>, Error> {
     match &entry.outcome {
         AuditOutcome::Executed(execution) => execution.action.validate_amount()?,
         AuditOutcome::OwnerWithdrawal(transfer) => transfer.validate_amount()?,
+        AuditOutcome::AccountPayment(payment) => payment.action.validate_amount()?,
         _ => {}
     }
     Ok(digest(env, "audit", &entry.wallet, entry))

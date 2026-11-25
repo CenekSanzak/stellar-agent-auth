@@ -16,7 +16,7 @@ export function transferPolicy(overrides: Partial<Policy> = {}): Policy {
   return {
     schema_version: 1, policy_id: bytes(48), agent_id: 1n, revision: 1n, signer, provider,
     required_checks: ['Endpoint', 'Metadata', 'SignerAccount'], max_assessment_age: 86_400n, max_risk_score: 10,
-    assets: [{ asset, per_transaction: 5n, per_day: 20n }],
+    assets: [{ asset, per_transaction: 5n, per_day: 20n, total: null }],
     allowed_recipients: [recipient], blocked_recipients: [],
     valid_after: 1_800_000_000n, valid_until: 1_800_000_000n + 7n * 86_400n, action_kinds: ['Transfer'], service: null,
     ...overrides,

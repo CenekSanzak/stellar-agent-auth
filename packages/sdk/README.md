@@ -38,3 +38,14 @@ P5 adds the transaction pipeline, the fee sponsor and the domain invocations. No
 - **Amounts:** `toContractUnits` and `fromContractUnits` convert decimal strings exactly; there is no floating-point path.
 
 [P5 validation](../../docs/P5_VALIDATION.md) lists what is tested and what is still open.
+
+P9 adds the wallet's account payment path, for services that pull their payment.
+
+- **Paying:** `accountPaymentInvocation(context, payment, agent)` builds the call and signs the wallet's one entry as the policy's agent key. Without `payment.service` the call is the plain `asset.transfer(wallet, recipient, amount)`, which anyone holding the entry can submit. With it, the call is the service's `pay_for_service` with that transfer inside, so the payment cannot be taken without the service running; the policy must permit that service. Pass the invocation to `signForSponsor`; the wallet is never the transaction source. `accountPaymentOperation` and `signAccountPayment` are the two halves.
+- **The agent key:** it signs the host payload followed by the policy hash, through `Signer.signMessage`, which only headless keys offer. The signer account's own signers and thresholds are not applied on this path.
+- **Before signing:** `readPaymentCheck(wallet, { policy_hash, action: accountPaymentAction(payment) })` returns the state the payment would leave or throws `WalletError` with the wallet's code. A refusal on the account path itself is only a host authorization failure.
+- **History:** an account payment is the `AccountPayment` audit outcome.
+- **Errors:** every refusal has its own name in `CONTRACT_ERRORS`, such as `DailyLimitExceeded`, `RecipientNotAllowed` or `ResultExpired`, and `explainContractError` says what to do about it ([ADR 0008](../../docs/decisions/0008-error-codes.md)).
+- **Total cap:** an `AssetLimit` has an optional `total`, and `PolicyState` has `total_spend`. `policyExposure` reports `remaining_total`, or `null` when any policy has no total cap.
+
+[ADR 0007](../../docs/decisions/0007-account-payment-path.md) has the rules and what differs from `execute`.

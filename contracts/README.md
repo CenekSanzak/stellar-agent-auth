@@ -7,3 +7,7 @@ P1 defines the [v1 contract ABI and event layouts](../docs/decisions/0002-v1-abi
 The policy module stays inside smart-wallet. Shared types remain a normal library and do not produce an independently deployed contract.
 
 `tests/contracts/account-probe` is a spike fixture, not a product contract: a custom account that enforces a cut-down policy in `__check_auth`, used to show that the wallet can pay a plain asset transfer. Its findings and the decision to add that path to the smart wallet are in [ADR 0006](../docs/decisions/0006-custom-account-spike.md).
+
+P9 adds the smart wallet's account payment path: as a custom account it authorizes one plain transfer of a policy asset under a policy, on the same budget as `execute`, and `check_payment` explains a refusal in advance; see [ADR 0007](../docs/decisions/0007-account-payment-path.md).
+
+`contracts/demo-service` is a small paid service for that path. `pay_for_service` requires the paying wallet's authorization, takes a fixed price by transferring from the wallet inside the call, and issues a receipt, atomically. `open_allowance` asks the wallet for an allowance instead; it exists to show that the wallet refuses.

@@ -1,6 +1,6 @@
 # ADR 0005 · Smart wallet
 
-P4 implements `contracts/smart-wallet`. An owner holds funds in the wallet and approves policies. Each policy lets one verified agent signer make bounded transfers. The policy, action, audit and error types come from [ADR 0002](0002-v1-abi-and-authorization.md). Identity and verification rules come from [ADR 0003](0003-agent-registry.md) and [ADR 0004](0004-verification-registry.md). The SDK client is `packages/sdk/src/{wallet,policies}.ts`. Evidence is in the [P4 validation record](../P4_VALIDATION.md).
+P4 implements `contracts/smart-wallet`. An owner holds funds in the wallet and approves policies. Each policy lets one verified agent signer make bounded transfers. The policy, action, audit and error types come from [ADR 0002](0002-v1-abi-and-authorization.md). Identity and verification rules come from [ADR 0003](0003-agent-registry.md) and [ADR 0004](0004-verification-registry.md). The SDK client is `packages/sdk/src/{wallet,policies}.ts`. Evidence is in the [P4 validation record](../P4_VALIDATION.md). The wallet's second payment path, added in P9, is in [ADR 0007](0007-account-payment-path.md); it shares the policy checks and budgets described here.
 
 ## Entry points
 
@@ -36,7 +36,7 @@ The constructor checks that both registries are contracts and that the verificat
 
 1. The shared canonical rules (`Policy::canonicalize`). These are the version, collection caps, required fields, a positive per-transfer cap no greater than the daily cap, and sorted sets without duplicates.
 2. The wallet's own rules, all `InvalidInput`:
-   - `Transfer` is the only action kind and the service permission is `Disabled`. Service payments arrive with the restricted service path in P9; until then such a policy is refused rather than stored unenforceable.
+   - `Transfer` is the only action kind and the service permission is `Disabled`. Service payments arrive with the restricted service path in P9; until then such a policy is refused rather than stored unenforceable. *Since P9 the wallet accepts a policy that permits one service; see [ADR 0007](0007-account-payment-path.md).*
    - The signer is a standard account other than the owner.
    - Every asset is a contract.
    - The wallet is never an allowed or blocked recipient.

@@ -40,7 +40,7 @@ pub fn bound_agent_registry(env: &Env, verification_registry: &Address) -> Optio
 
 /// Requires the policy's `(agent_id, revision)` to be the live, enabled identity in the bound agent
 /// registry, with the policy's signer as its signer. Registry errors (`NotFound`,
-/// `IdentityChanged`, `Revoked`) pass through, a different signer is `IdentityChanged`, and any
+/// `IdentityChanged`, `AgentDisabled`) pass through, a different signer is `IdentityChanged`, and any
 /// other failure denies.
 pub fn require_live_signer(env: &Env, policy: &Policy) -> Result<(), Error> {
     let registry = AgentRegistryClient::new(env, &storage::agent_registry(env));

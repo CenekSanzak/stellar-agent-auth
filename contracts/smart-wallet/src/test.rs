@@ -230,6 +230,7 @@ impl Test {
                     asset: self.asset.clone(),
                     per_transaction: 5,
                     per_day: 20,
+                    total: None,
                 },
             ],
             allowed_recipients: vec![env, self.recipient.clone()],
@@ -692,6 +693,7 @@ fn approval_stores_a_canonical_policy_and_fresh_state() {
             next_sequence: 1,
             utc_day: NOW / DAY,
             daily_spend: Vec::new(&t.env),
+            total_spend: Vec::new(&t.env),
         }
     );
     for key in [
@@ -729,15 +731,24 @@ fn approval_rejects_policies_the_wallet_cannot_enforce() {
         service_id: BytesN::from_array(env, &[3; 32]),
     };
     let cases = [
-        // Service payments are outside the v1 wallet.
+        // A permitted service must be a contract, and not the wallet itself.
         with(&|p| {
             p.action_kinds = vec![env, ActionKind::ServicePayment, ActionKind::Transfer];
-            p.service = ServicePermission::Restricted(service.clone());
+            p.service = ServicePermission::Restricted(ServiceRule {
+                contract: account(env),
+                ..service.clone()
+            });
         }),
         with(&|p| {
             p.action_kinds = vec![env, ActionKind::ServicePayment];
-            p.service = ServicePermission::Restricted(service.clone());
+            p.service = ServicePermission::Restricted(ServiceRule {
+                contract: t.wallet.clone(),
+                ..service.clone()
+            });
         }),
+        // The canonical shape ties the permission to the action kind, both ways.
+        with(&|p| p.service = ServicePermission::Restricted(service.clone())),
+        with(&|p| p.action_kinds = vec![env, ActionKind::ServicePayment, ActionKind::Transfer]),
         // The signer must be a standard account other than the owner.
         with(&|p| p.signer = Address::generate(env)),
         with(&|p| p.signer = t.owner.clone()),
@@ -749,6 +760,7 @@ fn approval_rejects_policies_the_wallet_cannot_enforce() {
                     asset: account(env),
                     per_transaction: 1,
                     per_day: 1,
+                    total: None,
                 },
             ]
         }),
@@ -763,6 +775,7 @@ fn approval_rejects_policies_the_wallet_cannot_enforce() {
                     asset: t.asset.clone(),
                     per_transaction: 0,
                     per_day: 1,
+                    total: None,
                 },
             )
         }),
@@ -773,6 +786,7 @@ fn approval_rejects_policies_the_wallet_cannot_enforce() {
                     asset: t.asset.clone(),
                     per_transaction: 6,
                     per_day: 5,
+                    total: None,
                 },
             )
         }),
@@ -830,6 +844,7 @@ fn policy_ids_are_never_reused_and_active_policies_are_bounded() {
             asset: t.asset.clone(),
             per_transaction: 1,
             per_day: 1,
+            total: None,
         },
     );
     failed(t.try_approve(&same_id), Error::Duplicate);
@@ -880,6 +895,7 @@ fn signed_three_unit_payment_succeeds_once() {
             next_sequence: 2,
             utc_day: NOW / DAY,
             daily_spend: t.spend(3),
+            total_spend: t.spend(3),
         }
     );
     // Replaying the confirmed request fails on the wallet sequence, whatever authorization is
@@ -947,7 +963,7 @@ fn deadline_and_policy_window_boundaries_are_exact() {
 
     // One second before the window opens, then at the exact start.
     t.env.ledger().set_timestamp(NOW + HOUR - 1);
-    failed(t.execute(&t.payment(&hash, 1, 1)), Error::PolicyDenied);
+    failed(t.execute(&t.payment(&hash, 1, 1)), Error::NotYetValid);
     t.env.ledger().set_timestamp(NOW + HOUR);
     t.execute(&t.payment(&hash, 1, 1)).unwrap().unwrap();
 
@@ -955,7 +971,7 @@ fn deadline_and_policy_window_boundaries_are_exact() {
     let mut request = t.payment(&hash, 2, 1);
     request.deadline = NOW + HOUR + 10;
     t.env.ledger().set_timestamp(NOW + HOUR + 10);
-    failed(t.execute(&request), Error::Expired);
+    failed(t.execute(&request), Error::RequestExpired);
     t.env.ledger().set_timestamp(NOW + HOUR + 9);
     t.execute(&request).unwrap().unwrap();
 
@@ -983,15 +999,27 @@ fn unapproved_assets_and_recipients_fail_closed() {
     let snapshot = t.snapshot(&hash);
     let cases = [
         // Not on the allowlist.
-        t.transfer_to(&t.attacker, &t.asset, 1),
+        (
+            t.transfer_to(&t.attacker, &t.asset, 1),
+            Error::RecipientNotAllowed,
+        ),
         // Allowed and blocked: the blocklist wins.
-        t.transfer_to(&t.stranger, &t.asset, 1),
+        (
+            t.transfer_to(&t.stranger, &t.asset, 1),
+            Error::RecipientNotAllowed,
+        ),
         // An asset the policy does not name, even one the wallet holds.
-        t.transfer_to(&t.recipient, &t.other_asset, 1),
-        t.transfer_to(&t.recipient, &Address::generate(&t.env), 1),
+        (
+            t.transfer_to(&t.recipient, &t.other_asset, 1),
+            Error::AssetNotAllowed,
+        ),
+        (
+            t.transfer_to(&t.recipient, &Address::generate(&t.env), 1),
+            Error::AssetNotAllowed,
+        ),
     ];
-    for action in cases {
-        failed(t.execute(&t.request(&hash, 1, action)), Error::PolicyDenied);
+    for (action, error) in cases {
+        failed(t.execute(&t.request(&hash, 1, action)), error);
     }
     let service = Action::ServicePayment(ServicePayment {
         service: ServiceRule {
@@ -1014,17 +1042,23 @@ fn unapproved_assets_and_recipients_fail_closed() {
     let mut empty = t.policy(2);
     empty.allowed_recipients = Vec::new(&t.env);
     let empty = t.approve(&empty);
-    failed(t.execute(&t.payment(&empty, 1, 1)), Error::PolicyDenied);
+    failed(
+        t.execute(&t.payment(&empty, 1, 1)),
+        Error::RecipientNotAllowed,
+    );
 }
 
 #[test]
 fn per_transfer_cap_is_inclusive_and_amounts_must_be_positive() {
     let t = Test::new();
     let hash = t.approve(&t.policy(1));
-    failed(t.execute(&t.payment(&hash, 1, 6)), Error::LimitExceeded);
+    failed(
+        t.execute(&t.payment(&hash, 1, 6)),
+        Error::PaymentLimitExceeded,
+    );
     failed(
         t.execute(&t.payment(&hash, 1, i128::MAX)),
-        Error::LimitExceeded,
+        Error::PaymentLimitExceeded,
     );
     failed(t.execute(&t.payment(&hash, 1, 0)), Error::InvalidInput);
     failed(t.execute(&t.payment(&hash, 1, -3)), Error::InvalidInput);
@@ -1047,6 +1081,7 @@ fn spend_arithmetic_is_checked() {
             asset: token.clone(),
             per_transaction: i128::MAX,
             per_day: i128::MAX,
+            total: None,
         },
     ];
     let hash = t.approve(&policy);
@@ -1070,12 +1105,18 @@ fn daily_budget_is_exact_and_resets_at_utc_midnight() {
     }
     assert_eq!(t.state(&hash).daily_spend, t.spend(20));
     let snapshot = t.snapshot(&hash);
-    failed(t.execute(&t.payment(&hash, 5, 1)), Error::LimitExceeded);
+    failed(
+        t.execute(&t.payment(&hash, 5, 1)),
+        Error::DailyLimitExceeded,
+    );
     assert_eq!(t.snapshot(&hash), snapshot);
 
     // One second before midnight is still the same day.
     t.advance(UNTIL_MIDNIGHT - 1);
-    failed(t.execute(&t.payment(&hash, 5, 1)), Error::LimitExceeded);
+    failed(
+        t.execute(&t.payment(&hash, 5, 1)),
+        Error::DailyLimitExceeded,
+    );
     t.advance(1);
     // The read shows the new day before any execution writes it.
     let state = t.state(&hash);
@@ -1093,6 +1134,7 @@ fn budgets_are_independent_per_asset_and_policy() {
         asset: t.other_asset.clone(),
         per_transaction: 5,
         per_day: 10,
+        total: None,
     });
     let first = t.approve(&policy);
     let second = t.approve(&t.policy(2));
@@ -1106,7 +1148,7 @@ fn budgets_are_independent_per_asset_and_policy() {
     };
     t.execute(&other(5, 5)).unwrap().unwrap();
     t.execute(&other(6, 5)).unwrap().unwrap();
-    failed(t.execute(&other(7, 1)), Error::LimitExceeded);
+    failed(t.execute(&other(7, 1)), Error::DailyLimitExceeded);
     // A second policy has its own budget and sequence: exposure is additive.
     for sequence in 1..=4 {
         t.execute(&t.payment(&second, sequence, 5))
@@ -1144,8 +1186,10 @@ fn budget_accounting_matches_a_model() {
         let outcome = t.execute(&t.payment(&hash, sequence, amount));
         let expected = if amount == 0 {
             Err(Ok(Error::InvalidInput))
-        } else if amount > 5 || spent + amount > 20 {
-            Err(Ok(Error::LimitExceeded))
+        } else if amount > 5 {
+            Err(Ok(Error::PaymentLimitExceeded))
+        } else if spent + amount > 20 {
+            Err(Ok(Error::DailyLimitExceeded))
         } else {
             (sequence, spent, paid) = (sequence + 1, spent + amount, paid + amount);
             Ok(Ok(()))
@@ -1307,31 +1351,35 @@ fn disabled_identity_and_rotated_signer_fail() {
 
 #[test]
 fn verification_failures_block_execution() {
-    // A newer failing result, or a flagged one, replaces the pass.
-    let replaced: [fn(&mut VerificationResult); 2] = [
-        |result| {
-            result.checks.set(
-                2,
-                CheckResult {
-                    kind: CheckKind::Metadata,
-                    outcome: CheckOutcome::Failed,
-                    score: Some(100),
-                },
-            );
-            result.risk_score = risk_score(&result.checks);
-        },
-        |result| result.serious_wallet_risks = KNOWN_COMPROMISE,
+    // A newer failing result, or a flagged one, replaces the pass, and each says which it is.
+    type Change = fn(&mut VerificationResult);
+    let replaced: [(Change, Error); 2] = [
+        (
+            |result| {
+                result.checks.set(
+                    2,
+                    CheckResult {
+                        kind: CheckKind::Metadata,
+                        outcome: CheckOutcome::Failed,
+                        score: Some(100),
+                    },
+                );
+                result.risk_score = risk_score(&result.checks);
+            },
+            Error::CheckNotPassed,
+        ),
+        (
+            |result| result.serious_wallet_risks = KNOWN_COMPROMISE,
+            Error::RiskFlagged,
+        ),
     ];
-    for change in replaced {
+    for (change, error) in replaced {
         let t = Test::new();
         let hash = t.approve(&t.policy(1));
         let mut result = t.result(2);
         change(&mut result);
         t.publish(result);
-        failed(
-            t.execute(&t.payment(&hash, 1, 3)),
-            Error::VerificationDenied,
-        );
+        failed(t.execute(&t.payment(&hash, 1, 3)), error);
     }
 
     // Revoked result, disabled provider, expiry, stale age, and an unsupported required check.
@@ -1340,13 +1388,13 @@ fn verification_failures_block_execution() {
     t.env.mock_all_auths();
     t.verification()
         .revoke(&t.agent.agent_id, &t.agent.revision, &t.provider, &1);
-    failed(t.execute(&t.payment(&hash, 1, 3)), Error::Revoked);
+    failed(t.execute(&t.payment(&hash, 1, 3)), Error::ResultRevoked);
 
     let t = Test::new();
     let hash = t.approve(&t.policy(1));
     t.env.mock_all_auths();
     t.verification().disable_provider(&t.provider);
-    failed(t.execute(&t.payment(&hash, 1, 3)), Error::Revoked);
+    failed(t.execute(&t.payment(&hash, 1, 3)), Error::ProviderDisabled);
 
     let t = Test::new();
     let mut policy = t.policy(1);
@@ -1354,7 +1402,7 @@ fn verification_failures_block_execution() {
     policy.max_assessment_age = 60 * DAY;
     let hash = t.approve(&policy);
     t.advance(30 * DAY);
-    failed(t.execute(&t.payment(&hash, 1, 3)), Error::Expired);
+    failed(t.execute(&t.payment(&hash, 1, 3)), Error::ResultExpired);
 
     let t = Test::new();
     let mut policy = t.policy(1);
@@ -1363,16 +1411,13 @@ fn verification_failures_block_execution() {
     t.advance(HOUR);
     t.execute(&t.payment(&hash, 1, 3)).unwrap().unwrap();
     t.advance(1);
-    failed(t.execute(&t.payment(&hash, 2, 3)), Error::Expired);
+    failed(t.execute(&t.payment(&hash, 2, 3)), Error::ResultExpired);
 
     let t = Test::new();
     let mut policy = t.policy(1);
     policy.required_checks.push_back(CheckKind::ThreatFeed);
     let hash = t.approve(&policy);
-    failed(
-        t.execute(&t.payment(&hash, 1, 3)),
-        Error::VerificationDenied,
-    );
+    failed(t.execute(&t.payment(&hash, 1, 3)), Error::CheckNotPassed);
 
     // A different provider's result does not count.
     let t = Test::new();
@@ -1381,7 +1426,7 @@ fn verification_failures_block_execution() {
     let hash = t.approve(&policy);
     failed(
         t.execute(&t.payment(&hash, 1, 3)),
-        Error::VerificationDenied,
+        Error::ProviderNotApproved,
     );
 
     // Risk above the policy's threshold.
@@ -1398,10 +1443,7 @@ fn verification_failures_block_execution() {
     risky.risk_score = risk_score(&risky.checks);
     t.publish(risky);
     let hash = t.approve(&t.policy(1));
-    failed(
-        t.execute(&t.payment(&hash, 1, 3)),
-        Error::VerificationDenied,
-    );
+    failed(t.execute(&t.payment(&hash, 1, 3)), Error::RiskTooHigh);
 }
 
 // --- Rollback (A20) --------------------------------------------------------------------------------
@@ -1415,6 +1457,7 @@ fn failed_token_call_rolls_back_sequence_budget_and_audit() {
         asset: token.clone(),
         per_transaction: 5,
         per_day: 20,
+        total: None,
     });
     let hash = t.approve(&policy);
     t.execute(&t.payment(&hash, 1, 2)).unwrap().unwrap();

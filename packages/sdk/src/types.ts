@@ -87,6 +87,12 @@ export interface ServiceRule {
   service_id: Hash32;
 }
 
+/**
+ * The one entry point a service offers to be paid through a wallet's service permission:
+ * `pay_for_service(wallet, asset, recipient, amount, service_id)`.
+ */
+export const SERVICE_PAYMENT_METHOD = 'pay_for_service';
+
 export type Action =
   | { kind: 'Transfer'; transfer: Transfer }
   | { kind: 'ServicePayment'; service: ServiceRule; payment: Transfer };
@@ -104,6 +110,11 @@ export interface AssetLimit {
   asset: string;
   per_transaction: bigint;
   per_day: bigint;
+  /**
+   * The most that may ever be spent of this asset under the policy, or `null` for no such cap. The daily cap bounds
+   * a day; this bounds the policy's whole life.
+   */
+  total: bigint | null;
 }
 
 export interface Policy {
@@ -131,13 +142,20 @@ export interface PolicyState {
   next_sequence: bigint;
   utc_day: bigint;
   daily_spend: readonly { asset: string; amount: bigint }[];
+  /** Everything spent under the policy since its approval, per asset. Never reset. */
+  total_spend: readonly { asset: string; amount: bigint }[];
 }
 
 export type AuditOutcome =
   | { kind: 'PolicyCreated' | 'PolicyRevoked'; policy_hash: Hash32 }
   | { kind: 'PauseChanged'; paused: boolean }
   | { kind: 'OwnerWithdrawal'; transfer: Transfer }
-  | { kind: 'Executed'; policy_hash: Hash32; action_hash: Hash32; action: Action };
+  | { kind: 'Executed'; policy_hash: Hash32; action_hash: Hash32; action: Action }
+  /**
+   * A payment the wallet authorized as an account: a plain transfer, or a service call with the transfer inside
+   * it. `authorization` is the host's payload hash for it.
+   */
+  | { kind: 'AccountPayment'; policy_hash: Hash32; authorization: Hash32; action: Action };
 
 /** The latest audit entry's sequence and hash; sequence 0 and 32 zero bytes at genesis. */
 export interface AuditHead {
@@ -161,6 +179,10 @@ export const CONTRACT_ERRORS = [
   'UnsupportedVersion', 'InvalidInput', 'LimitExceeded', 'Duplicate', 'NotFound', 'InvalidSequence', 'Expired',
   'Revoked', 'IdentityChanged', 'VerificationDenied', 'PolicyDenied', 'Paused', 'ArithmeticOverflow',
   'TransferFailed',
+  // 15 onwards name one cause each, where the codes above used to cover several.
+  'AgentDisabled', 'ProviderNotApproved', 'ProviderDisabled', 'ResultRevoked', 'ResultExpired', 'RiskFlagged',
+  'CheckNotPassed', 'RiskTooHigh', 'RequestExpired', 'NotYetValid', 'AssetNotAllowed', 'RecipientNotAllowed',
+  'PaymentLimitExceeded', 'DailyLimitExceeded', 'TotalLimitExceeded',
 ] as const;
 export type ContractErrorName = (typeof CONTRACT_ERRORS)[number];
 
@@ -215,6 +237,7 @@ export interface WalletArgs {
   policies: Record<string, never>;
   policy: { policy_hash: Hash32 };
   policy_state: { policy_hash: Hash32 };
+  check_payment: { policy_hash: Hash32; action: Action };
   audit_head: Record<string, never>;
 }
 export type WalletMethod = keyof WalletArgs;

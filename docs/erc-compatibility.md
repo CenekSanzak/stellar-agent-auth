@@ -168,8 +168,8 @@ The policy check runs inside `__check_auth`, which is outside the auth tree, so 
 
 ## Where this repository stands
 
-As of 2026-11-20. None of the proposals above has been accepted or rejected here, and none of the open questions is
-answered. This section only records what the code does today.
+As of 2026-11-25. Apart from T5, none of the proposals above has been accepted or rejected here, and none of the
+open questions is answered. This section only records what the code does today.
 
 | Touchpoint | In this repository today | Fits the proposal? |
 | --- | --- | --- |
@@ -177,17 +177,17 @@ answered. This section only records what the code does today.
 | T1: registration file | Metadata schema v1 has `name`, `description` and `endpoints`. It has no `payTo` or agent wallet field. | No |
 | T2: validation records | Results live in this repository's verification registry, with risk 0–100 where lower is better. Nothing is posted to a Validation Registry. The evidence hash is the SHA-256 of the verifier's own canonical JSON report, which has not been compared with RFC 8785. | No |
 | T3: reading a risk score | `latest`, `current` and `check` are keyed by agent ID, identity revision and provider. There is no `get_latest_risk_score(agent_id)`. | No |
-| T4: per-asset limits | Per-transfer and per-UTC-day caps for each asset contract | Yes |
+| T4: per-asset limits | Per-transfer and per-UTC-day caps for each asset contract, and an optional total for the policy's life | Yes |
 | T4: payee lists | Recipient allow and block lists; an empty allowlist permits nothing | Yes |
 | T4: risk threshold name | `max_risk_score`, an inclusive maximum | Yes |
 | T4: payee-side gate | The wallet checks only the acting agent's verification, never the recipient's | No |
 | T4: audit trail | Every owner action and execution extends a hash chain whose head is stored on-chain | Yes |
-| T5: paying x402 services | The wallet is a custody contract that pays through its own `execute` entry point. It is not a custom account and has no `__check_auth`, so it cannot authorize a token `transfer` as the payer. | No |
+| T5: paying x402 services | The wallet is also a custom account. Its `__check_auth` authorizes one plain `transfer` of a policy asset under a policy, signed by the agent key, on the same budget as `execute` ([ADR 0007](decisions/0007-account-payment-path.md)). Tested on a local network and on Testnet with a relayer that knows nothing of the wallet; not tested with a real x402 client. | Partly |
 
 The rules behind these rows are in [the wallet decision](decisions/0005-smart-wallet.md),
 [the verification registry decision](decisions/0004-verification-registry.md) and
 [verification coverage](VERIFICATION_COVERAGE.md). On 2026-11-25 a spike showed that a custom account can enforce such a policy as the payer of a plain transfer, on
-a local network and on Testnet, and the project decided to add that path to the wallet. It is planned as P9 and is
-not built yet, so the T5 row above still describes the code. The findings, limits and decision are in
-[ADR 0006](decisions/0006-custom-account-spike.md); the request is tracked in
+a local network and on Testnet, and the project decided to add that path to the wallet
+([ADR 0006](decisions/0006-custom-account-spike.md)). The wallet has it since then and has paid that way on Testnet
+([P9 validation](P9_VALIDATION.md)); what is still missing for T5 is a run against a real x402 client. The request is tracked in
 [issue #2](https://github.com/CenekSanzak/stellar-agent-auth/issues/2).

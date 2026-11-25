@@ -158,6 +158,19 @@ function addressOf(value: xdr.ScVal, label: string) {
   return Address.fromScVal(value).toString();
 }
 
+/**
+ * What an action under the policy would leave as its state on the account path, from the wallet's `check_payment`.
+ * It applies every rule `execute` and the account path share and authenticates nobody. A refusal throws `WalletError` with the wallet's
+ * own code, which is the only place a client learns why an account-path payment would be refused.
+ */
+export async function readPaymentCheck(wallet: WalletRead, args: WalletArgs['check_payment']): Promise<PolicyState> {
+  const state = decodePolicyState(await read(wallet, 'check_payment', args));
+  if (state.policy_hash.length !== 32 || state.policy_hash.some((byte, i) => byte !== args.policy_hash[i])) {
+    throw new Error('Smart wallet returned the state of a different policy');
+  }
+  return state;
+}
+
 export async function readWalletOwner(wallet: WalletRead): Promise<string> {
   return addressOf(await read(wallet, 'owner', {}), 'owner');
 }

@@ -215,7 +215,7 @@ export async function walletWorld(network?: LocalNetwork) {
       schema_version: 1, policy_id: new Uint8Array(32).fill(id), agent_id: agent.agent_id, revision: agent.revision,
       signer: signer.publicKey(), provider: provider.publicKey(),
       required_checks: ['Endpoint', 'Metadata', 'SignerAccount'], max_assessment_age: 30n * DAY, max_risk_score: 10,
-      assets: [{ asset, per_transaction: 5n * UNIT, per_day: 20n * UNIT }],
+      assets: [{ asset, per_transaction: 5n * UNIT, per_day: 20n * UNIT, total: null }],
       allowed_recipients: [recipient.publicKey()], blocked_recipients: [],
       valid_after: now - 60n, valid_until: now + 7n * DAY, action_kinds: ['Transfer'], service: null,
       ...overrides,

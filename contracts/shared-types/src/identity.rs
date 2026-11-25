@@ -29,6 +29,20 @@ pub fn require_contract(env: &Env, address: &Address) -> Result<(), Error> {
     has_prefix(env, address, &CONTRACT_ADDRESS_XDR)
 }
 
+/// The ed25519 key of a standard account address: the 32 bytes after the address and key type
+/// discriminants. `InvalidInput` for any other address.
+pub fn account_key(env: &Env, address: &Address) -> Result<BytesN<32>, Error> {
+    const ED25519_KEY_XDR: [u8; 4] = [0, 0, 0, 0];
+    require_account(env, address)?;
+    let xdr = address.clone().to_xdr(env);
+    if xdr.len() != 44 || xdr.slice(8..12) != Bytes::from_array(env, &ED25519_KEY_XDR) {
+        return Err(Error::InvalidInput);
+    }
+    let mut key = [0u8; 32];
+    xdr.slice(12..44).copy_into_slice(&mut key);
+    Ok(BytesN::from_array(env, &key))
+}
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AgentIdentity {
