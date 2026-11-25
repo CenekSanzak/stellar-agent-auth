@@ -1,5 +1,5 @@
 import { mkdtempSync, rmSync } from 'node:fs';
-import { createServer, type Server } from 'node:http';
+import { createServer, request as httpRequest, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -117,6 +117,14 @@ describe('demo backend on local Stellar', () => {
     expect((await post('v1/session', { owner: owner.publicKey() }, { 'content-type': 'text/plain' })).status).toBe(415);
     expect((await post('v1/session', { owner: owner.publicKey() },
       { 'content-type': 'application/json', origin: 'https://evil.example' })).status).toBe(403);
+    // A domain pointed at this machine arrives with its own name as the host.
+    const rebound = await new Promise<number>((resolve, reject) => {
+      const request = httpRequest(new URL('v1/config', base), { headers: { host: 'evil.example' } },
+        (response) => { response.resume(); resolve(response.statusCode ?? 0); });
+      request.on('error', reject);
+      request.end();
+    });
+    expect(rebound).toBe(403);
     expect((await post('v1/session', { owner: 'nobody' })).status).toBe(400);
     expect((await post('v1/payments', { scenario: 'allowed', policy_hash: 'short' })).status).toBe(400);
     expect((await post('v1/payments', { scenario: 'send-everything', policy_hash: '00'.repeat(32) })).status).toBeGreaterThanOrEqual(400);

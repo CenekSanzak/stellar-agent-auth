@@ -125,14 +125,21 @@ export async function createBackend(options: BackendOptions) {
       SUBMITTER_METHODS: 'execute,transfer,pay_for_service', SUBMITTER_HOST: '127.0.0.1', SUBMITTER_PORT: '0',
       SUBMITTER_STATE_DIR: join(state, 'submitter'), SUBMITTER_TOKEN_FILE: undefined,
     });
-    if (submitter.sponsor !== deployment.roles.sponsor) throw new Error('The sponsor key is not the deployment\'s sponsor');
-    const indexer = await startIndexer({
-      ...keyEnv, WALLET_ID: wallet, INDEXER_WALLETS: undefined, AGENT_REGISTRY_ID: deployment.agent_registry,
-      VERIFICATION_REGISTRY_ID: deployment.verification_registry, INDEXER_CONTRACTS: deployment.service.contract,
-      INDEXER_START_LEDGER: String(deployment.start_ledger), INDEXER_DATABASE_PATH: join(state, 'history.sqlite'),
-      INDEXER_HOST: '127.0.0.1', INDEXER_PORT: '0', INDEXER_POLL_SECONDS: '2', INDEXER_TOKEN_FILE: undefined,
-      DEPLOYMENT_EPOCH: `${deployment.epoch}-${wallet.slice(0, 8)}`,
-    });
+    let indexer: RunningIndexer;
+    try {
+      if (submitter.sponsor !== deployment.roles.sponsor) throw new Error('The sponsor key is not the deployment\'s sponsor');
+      indexer = await startIndexer({
+        ...keyEnv, WALLET_ID: wallet, INDEXER_WALLETS: undefined, AGENT_REGISTRY_ID: deployment.agent_registry,
+        VERIFICATION_REGISTRY_ID: deployment.verification_registry, INDEXER_CONTRACTS: deployment.service.contract,
+        INDEXER_START_LEDGER: String(deployment.start_ledger), INDEXER_DATABASE_PATH: join(state, 'history.sqlite'),
+        INDEXER_HOST: '127.0.0.1', INDEXER_PORT: '0', INDEXER_POLL_SECONDS: '2', INDEXER_TOKEN_FILE: undefined,
+        DEPLOYMENT_EPOCH: `${deployment.epoch}-${wallet.slice(0, 8)}`,
+      });
+    } catch (error) {
+      // Do not leave a sponsor listening for a session that never started.
+      await new Promise<void>((resolve) => submitter.server.close(() => resolve()));
+      throw error;
+    }
     const report = async (attempt: Record<string, unknown>) => {
       // An attempt is a note for the history view. Failing to record one must not turn a refusal into an error.
       await fetch(new URL(`v1/wallets/${wallet}/attempts`, indexer.url), {
@@ -230,15 +237,25 @@ export async function createBackend(options: BackendOptions) {
   }
 
   function checkOrigin(request: IncomingMessage) {
+    // The server is reached by a loopback name only. A page that points its own domain at 127.0.0.1 arrives with
+    // that domain as the host, and is refused here.
+    const host = request.headers['host'] ?? '';
+    if (!/^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/.test(host)) throw new Rejected(403, 'Host not allowed');
     const origin = request.headers['origin'];
     if (origin === undefined) return;
-    const own = `http://${request.headers['host'] ?? ''}`;
+    const own = `http://${host}`;
     if (origin !== own && !(options.allowedOrigins ?? []).includes(origin)) throw new Rejected(403, 'Origin not allowed');
   }
 
   async function serveStatic(pathname: string, response: ServerResponse) {
     if (!options.webRoot) return false;
-    const relative = normalize(decodeURIComponent(pathname)).replace(/^[/\\]+/, '') || 'index.html';
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(pathname);
+    } catch {
+      return false;
+    }
+    const relative = normalize(decoded).replace(/^[/\\]+/, '') || 'index.html';
     const file = join(options.webRoot, relative);
     if (file !== options.webRoot && !file.startsWith(options.webRoot + sep)) return false;
     const info = await stat(file).catch(() => undefined);

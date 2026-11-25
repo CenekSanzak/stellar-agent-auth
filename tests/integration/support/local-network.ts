@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import {
-  Address, BASE_FEE, Networks, Operation, TransactionBuilder, hash, rpc, xdr,
+  Address, Asset, BASE_FEE, Contract, Networks, Operation, TransactionBuilder, hash, rpc, xdr,
   type Keypair, type Transaction,
 } from '@stellar/stellar-sdk';
 import { expect } from 'vitest';
@@ -41,6 +41,26 @@ export function returnValue(result: Confirmed) {
 }
 
 export const contractEvents = (result: Confirmed) => result.events.contractEventsXdr.flat();
+
+/**
+ * Make sure the native asset's contract exists, and return its address. Suites run in parallel, and on a fresh
+ * network more than one may find it missing and try to create it. Only one creation can succeed, so a failed one is
+ * fine exactly when the contract exists afterwards.
+ */
+export async function ensureNativeAssetContract(
+  server: rpc.Server, passphrase: string, create: (operation: xdr.Operation) => Promise<unknown>,
+): Promise<string> {
+  const native = Asset.native();
+  const id = native.contractId(passphrase);
+  const exists = async () => (await server.getLedgerEntries(new Contract(id).getFootprint())).entries.length > 0;
+  if (await exists()) return id;
+  try {
+    await create(Operation.createStellarAssetContract({ asset: native }));
+  } catch (error) {
+    if (!(await exists())) throw error;
+  }
+  return id;
+}
 
 /** WASM built by `npm run build:contracts`, or downloaded from the CI foundation job. */
 export const readWasm = (name: string) =>

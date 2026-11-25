@@ -112,6 +112,13 @@ The [Phase 6 validation record](P6_VALIDATION.md) covers the indexer, its audit 
 - A26: restart, repeated delivery, a failure between pages and a failure inside a page are shown in unit tests against a store on disk and an RPC stand-in, and restart and repeated passes again on the local network against a real RPC.
 - A27: altered, substituted, duplicated, relabelled and missing entries, a contradicting head and a retention gap each produce `mismatch` or `incomplete` in unit tests; a deleted and an altered row are shown on the local network. A retention gap is not reproduced on a network.
 
+## P7 evidence
+
+The [Phase 7 validation record](P7_VALIDATION.md) covers the owner demo: its server, its page and its browser test. Decisions are in [ADR 0010](decisions/0010-owner-demo.md).
+
+- A28: the browser smoke test is met on the local network. A real Chrome connects an owner, creates and funds the wallet, approves a policy, and sees one payment made and payments over the limit, to an unknown recipient, while paused and after revocation refused, then a verified history. With P5's clean-checkout import and CLI example, A28 is met locally.
+- Signing through Freighter is not covered by a test; the browser test uses the page's local demo key.
+
 ## P9 evidence
 
 The [Phase 9 validation record](P9_VALIDATION.md) covers the wallet's account payment path, service payments, the error codes and the total cap. Rules are in [ADR 0007](decisions/0007-account-payment-path.md) and [ADR 0008](decisions/0008-error-codes.md).

@@ -28,8 +28,8 @@
     "dev": "npm run local:up && npm run local:ready",
     "check": "npm run typecheck && npm run build && npm run check:sdk-package && npm run test:unit && npm run check:rust && npm run format:rust:check && npm run lint:rust && npm run test:rust && npm run build:contracts && npm run test:spec",
     "test:browser": "vitest run --project browser",
-    "demo:setup": "npm run setup -w @stellar-agent-auth/demo",
-    "demo": "npm run start -w @stellar-agent-auth/demo"
+    "demo:setup": "node apps/demo/dist/server/setup.js",
+    "demo": "node apps/demo/dist/server/index.js"
   },
   "devDependencies": {
     "typescript": "5.9.3",

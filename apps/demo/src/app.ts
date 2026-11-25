@@ -27,6 +27,7 @@ export function startApp(root: Document) {
   let signer: Signer | undefined;
   let nextId = 1;
   let refreshing = false;
+  let refreshAgain = false;
   const drawn = new Map<string, string>();
 
   const sections: Record<string, (current: State) => string> = {
@@ -86,10 +87,14 @@ export function startApp(root: Document) {
   }
 
   async function refresh() {
-    if (refreshing || !chain || !state.config) return;
+    if (!chain || !state.config) return;
+    if (refreshing) {
+      // Something changed while a read was under way; read once more when it finishes.
+      refreshAgain = true;
+      return;
+    }
     refreshing = true;
     try {
-      const { config } = state;
       state.now = await chain.ledgerTime();
       state.agent = await chain.readAgentView();
       if (state.owner) {
@@ -117,13 +122,24 @@ export function startApp(root: Document) {
         }
       }
       state.readError = null;
-      void config;
     } catch (error) {
       state.readError = error instanceof Error ? error.message : String(error);
     } finally {
       refreshing = false;
       render();
     }
+    if (refreshAgain) {
+      refreshAgain = false;
+      await refresh();
+    }
+  }
+
+  /**
+   * Make sure the server is following this owner's wallet before asking the agent or the faucet for anything. The
+   * server keeps one session; it may have restarted, or another owner may have connected since.
+   */
+  async function ensureSession() {
+    state.session = await demoServer.session(state.owner!.address);
   }
 
   async function connect(make: (config: Config) => Promise<Owner> | Owner) {
@@ -162,6 +178,7 @@ export function startApp(root: Document) {
     fund: () => exclusive('The faucet is funding the wallet', async () => {
       const item = track(`Add ${state.config!.faucet_amount} ${state.config!.asset.code} from the faucet`);
       try {
+        await ensureSession();
         const funded = await demoServer.fund();
         item.stage = funded.status === 'success' ? 'confirmed' : 'unsettled';
         item.hash = funded.tx_hash;
@@ -183,6 +200,7 @@ export function startApp(root: Document) {
       return exclusive(`The agent is trying: ${scenario.label}`, async () => {
         const item = track(`Agent: ${scenario.label}`);
         try {
+          await ensureSession();
           const result = await demoServer.pay(scenario.id, target.dataset['policy']!);
           item.steps = result.steps;
           item.expected = result.expected;

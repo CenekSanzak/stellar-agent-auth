@@ -71,6 +71,7 @@ p { margin: 8px 0; }
 
 main { grid-area: main; display: grid; gap: 16px; align-content: start; min-width: 0; }
 aside { grid-area: side; position: sticky; top: 16px; align-self: start; max-height: calc(100vh - 32px); overflow: auto; }
+main > *, .card, aside { min-width: 0; }
 section:empty, #notice:empty { display: none; }
 
 .card {
@@ -194,5 +195,9 @@ a { color: var(--accent); }
   .connection { align-items: flex-start; }
   form.grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .scenarios li { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  form.inline { grid-template-columns: minmax(0, 1fr); }
+  .facts { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .facts dd { margin-bottom: 6px; }
+  .top { padding-top: 18px; }
   table { display: block; overflow-x: auto; }
 }
