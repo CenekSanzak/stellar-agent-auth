@@ -63,6 +63,7 @@ export function createHandler(options: SubmitterOptions) {
         return json(response, 200, {
           status: 'ok', network: options.network, sponsor: sponsor.address, contracts: policy.contracts,
           methods: policy.methods ?? null, max_fee: policy.limits.maxFee.toString(),
+          daily_budget: policy.dailyBudget?.toString() ?? null, committed_24h: (await sponsor.committed()).toString(),
         });
       }
       if (!authorized(request, options.token)) return json(response, 401, { error: 'Unauthorized' });

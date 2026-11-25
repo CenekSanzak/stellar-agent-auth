@@ -32,6 +32,8 @@ export interface SubmitterConfig {
   contracts: string[];
   methods: string[];
   maxFee: bigint;
+  /** Fees the sponsor commits over any 24 hours at most; `undefined` for no such limit. */
+  dailyBudget: bigint | undefined;
   timeoutSeconds: number;
   rateLimit: number;
   stateDirectory: string;
@@ -61,10 +63,16 @@ export function submitterConfig(env: Environment): SubmitterConfig {
   }
   const maxFee = BigInt(env['SUBMITTER_MAX_FEE_STROOPS'] || '5000000');
   if (maxFee <= 0n || maxFee > 100_000_000n) throw new Error('SUBMITTER_MAX_FEE_STROOPS must be 1-100000000');
+  const budgetText = env['SUBMITTER_DAILY_BUDGET_STROOPS'] ?? '1000000000';
+  if (!/^\d{1,15}$/.test(budgetText)) throw new Error('SUBMITTER_DAILY_BUDGET_STROOPS must be a number of stroops, or 0 for no budget');
+  const dailyBudget = BigInt(budgetText) === 0n ? undefined : BigInt(budgetText);
+  if (dailyBudget !== undefined && dailyBudget < maxFee) {
+    throw new Error('SUBMITTER_DAILY_BUDGET_STROOPS is below the fee ceiling of one transaction');
+  }
   return {
     network: config.network, rpcUrl: config.rpcUrl, passphrase: config.passphrase,
     host: env['SUBMITTER_HOST'] || '127.0.0.1', port: integer('SUBMITTER_PORT', 8787, 0, 65_535),
-    sponsorKey, contracts, methods, maxFee, timeoutSeconds: integer('SUBMITTER_TIMEOUT_SECONDS', 60, 5, 600),
+    sponsorKey, contracts, methods, maxFee, dailyBudget, timeoutSeconds: integer('SUBMITTER_TIMEOUT_SECONDS', 60, 5, 600),
     rateLimit: integer('SUBMITTER_RATE_LIMIT', 30, 1, 10_000),
     stateDirectory: resolve(env['SUBMITTER_STATE_DIR'] || '.local/submitter'),
     tokenFile: env['SUBMITTER_TOKEN_FILE'] || undefined,
@@ -91,6 +99,7 @@ export async function startSubmitter(env: Environment): Promise<{ server: Server
   const context = await networkContext(server, config.passphrase);
   const policy = sponsorPolicy(config.contracts, {
     methods: config.methods, limits: { maxFee: config.maxFee, timeoutSeconds: config.timeoutSeconds },
+    ...(config.dailyBudget !== undefined ? { dailyBudget: config.dailyBudget } : {}),
   });
   const sponsor = new Sponsor(context, signer, policy, new FileJournal(resolve(config.stateDirectory, 'journal')));
   await sponsor.recover();

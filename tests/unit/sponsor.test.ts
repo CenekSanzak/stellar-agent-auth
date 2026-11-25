@@ -12,7 +12,7 @@ import {
   MemoryJournal, SimulationRejected, SubmissionUnsettled, buildTransaction, operationHash, type TransactionRecord,
   type TransactionStatus,
 } from '../../packages/sdk/src/transactions.js';
-import { RateLimiter, admit, createHandler } from '../../services/submitter/src/index.js';
+import { RateLimiter, admit, createHandler, submitterConfig } from '../../services/submitter/src/index.js';
 import { contract } from '../fixtures/abi-v1.js';
 import { FakeRpc, hex, success } from './support/fake-rpc.js';
 
@@ -160,6 +160,38 @@ describe('sponsor serialization', () => {
     expect(await restarted.lookup(key)).toMatchObject({ status: 'success', hash: a.hash });
     expect(rpc.sent).toHaveLength(1);
     await expect(sponsor.lookup('nope')).rejects.toBeInstanceOf(SponsorRefused);
+  });
+
+  it('stops paying when its fee budget for 24 hours is used up, and starts again as that time passes', async () => {
+    const rpc = new FakeRpc();
+    const journal = new MemoryJournal();
+    // Each transaction commits its simulated resource fee of 5,000 stroops plus the 100-stroop inclusion fee.
+    const budgeted = sponsorPolicy([wallet], {
+      methods: ['execute'], limits: { pollIntervalMs: 0, timeoutSeconds: 5 }, dailyBudget: 12_000n,
+    });
+    const sponsor = new Sponsor(rpc.context(), keypairSigner(sponsorKey), budgeted, journal);
+    const commit = () => {
+      rpc.commit(rpc.sent.at(-1)!);
+      return { status: 'PENDING' } as never;
+    };
+    rpc.sendResults.push(commit, commit, commit);
+    expect((await sponsor.sponsor(operation([entry({ nonce: 1n })]))).status).toBe('success');
+    expect((await sponsor.sponsor(operation([entry({ nonce: 2n })]))).status).toBe('success');
+    expect(await sponsor.committed()).toBe(10_200n);
+    // A third would pass the budget: it is refused before anything is signed or sent.
+    await expect(sponsor.sponsor(operation([entry({ nonce: 3n })]))).rejects.toThrow('fee budget for 24 hours is used up');
+    expect(rpc.sent).toHaveLength(2);
+    // The same journal after a restart still knows what was committed.
+    const restarted = new Sponsor(rpc.context(), keypairSigner(sponsorKey), budgeted, journal);
+    await expect(restarted.sponsor(operation([entry({ nonce: 3n })]))).rejects.toBeInstanceOf(SponsorRefused);
+
+    // An envelope that can never be included was never charged, and what is older than a day no longer counts.
+    const [first] = await journal.inScope(`sponsor:${sponsorKey.publicKey()}`);
+    await journal.put({ ...first!, status: 'expired' });
+    expect(await sponsor.committed()).toBe(5_100n);
+    expect(await sponsor.committed(Date.now() + 86_400_000 + 1_000)).toBe(0n);
+    expect((await sponsor.sponsor(operation([entry({ nonce: 3n })]))).status).toBe('success');
+    expect(() => sponsorPolicy([wallet], { dailyBudget: 0n })).toThrow('must be positive');
   });
 
   it('builds a new transaction for an operation only when the earlier one can never be included', async () => {
@@ -385,15 +417,18 @@ describe('submitter HTTP adapter', () => {
     status, hash: 'ef'.repeat(32), record: { status } as TransactionRecord,
   });
 
-  const fake = (behaviour: () => Promise<SponsorshipResult>): SponsorEndpoint => ({
-    address: sponsorKey.publicKey(), sponsor: behaviour, status: behaviour,
+  const fake = (behaviour: () => Promise<SponsorshipResult>): SponsorEndpoint & { committed(): Promise<bigint> } => ({
+    address: sponsorKey.publicKey(), sponsor: behaviour, status: behaviour, committed: async () => 1_234n,
   });
 
   it('reports health, settled and pending outcomes, and maps rejections for the client', async () => {
     let next: () => Promise<SponsorshipResult> = async () => record('success');
     const url = await start(fake(() => next()));
     const health = await (await fetch(new URL('v1/health', url))).json() as Record<string, unknown>;
-    expect(health).toMatchObject({ status: 'ok', network: 'local', sponsor: sponsorKey.publicKey(), contracts: [wallet] });
+    expect(health).toMatchObject({
+      status: 'ok', network: 'local', sponsor: sponsorKey.publicKey(), contracts: [wallet], daily_budget: null,
+      committed_24h: '1234',
+    });
 
     const client = httpSponsor(url, sponsorKey.publicKey());
     expect((await client.sponsor(operation([entry()]))).status).toBe('success');
@@ -474,6 +509,15 @@ describe('submitter HTTP adapter', () => {
     expect((await post(JSON.stringify({ operation: operation([entry()]), extra: 1 }))).status).toBe(400);
     expect((await post('x'.repeat(70_000))).status).toBe(413);
     expect((await post(JSON.stringify({ operation: operation([entry()]) }))).status).toBe(429);
+  });
+
+  it('has a fee budget unless told otherwise, and refuses one below a single transaction', () => {
+    const base = { STELLAR_NETWORK: 'local', SUBMITTER_SPONSOR_KEY: 'sponsor', SUBMITTER_CONTRACTS: wallet };
+    expect(submitterConfig(base).dailyBudget).toBe(1_000_000_000n);
+    expect(submitterConfig({ ...base, SUBMITTER_DAILY_BUDGET_STROOPS: '0' }).dailyBudget).toBeUndefined();
+    expect(submitterConfig({ ...base, SUBMITTER_DAILY_BUDGET_STROOPS: '6000000' }).dailyBudget).toBe(6_000_000n);
+    expect(() => submitterConfig({ ...base, SUBMITTER_DAILY_BUDGET_STROOPS: '100' })).toThrow('below the fee ceiling');
+    expect(() => submitterConfig({ ...base, SUBMITTER_DAILY_BUDGET_STROOPS: 'lots' })).toThrow('number of stroops');
   });
 
   it('admits only a single base64 operation field', () => {

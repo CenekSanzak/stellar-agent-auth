@@ -45,6 +45,10 @@ export class StorageJournal implements TransactionJournal {
     return newestForOperation(this.all(), scope, operationHash);
   }
 
+  async inScope(scope: string) {
+    return this.all().filter((record) => record.scope === scope).sort((a, b) => a.created_at.localeCompare(b.created_at));
+  }
+
   async put(record: TransactionRecord) {
     // Settled records are kept only briefly; the ledger is the record of what happened.
     const rest = this.all().filter((existing) => existing.hash !== record.hash).slice(-20);

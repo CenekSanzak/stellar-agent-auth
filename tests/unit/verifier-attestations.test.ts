@@ -9,7 +9,7 @@ import { encodeVerification } from '../../packages/sdk/src/encoding.js';
 import type { AgentIdentity } from '../../packages/sdk/src/types.js';
 import { validatePublication } from '../../packages/sdk/src/verification.js';
 import {
-  PublicationPending, ReportStore, canonicalJson, prepareAssessment, publishResult, readAccountSnapshot,
+  PublicationPending, ReportStore, assertFeeWithin, canonicalJson, prepareAssessment, publishResult, readAccountSnapshot,
   settlePending, type PublishTarget,
 } from '../../services/verifier/src/attestations.js';
 import {
@@ -233,6 +233,17 @@ describe('journaled publication', () => {
   const target = (api: PublishTarget['server']): PublishTarget => ({
     server: api, contractId: registry, networkPassphrase: Networks.STANDALONE, provider,
     stateDirectory: directory, pollAttempts: 1,
+  });
+
+  it('signs nothing when the publication would cost more than the provider accepts', async () => {
+    const fake = server({});
+    await expect(publishResult({ ...target(fake.api), maxFee: 50n }, assessment().result))
+      .rejects.toThrow('above the ceiling of 50; nothing was signed');
+    expect(fake.sent).toHaveLength(0);
+    expect(await readdir(directory)).toEqual([]);
+    // The same publication under a ceiling it fits.
+    expect((await publishResult({ ...target(fake.api), maxFee: 1_000n }, assessment().result)).ledger).toBe(77);
+    expect(() => assertFeeWithin('50000001', undefined, 'Publication')).toThrow('50000000');
   });
 
   it('submits once, confirms and clears the journal', async () => {

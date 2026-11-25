@@ -261,6 +261,8 @@ export interface TransactionRecord {
   operation_hash?: string;
   /** The network the envelope was signed for, as the hex SHA-256 of its passphrase. */
   network_id?: string;
+  /** The envelope's fee in stroops: the most its source can be charged for it. */
+  fee?: string;
   /**
    * Set when an operator accepted that this record's outcome will never be known. The status stays `unknown`,
    * which is the truth; the record just stops holding its scope.
@@ -276,6 +278,8 @@ export interface TransactionJournal {
   unsettled(scope: string): Promise<TransactionRecord[]>;
   /** The newest record in `scope` built around the operation with this hash, settled or not. */
   byOperation(scope: string, operationHash: string): Promise<TransactionRecord | undefined>;
+  /** Every record in `scope`, settled or not, oldest first. */
+  inScope(scope: string): Promise<TransactionRecord[]>;
   put(record: TransactionRecord): Promise<void>;
 }
 
@@ -304,6 +308,10 @@ export class MemoryJournal implements TransactionJournal {
   }
   async byOperation(scope: string, operationHash: string) {
     return newestForOperation(this.records.values(), scope, operationHash);
+  }
+  async inScope(scope: string) {
+    return [...this.records.values()].filter((record) => record.scope === scope)
+      .sort((a, b) => a.created_at.localeCompare(b.created_at)).map((record) => ({ ...record }));
   }
   async put(record: TransactionRecord) {
     this.records.set(record.hash, { ...record });
@@ -480,7 +488,7 @@ export async function submit(
   const record: TransactionRecord = {
     scope, hash: toHex(signed.hash()), envelope: signed.toXDR(), source: signed.source,
     max_time: signed.timeBounds?.maxTime ?? '0', submitted_after_ledger: latest.sequence, status: 'pending',
-    network_id: networkIdOf(context.networkPassphrase),
+    network_id: networkIdOf(context.networkPassphrase), fee: signed.fee,
     ...(operations.length === 1 ? { operation_hash: operationHash(operations[0]!) } : {}),
     created_at: created, updated_at: created,
   };

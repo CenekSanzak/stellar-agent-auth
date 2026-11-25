@@ -28,6 +28,11 @@ export interface SponsorPolicy {
   methods?: readonly string[];
   maxAuthEntries: number;
   limits: PipelineLimits;
+  /**
+   * The most the sponsor commits in fees over any 24 hours, in stroops; no such limit when omitted. The per-transaction
+   * ceiling bounds one transaction, and this bounds how many of them a client can have paid for.
+   */
+  dailyBudget?: bigint;
 }
 
 export class SponsorRefused extends Error {
@@ -180,8 +185,29 @@ export class Sponsor implements SponsorEndpoint {
     const enforced = await simulate(this.context, tx, 'enforce');
     assertSuppliedAuth(operation, enforced.result.auth);
     const prepared = assemble(tx, enforced, limits);
+    if (this.policy.dailyBudget !== undefined) {
+      const committed = await this.committed();
+      if (committed + BigInt(prepared.fee) > this.policy.dailyBudget) {
+        throw new SponsorRefused(`The sponsor's fee budget for 24 hours is used up (${committed} of ${this.policy.dailyBudget} stroops)`);
+      }
+    }
     const signed = await this.signer.signTransaction(prepared, this.context.networkPassphrase);
     return toResult(await submit(this.context, signed, this.journal, this.scope, limits));
+  }
+
+  /**
+   * Fees committed in the last 24 hours, in stroops: the fee of every envelope this sponsor signed in that time,
+   * except those that can never be included. It counts what could be charged, which is at least what was.
+   */
+  async committed(now = Date.now()): Promise<bigint> {
+    const since = new Date(now - 86_400_000).toISOString();
+    let total = 0n;
+    for (const record of await this.journal.inScope(this.scope)) {
+      if (record.created_at < since || record.status === 'rejected' || record.status === 'expired') continue;
+      // A record from before fees were journaled is read from its envelope.
+      total += BigInt(record.fee ?? TransactionBuilder.fromXDR(record.envelope, this.context.networkPassphrase).fee);
+    }
+    return total;
   }
 
   /** Settle a hash this sponsor submitted. */
@@ -220,11 +246,13 @@ export function assertSuppliedAuth(operation: xdr.Operation, used: readonly xdr.
 /** A sponsor policy with validated limits. */
 export function sponsorPolicy(
   contracts: readonly string[], options: { methods?: readonly string[]; maxAuthEntries?: number;
-    limits?: Partial<PipelineLimits> } = {},
+    limits?: Partial<PipelineLimits>; dailyBudget?: bigint } = {},
 ): SponsorPolicy {
+  if (options.dailyBudget !== undefined && options.dailyBudget <= 0n) throw new Error('A fee budget must be positive');
   return {
     contracts: [...contracts], maxAuthEntries: options.maxAuthEntries ?? 4, limits: pipelineLimits(options.limits),
     ...(options.methods ? { methods: [...options.methods] } : {}),
+    ...(options.dailyBudget !== undefined ? { dailyBudget: options.dailyBudget } : {}),
   };
 }
 

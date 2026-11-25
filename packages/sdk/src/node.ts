@@ -59,6 +59,10 @@ export class FileJournal implements TransactionJournal {
     return newestForOperation(await this.all(), scope, operationHash);
   }
 
+  async inScope(scope: string): Promise<TransactionRecord[]> {
+    return (await this.all()).filter((record) => record.scope === scope);
+  }
+
   async put(record: TransactionRecord): Promise<void> {
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
     const path = this.path(record.hash);
