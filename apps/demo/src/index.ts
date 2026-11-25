@@ -1,4 +1,4 @@
-/** Owner interface for verification, policies, and transaction history.
- * Placeholder only; no runtime behavior is implemented.
- */
-export {};
+import './styles.css';
+import { startApp } from './app.js';
+
+void startApp(document).boot();

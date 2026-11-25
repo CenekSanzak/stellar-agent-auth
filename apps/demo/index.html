@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent wallet demo</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <header class="top">
+      <div>
+        <h1>Agent wallet</h1>
+        <p class="lede">An owner funds a wallet, lets one verified agent pay within limits, and can stop it at any time.</p>
+      </div>
+      <div id="connection" class="connection"></div>
+    </header>
+    <main>
+      <div id="notice"></div>
+      <section id="agent" aria-label="Agent"></section>
+      <section id="wallet" aria-label="Wallet"></section>
+      <section id="policy-form" aria-label="New policy"></section>
+      <section id="policies" aria-label="Policies"></section>
+      <section id="history" aria-label="History"></section>
+    </main>
+    <aside id="activity" aria-label="Activity" aria-live="polite"></aside>
+    <script type="module" src="/src/index.ts"></script>
+  </body>
+</html>

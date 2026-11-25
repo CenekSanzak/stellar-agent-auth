@@ -28,7 +28,8 @@
       "@stellar-agent-auth/indexer": [
         "./services/indexer/src/index.ts"
       ]
-    }
+    },
+    "skipLibCheck": true
   },
   "include": [
     "tests/**/*.ts",

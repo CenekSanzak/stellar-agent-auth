@@ -9,7 +9,7 @@
   ],
   "scripts": {
     "build": "npm run build -w @stellar-agent-auth/sdk --silent && npm run build -w @stellar-agent-auth/verifier --silent && npm run build -w @stellar-agent-auth/submitter --silent && npm run build -w @stellar-agent-auth/cli --silent && npm run build -w @stellar-agent-auth/indexer --silent && npm run build -w @stellar-agent-auth/demo --silent",
-    "typecheck": "npm run build -w @stellar-agent-auth/sdk --silent && npm run build -w @stellar-agent-auth/verifier --silent && npm run typecheck --workspaces && tsc -p tsconfig.tests.json --noEmit",
+    "typecheck": "npm run build -w @stellar-agent-auth/sdk --silent && npm run build -w @stellar-agent-auth/verifier --silent && npm run build -w @stellar-agent-auth/submitter --silent && npm run build -w @stellar-agent-auth/indexer --silent && npm run typecheck --workspaces && tsc -p tsconfig.tests.json --noEmit",
     "check:rust": "cargo check --workspace --locked",
     "format:rust:check": "cargo fmt --all -- --check",
     "test": "npm run test:unit",
@@ -26,12 +26,16 @@
     "local:down": "docker compose down",
     "local:ready": "node scripts/local-ready.mjs",
     "dev": "npm run local:up && npm run local:ready",
-    "check": "npm run typecheck && npm run build && npm run check:sdk-package && npm run test:unit && npm run check:rust && npm run format:rust:check && npm run lint:rust && npm run test:rust && npm run build:contracts && npm run test:spec"
+    "check": "npm run typecheck && npm run build && npm run check:sdk-package && npm run test:unit && npm run check:rust && npm run format:rust:check && npm run lint:rust && npm run test:rust && npm run build:contracts && npm run test:spec",
+    "test:browser": "vitest run --project browser",
+    "demo:setup": "npm run setup -w @stellar-agent-auth/demo",
+    "demo": "npm run start -w @stellar-agent-auth/demo"
   },
   "devDependencies": {
     "typescript": "5.9.3",
     "@types/node": "24.10.1",
-    "vitest": "5.1.0"
+    "vitest": "5.1.0",
+    "playwright-core": "1.65.0"
   },
   "type": "module",
   "engines": {
