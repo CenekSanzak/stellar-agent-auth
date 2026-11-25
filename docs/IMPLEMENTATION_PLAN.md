@@ -1,6 +1,13 @@
 # Repository review and implementation plan
 
-Reviewed: 3 November 2026. Baseline: `c12bd39`.
+Reviewed: 3 November 2026. Baseline: `c12bd39`. Revised: 25 November 2026.
+
+**Revision of 25 November 2026.** The original text below is kept, with these changes marked where they apply:
+
+- The sprint started on 12 November 2026, so day 30 is 11 December. P0–P5 are implemented; see the validation records.
+- The wallet gains a second payment path as a custom account (`__check_auth`), decided in [ADR 0006](decisions/0006-custom-account-spike.md). This replaces the restricted service adapter as P9.
+- P9 now also carries the other contract changes that must land before the interface freezes: finer error codes and a lifetime cap.
+- P9 moves ahead of P6. The indexer, demo and final deployment are then built once, on the final contract interface.
 
 This is a proposed implementation plan, not an implementation or deployment report. The review changed no application code, made no commits, and performed no deployment. The existing untracked statement-of-work PDF was read without modification.
 
@@ -24,11 +31,11 @@ The SOW excludes a security audit, full ERC implementations, a general consumer 
 | Scope | Planned result | Completion claim |
 | --- | --- | --- |
 | 30-day SOW baseline | Two registries, limited verifier, transfer-only wallet, SDK, focused CLI, simple demo, signed tests, deployment records, basic durable history and guide | SOW deliverables 1-3, subject to passing their gates |
-| Additional repository milestone work | One restricted service-contract adapter and its argument/auth tests; complete the corresponding SDK/CLI/demo flow | Required before claiming README milestone 3 in full |
+| Additional repository milestone work | The wallet's account payment path and one service contract paid through it, with their context, argument and authorization tests; complete the corresponding SDK/CLI/demo flow (revised 25 November; was a restricted service-contract adapter) | Required before claiming README milestone 3 in full |
 | Full architecture acceptance | All listed acceptance tests, service-call integration, audit reconstruction, CI, deployment and demo evidence | Required before claiming all four README milestones complete |
 | Deferred by existing architecture | Privacy proofs, entropy commit-reveal, TLS credential delegation, external identity registries, arbitrary execution | Separate designs and delivery work |
 
-The service-contract adapter is planned below, not silently removed. If it does not fit the sprint, report that README milestone 3 and any dependent milestone 4 criteria remain incomplete. Do not relabel a transfer as a service-contract integration. Do not weaken authorization, verification, or rollback checks to meet a date.
+The service integration is planned below, not silently removed. If it does not fit the sprint, report that README milestone 3 and any dependent milestone 4 criteria remain incomplete. Do not relabel a transfer the agent pushes with `execute` as a service-contract integration. Do not weaken authorization, verification, or rollback checks to meet a date.
 
 ## 2. Review findings
 
@@ -69,6 +76,7 @@ Record these as short architecture decision records in P0-P1. They are proposed 
 - Initialize ownership and registry references atomically through `__constructor`; do not expose a public initialization race. Require the owner's authorization for creation with those arguments and test deployment/auth behavior on the selected SDK.
 - Use immutable contract code for this Testnet release: no upgrade entry point or authority that can bypass policies. Changes produce a new deployment manifest and require explicit owner action to fund/use the new wallet.
 - Start with standard Stellar account signers and native `Address::require_auth()` on complete entry-point arguments. Do not add custom message signatures or a wallet `__check_auth` interface for the first release. The wallet is accessed through explicit execution methods, not as an unrestricted signer for other contracts.
+  - *Revised 25 November:* the wallet does add `__check_auth`, per [ADR 0006](decisions/0006-custom-account-spike.md). `execute` keeps native account authorization unchanged. The account path verifies the agent key's signature itself and authorizes exactly one thing, a transfer of a policy asset out of the wallet within that policy. The wallet is still not an unrestricted signer: every other context is refused.
 - Keep the owner, agent controller, agent signer, verifier publisher and fee sponsor as separate roles, including in tests. A sponsor has no policy, verification, withdrawal or agent-signing authority.
 
 Native Soroban authorization binds an invocation and its arguments. The SDK also signs network-specific authorization entries with bounded ledger validity; the wallet's policy sequence and deadline enforce application ordering and freshness. See [Stellar auth documentation](https://developers.stellar.org/docs/build/smart-contracts/example-contracts/auth) and the official [authorization-entry implementation](https://stellar.github.io/js-stellar-base/auth.js.html).
@@ -120,7 +128,7 @@ Use instance storage for bounded wallet configuration and persistent entries for
 
 ## 4. Implementation work packages
 
-Dependencies: `P0 -> P1 -> P2/P3 -> P4 -> P5 -> P6/P7 -> P8`. P3 depends on P2's identity ABI. Minimal SDK helpers and tests should be added as each contract lands. P9 follows the proven transfer path; full milestone completion depends on it.
+Dependencies: `P0 -> P1 -> P2/P3 -> P4 -> P5 -> P9 -> P6/P7 -> P8` (revised 25 November; P9 was last). P3 depends on P2's identity ABI. Minimal SDK helpers and tests should be added as each contract lands. P9 changes the wallet's interface and audit entries, so the indexer, demo and final deployment follow it; full milestone completion depends on it.
 
 ### P0. Reproducible foundation and requirements (days 1-2)
 
@@ -240,17 +248,25 @@ Dependencies: `P0 -> P1 -> P2/P3 -> P4 -> P5 -> P6/P7 -> P8`. P3 depends on P2's
 
 **Gate / SOW deliverable 3:** reviewer can use the SDK/CLI/demo, inspect real contract IDs and evidence, reproduce all required cases and follow the setup guide. All SOW requirements map to passing tests or concrete evidence. Full repository milestone status is reported separately.
 
-### P9. Restricted service-contract adapter (after P4-P5; estimated 2-4 engineering days)
+### P9. Account payment path and contract revision (after P5, before P6; estimated 4-5 engineering days)
 
-**Files:** `contracts/demo-service/src/{lib,service}.rs`; wallet typed action/adapter rules; SDK/CLI service commands; integration/adversarial tests and demo example.
+*Rewritten on 25 November 2026.* The original P9 was a restricted service-contract adapter: a demo service with a wallet-specific `pay_for_service` interface. [ADR 0006](decisions/0006-custom-account-spike.md) showed that the wallet can instead authorize a plain `asset.transfer(wallet, payee, amount)` as a custom account, on the local network and on Testnet. That covers any service that pulls its payment, including an x402 `exact` payment, without the service knowing this wallet. P9 builds that path and makes the remaining interface changes in the same revision.
 
-- Define a single versioned `pay_for_service(wallet, asset, recipient, amount, service_id)` interface with bounded service IDs and fixed payment semantics. The wallet validates exact asset, recipient, amount, target and method; the service validates its configured recipient/price and requests wallet authorization.
-- Authorize only the precise deeper token-transfer invocation needed by that service call, using native contract-invoker authorization where appropriate. Do not allow caller-supplied arbitrary symbols, `Vec<Val>` invocation payloads, approvals or arbitrary authorization trees.
-- Charge the same per-policy/per-asset budget as transfers. Bind all service arguments into the agent's action authorization and audit entry. Require exact expected return semantics and abort the transaction on downstream failure.
-- Test an allowed call, unsupported method, altered arguments/price/recipient, wrong asset, extra downstream debit, unauthorized direct wallet debit and complete rollback on failure. Prevent using the adapter path to bypass direct-transfer recipient restrictions.
-- Add one SDK example/CLI command and recorded Testnet service transaction, then update milestone 3 evidence.
+**Files:** `contracts/smart-wallet/src/*`; `contracts/shared-types/src/{errors,policy,audit}.rs`; `contracts/demo-service/src/{lib,service}.rs`; `packages/sdk/src/*` for signing, decoding and preflight; CLI commands; host, integration and adversarial tests; ADRs and the validation record.
 
-**Gate:** the restricted call succeeds with a real agent signature; every unsupported invocation is rejected and all spending/audit invariants remain true. Only then mark the service integration complete.
+- **Account path.** Add `__check_auth` to the smart wallet. It admits exactly one context: `transfer` on an asset the named policy lists, moving the wallet's own funds to an allowed, unblocked recipient. Deployments, `approve`, `burn`, other contracts, several contexts and no context are refused.
+- **Signature.** The credential carries the policy hash and the policy signer's ed25519 signature over the host payload followed by that hash. The signer account registered for the agent is matched to the key by its bytes. This path does not apply the signer account's own signers and thresholds; record that in the ADR and in the owner-facing text.
+- **One budget.** `execute` and the account path charge the same per-payment cap, daily budget and lifetime cap, and observe the same pause, revocation, validity window, live identity and current verification. Neither path may spend what the other has spent.
+- **Audit.** An account payment appends an audit entry like an execution does. Add the outcome variant and its golden vector before the indexer is written.
+- **Explaining a refusal.** A refusal from `__check_auth` reaches the caller as a host authorization error, and the public Testnet RPC does not return the diagnostics that name the reason. Add a read-only wallet entry point that evaluates a prospective payment and returns the wallet's own error, and have the SDK call it before signing.
+- **Finer error codes.** Split the codes that stand for several causes today (`Revoked`, `Expired`, `PolicyDenied`, `LimitExceeded`) so that a client can say which rule refused. This changes the v1 error list; update the SDK mirror, the spec test and the vectors together.
+- **Lifetime cap.** Add an optional per-asset total to a policy, charged by both paths, so that total exposure is bounded and not only daily exposure.
+- **Service contract.** Replace the demo-service probe with a small service that takes its price by transferring from the paying wallet inside its own call. It demonstrates a pulled payment through the account path.
+- **SDK and CLI.** A signing helper for account entries built on the Stellar SDK's signing callback, strict decoding, the preflight call, and a command that pays a service. The sponsor is configured for the asset's `transfer`; it needs no knowledge of the wallet.
+- **Tests.** Host tests with enforced authorization for every refused context and signature; shared-budget tests across both paths; rollback when the transfer fails; adversarial tests on the local network; and a recorded Testnet payment.
+- **Stretch, first to drop:** a payee-side verification gate, which the [compatibility notes](erc-compatibility.md) ask for and nothing else here depends on.
+
+**Gate:** a service is paid through the account path with a real agent signature on the local network and on Testnet. Every other context, asset, recipient, amount, policy or signature is refused. The two paths together never exceed a policy's caps, and a failed transfer leaves budgets and the audit head unchanged. Only then mark the service integration complete.
 
 ## 5. Required acceptance matrix
 
@@ -287,7 +303,7 @@ Rust contract tests exercise state and boundary behavior. TS tests exercise enco
 | A27 | Audit mutation/missing entries/retention gap | Correct mismatch or incomplete status; no false completeness |
 | A28 | Clean checkout SDK import/CLI example/browser smoke | Full verify -> authorize -> execute -> revoke workflow |
 | A29 | Testnet SOW scenario and deployment/readback | Contract IDs, real transaction/result evidence and guide |
-| A30 | Restricted service call and all argument/auth bypass attempts | P9 tests plus actual service-call evidence for milestone 3 |
+| A30 | Service paid through the wallet's account path; every other context, argument, policy and signature refused; budgets shared with `execute` (revised 25 November) | P9 tests plus actual service-payment evidence for milestone 3 |
 
 Include seeded property tests for budget accounting, monotonic revisions/publications/sequences, terminal revocation and hash determinism. Test behavior through public contract/client APIs rather than duplicating private implementation logic. Check representative resource budgets after each ABI change.
 
@@ -307,6 +323,18 @@ The 30-day schedule assumes one engineer with working Soroban/TypeScript experie
 | 28-30 | Defect correction and reproducibility buffer | Clean-checkout rerun and final evidence review |
 
 P9 may start after P5 only if the signed wallet gate is already stable and release buffer remains protected. Otherwise schedule it immediately after the SOW baseline, with full milestone 3/4 acceptance still open. Do not count the same day's capacity twice to make the plan appear to fit.
+
+**Revised schedule, 25 November 2026.** The sprint started on 12 November. P0–P5 were finished before or early in it, so the remaining work is replanned from day 14:
+
+| Dates | Sprint days | Work | Exit evidence |
+| --- | --- | --- | --- |
+| 25–29 November | 14–18 | P9: account path, contract revision, service contract, SDK and CLI | P9 gate on the local network and Testnet |
+| 30 November – 1 December | 19–20 | P6: durable history | Restart-safe indexing and verified audit head |
+| 2–4 December | 21–23 | P7: demo | Accurate end-to-end browser walkthrough |
+| 5–8 December | 24–27 | P8: final Testnet release, documentation and evidence | SOW acceptance bundle |
+| 9–11 December | 28–30 | Defect correction and reproducibility buffer | Clean-checkout rerun and final evidence review |
+
+These are estimates. If P9 runs past day 18, drop its stretch item first, then the lifetime cap; do not take the time from P8 or the buffer.
 
 | Risk | Early trigger | Response |
 | --- | --- | --- |

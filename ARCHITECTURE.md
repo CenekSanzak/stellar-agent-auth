@@ -2,7 +2,7 @@
 
 This project lets a wallet owner give an AI agent limited permission to use funds on Stellar. The owner keeps control of the wallet, while the agent can perform only the actions the owner has approved.
 
-**Current status:** The agent registry (P2), verification registry and limited verifier (P3), the smart wallet (P4), and the SDK pipeline, submitter and CLI (P5) are implemented and tested on a local network. The indexer, demo and restricted service calls below are still planned. The P3 registries are deployed on Testnet as a development checkpoint, recorded in `deployments/testnet/p3-checkpoint.json`.
+**Current status:** The agent registry (P2), verification registry and limited verifier (P3), the smart wallet (P4), and the SDK pipeline, submitter and CLI (P5) are implemented and tested on a local network. The account payment path, indexer and demo below are still planned. The P3 registries are deployed on Testnet as a development checkpoint, recorded in `deployments/testnet/p3-checkpoint.json`.
 
 ## Example: paying for services
 
@@ -99,6 +99,12 @@ Contract integrations allow specific methods and validated arguments. An approve
 
 Revocation blocks subsequent execution once confirmed on-chain, including requests signed earlier. It cannot undo a completed transfer.
 
+### Paying as an account (planned)
+
+`execute` covers payments the agent pushes. Some services pull their payment instead: inside their own call they transfer from the payer, and the payer must authorize that transfer. An x402 `exact` payment on Stellar has this shape.
+
+The wallet will support it as a custom account. When an asset contract requires the wallet's authorization, the host calls the wallet's `__check_auth`, and the same policy runs there: the agent key's signature, the asset, the recipient, the caps, the live identity and the current verification result. It authorizes one thing only, a transfer of a policy asset out of the wallet, and both paths draw on the same budget. A spike showed this works on a local network and on Testnet; see [ADR 0006](docs/decisions/0006-custom-account-spike.md). It is not built into the wallet yet.
+
 ## History, storage, and trust
 
 Successful actions and owner changes emit events. Audit entries include the previous entry's hash, and the wallet stores the latest hash and sequence. The indexer reconstructs this history and can detect missing or altered entries. It has no authority to approve transactions.
@@ -115,7 +121,7 @@ The [README grant milestones](readme.md#grant-milestones) describe the deliverab
 
 1. **Identity and verification:** Register an agent and publish a provider-authenticated result. Tests reject unauthorized publication, invalidate old identity revisions, and enforce result expiry and revocation. Document supported checks, scoring, and deferred EIP features.
 2. **Wallet payments:** Demonstrate a signed permitted transfer. Tests reject invalid signatures, replay, per-payment and daily overspending, unapproved assets and recipients, inactive or expired policies, owner pause, and revoked access. Verification tests reject missing or stale results, excessive risk scores, and serious wallet-risk flags. A failed asset call must roll back counters and balance changes.
-3. **SDK and integration:** Run the full workflow through a public SDK example and CLI commands. Demonstrate one restricted service-contract call and rejection of an unsupported method or invalid arguments.
+3. **SDK and integration:** Run the full workflow through a public SDK example and CLI commands. Demonstrate one service contract paid through the wallet and rejection of an unsupported method or invalid arguments.
 4. **Testnet demo:** Publish deployment IDs, transaction links, setup instructions, and a recording of the payment scenario. Rebuild the audit chain from indexed events and match the wallet's stored hash. Run all automated acceptance checks in CI.
 
 Signed workflow tests belong in `tests/integration`; rejection cases belong in `tests/adversarial`. Public fixtures belong in `tests/fixtures` and must be labelled as simulated assessments. Deployment records belong in `deployments/testnet`.

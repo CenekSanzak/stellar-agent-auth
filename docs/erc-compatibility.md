@@ -186,7 +186,8 @@ answered. This section only records what the code does today.
 
 The rules behind these rows are in [the wallet decision](decisions/0005-smart-wallet.md),
 [the verification registry decision](decisions/0004-verification-registry.md) and
-[verification coverage](VERIFICATION_COVERAGE.md). Whether the wallet should also be a custom account is an open
-design question, tracked in [issue #2](https://github.com/CenekSanzak/stellar-agent-auth/issues/2). A spike on
-2026-11-25 showed that a custom account can enforce such a policy as the payer of a plain transfer on a local
-network; its findings and limits are in [ADR 0006](decisions/0006-custom-account-spike.md).
+[verification coverage](VERIFICATION_COVERAGE.md). On 2026-11-25 a spike showed that a custom account can enforce such a policy as the payer of a plain transfer, on
+a local network and on Testnet, and the project decided to add that path to the wallet. It is planned as P9 and is
+not built yet, so the T5 row above still describes the code. The findings, limits and decision are in
+[ADR 0006](decisions/0006-custom-account-spike.md); the request is tracked in
+[issue #2](https://github.com/CenekSanzak/stellar-agent-auth/issues/2).

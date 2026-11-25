@@ -55,7 +55,24 @@ export async function localNetwork() {
   const network = await server.getNetwork();
   expect(network.passphrase).toBe(Networks.STANDALONE);
   expect(Number(network.protocolVersion)).toBe(29);
-  const { passphrase } = config;
+  return connect(server, config.passphrase, false);
+}
+
+/**
+ * Public Testnet, for explicitly enabled runs only. Roles are still generated at runtime and funded by Friendbot,
+ * so everything deployed through it is throwaway. From protocol 30 simulation records CAP-71 credentials.
+ */
+export async function testnetNetwork() {
+  const config = loadConfig({ ...process.env, STELLAR_NETWORK: 'testnet', STELLAR_NETWORK_PASSPHRASE: undefined,
+    STELLAR_RPC_URL: undefined, STELLAR_NETWORK_ID: undefined });
+  const server = new rpc.Server(config.rpcUrl, { timeout: 30_000 });
+  const network = await server.getNetwork();
+  expect(network.passphrase).toBe(Networks.TESTNET);
+  const protocol = Number(network.protocolVersion);
+  return { ...await connect(server, config.passphrase, protocol >= 30), protocol };
+}
+
+async function connect(server: rpc.Server, passphrase: string, upgradedAuth: boolean) {
 
   /** Friendbot-funds keypairs generated at test runtime; no key material is stored. */
   async function fund(...roles: Keypair[]) {
@@ -71,7 +88,7 @@ export async function localNetwork() {
   }
 
   const simulate = (tx: Transaction, mode: rpc.Api.SimulationAuthMode) =>
-    server.simulateTransaction(tx, undefined, mode, false);
+    server.simulateTransaction(tx, undefined, mode, upgradedAuth);
 
   /** Assemble with the simulated footprint and fee, sign the envelope with `source` only, and confirm. */
   async function submit(tx: Transaction, simulation: Simulation, source: Keypair) {
@@ -81,7 +98,7 @@ export async function localNetwork() {
     if (sent.status !== 'PENDING') {
       throw new Error(`Submission ${sent.status}: ${'errorResult' in sent ? sent.errorResult?.toXdr('base64') : sent.hash}`);
     }
-    const confirmed = await server.pollTransaction(sent.hash, { attempts: 30, sleepStrategy: () => 1_000 });
+    const confirmed = await server.pollTransaction(sent.hash, { attempts: 60, sleepStrategy: () => 1_000 });
     if (confirmed.status !== rpc.Api.GetTransactionStatus.SUCCESS) {
       const details = 'diagnosticEventsXdr' in confirmed
         ? confirmed.diagnosticEventsXdr?.map((event) => event.toXdr('base64')).join(', ')

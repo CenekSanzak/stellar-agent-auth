@@ -38,8 +38,8 @@ export const DAY = 86_400n;
  * owner deployed and a funder funded. Every role is a separate runtime-generated, Friendbot-funded account; the
  * sponsor only pays fees and signs envelopes.
  */
-export async function walletWorld() {
-  const net = await localNetwork();
+export async function walletWorld(network?: LocalNetwork) {
+  const net = network ?? await localNetwork();
   const roles = {
     admin: Keypair.random(), owner: Keypair.random(), controller: Keypair.random(), signer: Keypair.random(),
     sponsor: Keypair.random(), provider: Keypair.random(), funder: Keypair.random(), issuer: Keypair.random(),
@@ -57,7 +57,7 @@ export async function walletWorld() {
     tx.sign(...signers);
     const sent = await net.server.sendTransaction(tx);
     if (sent.status !== 'PENDING') throw new Error(`Classic submission ${sent.status}`);
-    const confirmed = await net.server.pollTransaction(sent.hash, { attempts: 30, sleepStrategy: () => 1_000 });
+    const confirmed = await net.server.pollTransaction(sent.hash, { attempts: 60, sleepStrategy: () => 1_000 });
     if (confirmed.status !== rpc.Api.GetTransactionStatus.SUCCESS) throw new Error(`Classic ${sent.hash} failed`);
   }
 
