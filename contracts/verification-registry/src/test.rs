@@ -373,7 +373,7 @@ fn provider_disabling_is_admin_only_and_terminal() {
     failed(client.try_disable_provider(&t.provider), Error::Duplicate);
     failed(
         client.try_approve_provider(&t.provider, &AssessmentMode::Live),
-        Error::Revoked,
+        Error::ProviderDisabled,
     );
     failed(
         client.try_disable_provider(&Address::generate(&t.env)),
@@ -414,7 +414,7 @@ fn publish_requires_an_approved_provider_of_the_same_mode() {
             provider: stranger,
             ..t.result(1)
         }),
-        Error::VerificationDenied,
+        Error::ProviderNotApproved,
     );
     // A live provider cannot publish fixture data, and a fixture provider cannot publish live data.
     failed(
@@ -440,7 +440,7 @@ fn publish_requires_an_approved_provider_of_the_same_mode() {
 
     t.env.mock_all_auths();
     t.client().disable_provider(&t.provider);
-    failed(t.publish(&t.result(1)), Error::Revoked);
+    failed(t.publish(&t.result(1)), Error::ProviderDisabled);
 }
 
 #[test]
@@ -586,7 +586,7 @@ fn publish_validates_the_result() {
                 expires_at: NOW,
                 ..base.clone()
             },
-            Error::Expired
+            Error::ResultExpired
         ),
     ];
     for (label, result, error) in cases {
@@ -635,7 +635,7 @@ fn publish_requires_the_live_identity_revision() {
             revision: disabled.revision,
             ..t.result(1)
         }),
-        Error::Revoked,
+        Error::AgentDisabled,
     );
 }
 
@@ -684,7 +684,7 @@ fn identity_change_retires_results_for_the_old_revision() {
     );
     failed(
         client.try_current(&t.agent.agent_id, &disabled.revision, &t.provider),
-        Error::Revoked,
+        Error::AgentDisabled,
     );
     let active = t.agents().reactivate(&t.agent.agent_id, &disabled.revision);
     failed(
@@ -753,7 +753,7 @@ fn newer_failure_replaces_an_older_pass() {
     };
     t.publish(&failure).unwrap().unwrap();
     assert_eq!(t.current(), Ok(Ok(failure.clone())));
-    failed(t.check(&[Metadata], HOUR, 100), Error::VerificationDenied);
+    failed(t.check(&[Metadata], HOUR, 100), Error::CheckNotPassed);
     // The earlier pass is gone: no read returns it and it cannot be republished.
     assert_eq!(t.latest(), Ok(Ok(failure)));
     failed(t.publish(&t.result(1)), Error::InvalidSequence);
@@ -791,8 +791,11 @@ fn revocation_is_provider_only_terminal_and_latest_only() {
     );
     t.assert_assessment_event(&revoked);
     assert_eq!(t.latest(), Ok(Ok(revoked)));
-    failed(t.current(), Error::Revoked);
-    failed(t.check(&[CheckKind::Metadata], HOUR, 100), Error::Revoked);
+    failed(t.current(), Error::ResultRevoked);
+    failed(
+        t.check(&[CheckKind::Metadata], HOUR, 100),
+        Error::ResultRevoked,
+    );
     failed(t.revoke_as(&t.provider, &t.provider, 2), Error::Duplicate);
 
     // Only a fresh, higher-sequence assessment supersedes a revocation.
@@ -809,7 +812,7 @@ fn revocation_works_after_provider_or_identity_changes() {
     t.publish(&t.result(1)).unwrap().unwrap();
     t.env.mock_all_auths();
     t.client().disable_provider(&t.provider);
-    failed(t.current(), Error::Revoked);
+    failed(t.current(), Error::ProviderDisabled);
     assert!(t.revoke_as(&t.provider, &t.provider, 1).is_ok());
 
     t.env.mock_all_auths();
@@ -832,15 +835,18 @@ fn disabling_a_provider_blocks_its_unexpired_results() {
     assert!(t.current().is_ok());
     t.env.mock_all_auths();
     t.client().disable_provider(&t.provider);
-    failed(t.current(), Error::Revoked);
-    failed(t.check(&[CheckKind::Metadata], HOUR, 100), Error::Revoked);
+    failed(t.current(), Error::ProviderDisabled);
+    failed(
+        t.check(&[CheckKind::Metadata], HOUR, 100),
+        Error::ProviderDisabled,
+    );
     // Still readable for history.
     assert!(t.latest().is_ok());
     let stranger = Address::generate(&t.env);
     failed(
         t.client()
             .try_current(&t.agent.agent_id, &t.agent.revision, &stranger),
-        Error::VerificationDenied,
+        Error::ProviderNotApproved,
     );
 }
 
@@ -853,10 +859,10 @@ fn results_expire_at_expires_at() {
     assert!(t.current().is_ok());
     assert!(t.check(&[CheckKind::Metadata], HOUR, 0).is_ok());
     t.env.ledger().set_timestamp(result.expires_at);
-    failed(t.current(), Error::Expired);
+    failed(t.current(), Error::ResultExpired);
     failed(
         t.check(&[CheckKind::Metadata], 2 * HOUR, 100),
-        Error::Expired,
+        Error::ResultExpired,
     );
 }
 
@@ -866,7 +872,10 @@ fn check_enforces_maximum_age() {
     t.publish(&t.result(1)).unwrap().unwrap();
     t.advance(600);
     assert!(t.check(&[CheckKind::Metadata], 600, 0).is_ok());
-    failed(t.check(&[CheckKind::Metadata], 599, 0), Error::Expired);
+    failed(
+        t.check(&[CheckKind::Metadata], 599, 0),
+        Error::ResultExpired,
+    );
 }
 
 #[test]
@@ -891,7 +900,7 @@ fn check_requires_every_required_check_to_pass() {
     ] {
         assert_eq!(
             t.check(&[Metadata, kind], HOUR, 100),
-            Err(Ok(Error::VerificationDenied)),
+            Err(Ok(Error::CheckNotPassed)),
             "{label}"
         );
     }
@@ -903,7 +912,7 @@ fn check_requires_every_required_check_to_pass() {
     };
     t.publish(&partial).unwrap().unwrap();
     assert!(t.check(&[Metadata], HOUR, 0).is_ok());
-    failed(t.check(&[Endpoint], HOUR, 100), Error::VerificationDenied);
+    failed(t.check(&[Endpoint], HOUR, 100), Error::CheckNotPassed);
 }
 
 #[test]
@@ -924,7 +933,7 @@ fn check_applies_the_risk_threshold_and_serious_flags() {
     };
     t.publish(&scored).unwrap().unwrap();
     assert!(t.check(&[Metadata], HOUR, 34).is_ok());
-    failed(t.check(&[Metadata], HOUR, 33), Error::VerificationDenied);
+    failed(t.check(&[Metadata], HOUR, 33), Error::RiskTooHigh);
 
     t.advance(1);
     let flagged = VerificationResult {
@@ -933,7 +942,7 @@ fn check_applies_the_risk_threshold_and_serious_flags() {
     };
     t.publish(&flagged).unwrap().unwrap();
     assert_eq!(flagged.risk_score, Some(0));
-    failed(t.check(&[Metadata], HOUR, 100), Error::VerificationDenied);
+    failed(t.check(&[Metadata], HOUR, 100), Error::RiskFlagged);
 
     // Without any scored check there is no usable aggregate.
     t.advance(1);
@@ -943,7 +952,7 @@ fn check_applies_the_risk_threshold_and_serious_flags() {
         ..t.result(3)
     };
     t.publish(&unscored).unwrap().unwrap();
-    failed(t.check(&[Metadata], HOUR, 100), Error::VerificationDenied);
+    failed(t.check(&[Metadata], HOUR, 100), Error::RiskTooHigh);
 }
 
 #[test]

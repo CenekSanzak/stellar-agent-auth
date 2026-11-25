@@ -144,21 +144,28 @@ export function evaluateRequest(
   if (request.sequence !== current.next_sequence) {
     fail('InvalidSequence', `Expected sequence ${current.next_sequence}`);
   }
-  if (context.now >= request.deadline || context.now >= policy.valid_until) fail('Expired', 'Request or policy expired');
-  if (context.now < policy.valid_after) fail('PolicyDenied', 'Policy is not yet valid');
-  if (!policy.action_kinds.includes(request.action.kind) || request.action.kind !== 'Transfer') {
+  if (context.now >= request.deadline) fail('RequestExpired', 'The request deadline has passed');
+  // `execute` pushes plain transfers; a service payment goes through the wallet's account path.
+  if (request.action.kind !== 'Transfer') fail('PolicyDenied', 'execute does not make service payments');
+  if (context.now >= policy.valid_until) fail('Expired', 'The policy window has ended');
+  if (context.now < policy.valid_after) fail('NotYetValid', 'Policy is not yet valid');
+  if (!policy.action_kinds.includes(request.action.kind)) {
     fail('PolicyDenied', `Policy does not permit ${request.action.kind}`);
   }
   const limit = policy.assets.find(({ asset }) => asset === transfer.asset);
-  if (!limit) fail('PolicyDenied', 'Asset is not approved by the policy');
+  if (!limit) fail('AssetNotAllowed', 'Asset is not approved by the policy');
   if (policy.blocked_recipients.includes(transfer.recipient) || !policy.allowed_recipients.includes(transfer.recipient)) {
-    fail('PolicyDenied', 'Recipient is not approved by the policy');
+    fail('RecipientNotAllowed', 'Recipient is not approved by the policy');
   }
   const { per_transaction, per_day } = limit as AssetLimit;
-  if (transfer.amount > per_transaction) fail('LimitExceeded', `Amount exceeds the per-transfer cap ${per_transaction}`);
+  if (transfer.amount > per_transaction) {
+    fail('PaymentLimitExceeded', `Amount exceeds the per-transfer cap ${per_transaction}`);
+  }
   const spent = current.daily_spend.find(({ asset }) => asset === transfer.asset)?.amount ?? 0n;
   if (spent + transfer.amount > I128_MAX) fail('ArithmeticOverflow', 'Daily spend overflows');
-  if (spent + transfer.amount > per_day) fail('LimitExceeded', `Amount exceeds today's remaining ${per_day - spent}`);
+  if (spent + transfer.amount > per_day) {
+    fail('DailyLimitExceeded', `Amount exceeds today's remaining ${per_day - spent}`);
+  }
 }
 
 export interface Exposure {

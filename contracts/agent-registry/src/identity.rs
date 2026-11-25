@@ -17,7 +17,7 @@ pub fn check_revision(identity: &AgentIdentity, expected_revision: u64) -> Resul
 pub fn check_current(identity: &AgentIdentity, revision: u64) -> Result<(), Error> {
     check_revision(identity, revision)?;
     if identity.disabled {
-        return Err(Error::Revoked);
+        return Err(Error::AgentDisabled);
     }
     Ok(())
 }

@@ -168,15 +168,15 @@ describe('account payment path', () => {
     expect(state.daily_spend).toEqual([{ asset: w.asset, amount: 18n * UNIT }]);
 
     // Two units are left, whichever path asks.
-    await expectCheck({ amount: 2n * UNIT + 1n }, 'LimitExceeded');
-    await w.expectRejected(await w.payment(policyHash, await sequence(), 2n * UNIT + 1n), 'LimitExceeded',
+    await expectCheck({ amount: 2n * UNIT + 1n }, 'DailyLimitExceeded');
+    await w.expectRejected(await w.payment(policyHash, await sequence(), 2n * UNIT + 1n), 'DailyLimitExceeded',
       'execute over the shared budget');
     expectAuthRefusal(await enforce(w.asset, 'transfer', transferArgs(recipient.publicKey(), 2n * UNIT + 1n),
       [await handSigned(w.asset, 'transfer', transferArgs(recipient.publicKey(), 2n * UNIT + 1n))]),
-    'account path over the shared budget', /Error\(Contract, #3\)/);
+    'account path over the shared budget', /Error\(Contract, #28\)/);
     await pay(2n * UNIT);
-    await expectCheck({ amount: 1n }, 'LimitExceeded');
-    await w.expectRejected(await w.payment(policyHash, await sequence(), 1n), 'LimitExceeded',
+    await expectCheck({ amount: 1n }, 'DailyLimitExceeded');
+    await w.expectRejected(await w.payment(policyHash, await sequence(), 1n), 'DailyLimitExceeded',
       'execute after the account path used the last unit');
     expect((await readPolicyState(w.read, policyHash)).daily_spend).toEqual([{ asset: w.asset, amount: 20n * UNIT }]);
   }, TIMEOUT);
@@ -192,10 +192,10 @@ describe('account payment path', () => {
       expectAuthRefusal(await enforce(contract, method, args, auth), label, reason);
 
     await refused('over the per-payment cap', asset, 'transfer', transferArgs(to, 6n * UNIT),
-      [await handSigned(asset, 'transfer', transferArgs(to, 6n * UNIT), undefined, roomy)], /Error\(Contract, #3\)/);
+      [await handSigned(asset, 'transfer', transferArgs(to, 6n * UNIT), undefined, roomy)], /Error\(Contract, #27\)/);
     await refused('an unlisted recipient', asset, 'transfer', transferArgs(stranger.publicKey(), UNIT),
       [await handSigned(asset, 'transfer', transferArgs(stranger.publicKey(), UNIT), undefined, roomy)],
-      /Error\(Contract, #11\)/);
+      /Error\(Contract, #26\)/);
     await refused('another key', asset, 'transfer', transferArgs(to, UNIT),
       [await handSigned(asset, 'transfer', transferArgs(to, UNIT), attacker, roomy)], /Error\(Crypto, InvalidInput\)/);
     await refused('a policy this wallet does not hold', asset, 'transfer', transferArgs(to, UNIT),
@@ -212,8 +212,8 @@ describe('account payment path', () => {
     await refused('no entry', asset, 'transfer', transferArgs(to, UNIT), []);
 
     // The wallet explains the policy refusals itself, without any signature.
-    await expectCheck({ amount: 6n * UNIT, policyHash: roomy }, 'LimitExceeded');
-    await expectCheck({ amount: UNIT, policyHash: roomy, recipient: stranger.publicKey() }, 'PolicyDenied');
+    await expectCheck({ amount: 6n * UNIT, policyHash: roomy }, 'PaymentLimitExceeded');
+    await expectCheck({ amount: UNIT, policyHash: roomy, recipient: stranger.publicKey() }, 'RecipientNotAllowed');
     await expectCheck({ amount: UNIT, policyHash: new Uint8Array(32).fill(9) }, 'NotFound');
     expect(await w.snapshot(roomy)).toEqual(before);
   }, TIMEOUT);

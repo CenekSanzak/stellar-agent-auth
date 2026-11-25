@@ -15,11 +15,12 @@ use crate::{audit, authorization, policy as rules, storage};
 /// 1. the request shape and a positive amount (`action_hash`), and this wallet (`PolicyDenied`);
 /// 2. the wallet is not paused (`Paused`) and the policy not revoked (`Revoked`);
 /// 3. exactly the policy's next sequence (`InvalidSequence`);
-/// 4. ledger time before the request deadline and within the policy's validity window
-///    (`Expired`, or `PolicyDenied` before `valid_after`);
-/// 5. a permitted action kind, an approved asset, a recipient on the allowlist and not on the
-///    blocklist (`PolicyDenied`);
-/// 6. the per-transfer cap and today's per-asset budget (`LimitExceeded`);
+/// 4. ledger time before the request deadline (`RequestExpired`) and within the policy's validity
+///    window (`Expired`, or `NotYetValid` before `valid_after`);
+/// 5. a permitted action kind (`PolicyDenied`), an approved asset (`AssetNotAllowed`), a recipient
+///    on the allowlist and not on the blocklist (`RecipientNotAllowed`);
+/// 6. the per-transfer cap (`PaymentLimitExceeded`) and today's per-asset budget
+///    (`DailyLimitExceeded`);
 /// 7. the live identity and signer, then the provider's current verification result.
 ///
 /// Steps 2 and 4 to 7 are shared with the account path (`gate` and `permit`). The sequence, spend
@@ -42,7 +43,7 @@ pub fn execute(
         return Err(Error::InvalidSequence);
     }
     if now >= request.deadline {
-        return Err(Error::Expired);
+        return Err(Error::RequestExpired);
     }
     let Action::Transfer(ref transfer) = request.action else {
         // `execute` pushes plain transfers. A service payment has to be authorized together with
@@ -91,11 +92,12 @@ pub fn gate(env: &Env, hash: &BytesN<32>, now: u64) -> Result<PolicyState, Error
 
 /// Whether `policy` permits `transfer` at `now`, adding it to `state`'s spend. Both payment paths
 /// apply exactly these rules to one budget, so neither can spend what the other has spent. Checks,
-/// in order: the validity window (`Expired` at or after `valid_until`, `PolicyDenied` before
-/// `valid_after`); `kind` as a permitted action kind, an approved asset, and a recipient on the
-/// allowlist and not on the blocklist (`PolicyDenied`); the per-transfer cap and today's per-asset
-/// budget (`LimitExceeded`); then the live identity and signer, and the provider's current
-/// verification result. A service payment's transfer is held to the same asset, recipient and
+/// in order: the validity window (`Expired` at or after `valid_until`, `NotYetValid` before
+/// `valid_after`); `kind` as a permitted action kind (`PolicyDenied`); an approved asset
+/// (`AssetNotAllowed`); a recipient on the allowlist and not on the blocklist
+/// (`RecipientNotAllowed`); the per-transfer cap (`PaymentLimitExceeded`) and today's per-asset
+/// budget (`DailyLimitExceeded`); then the live identity and signer, and the provider's current
+/// verification result, each with the registry's own error. A service payment's transfer is held to the same asset, recipient and
 /// budget rules as a plain one. Nothing is stored.
 pub fn permit(
     env: &Env,
@@ -109,7 +111,7 @@ pub fn permit(
         return Err(Error::Expired);
     }
     if now < policy.valid_after {
-        return Err(Error::PolicyDenied);
+        return Err(Error::NotYetValid);
     }
     if !policy.action_kinds.contains(kind) {
         return Err(Error::PolicyDenied);
@@ -118,10 +120,10 @@ pub fn permit(
     if policy.blocked_recipients.contains(&transfer.recipient)
         || !policy.allowed_recipients.contains(&transfer.recipient)
     {
-        return Err(Error::PolicyDenied);
+        return Err(Error::RecipientNotAllowed);
     }
     if transfer.amount > limit.per_transaction {
-        return Err(Error::LimitExceeded);
+        return Err(Error::PaymentLimitExceeded);
     }
     rules::add_spend(state, &limit, transfer.amount)?;
 

@@ -132,7 +132,9 @@ describe('contract error names', () => {
     ['Error(Contract, #1)', 'UnsupportedVersion'],
     ['Error(Contract, #13)', 'ArithmeticOverflow'],
     ['Error(Contract, #14)', 'TransferFailed'],
-    ['Error(Contract, #15)', undefined],
+    ['Error(Contract, #15)', 'AgentDisabled'],
+    ['Error(Contract, #28)', 'DailyLimitExceeded'],
+    ['Error(Contract, #29)', undefined],
     ['Error(Contract, #0)', undefined],
     ['HostError: Error(Auth, InvalidAction)', undefined],
     // Shape of a real local-network signature failure: the account check quotes a host-internal code.

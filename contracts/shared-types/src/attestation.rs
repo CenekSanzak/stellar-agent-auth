@@ -122,7 +122,7 @@ impl VerificationResult {
     /// Stateless rules for a new publication at ledger time `now`, in this order: the v1 shape;
     /// at least one check, in strictly ascending kind order; scores only on `Passed` or `Failed`
     /// checks; an aggregate equal to [`risk_score`]; not revoked; `issued_at <= now`;
-    /// `issued_at < expires_at`; and `now < expires_at`.
+    /// `issued_at < expires_at`; and `now < expires_at` (`ResultExpired`).
     pub fn validate_publication(&self, now: u64) -> Result<(), Error> {
         self.validate_shape()?;
         if self.checks.is_empty() {
@@ -146,16 +146,17 @@ impl VerificationResult {
             return Err(Error::InvalidInput);
         }
         if self.expires_at <= now {
-            return Err(Error::Expired);
+            return Err(Error::ResultExpired);
         }
         Ok(())
     }
 
     /// Applies a consumer's requirement to a result already returned as current, at ledger time
-    /// `now`. Checks, in order: revocation (`Revoked`); expiry, valid while `now < expires_at`
-    /// (`Expired`); an issue time not after `now` (`InvalidInput`); an age of at most `max_age`
-    /// seconds (`Expired`); no serious wallet-risk flag; every required check `Passed`; and an
-    /// aggregate risk present and at most `max_risk_score` (each `VerificationDenied`).
+    /// `now`. Checks, in order: revocation (`ResultRevoked`); expiry, valid while
+    /// `now < expires_at` (`ResultExpired`); an issue time not after `now` (`InvalidInput`); an age
+    /// of at most `max_age` seconds (`ResultExpired`); no serious wallet-risk flag (`RiskFlagged`);
+    /// every required check `Passed` (`CheckNotPassed`); and an aggregate risk present and at most
+    /// `max_risk_score` (`RiskTooHigh`).
     pub fn evaluate(
         &self,
         now: u64,
@@ -165,17 +166,17 @@ impl VerificationResult {
     ) -> Result<(), Error> {
         validate_requirement(required_checks, max_age, max_risk_score)?;
         if self.revoked {
-            return Err(Error::Revoked);
+            return Err(Error::ResultRevoked);
         }
         if now >= self.expires_at {
-            return Err(Error::Expired);
+            return Err(Error::ResultExpired);
         }
         let age = now.checked_sub(self.issued_at).ok_or(Error::InvalidInput)?;
         if age > max_age {
-            return Err(Error::Expired);
+            return Err(Error::ResultExpired);
         }
         if self.serious_wallet_risks != 0 {
-            return Err(Error::VerificationDenied);
+            return Err(Error::RiskFlagged);
         }
         for required in required_checks.iter() {
             let passed = self
@@ -183,12 +184,12 @@ impl VerificationResult {
                 .iter()
                 .any(|check| check.kind == required && check.outcome == CheckOutcome::Passed);
             if !passed {
-                return Err(Error::VerificationDenied);
+                return Err(Error::CheckNotPassed);
             }
         }
         match self.risk_score {
             Some(score) if score <= max_risk_score => Ok(()),
-            _ => Err(Error::VerificationDenied),
+            _ => Err(Error::RiskTooHigh),
         }
     }
 }

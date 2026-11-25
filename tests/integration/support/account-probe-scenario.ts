@@ -210,7 +210,7 @@ describe.skipIf(!enabled)(`custom account spike (${label})`, () => {
     await net.invoke(provider, verificationOperation(verificationRegistry, 'revoke', {
       agent_id: agent.agent_id, revision: agent.revision, provider: provider.publicKey(), sequence: 1n,
     }));
-    expectRefused(errorOf(await enforce(pay(recipient.publicKey(), UNIT, [entry]))), /Error\(Contract, #8\)/,
+    expectRefused(errorOf(await enforce(pay(recipient.publicKey(), UNIT, [entry]))), /Error\(Contract, #18\)/,
       'a result revoked after signing');
     expect(await spend()).toEqual(before);
   }, TIMEOUT);

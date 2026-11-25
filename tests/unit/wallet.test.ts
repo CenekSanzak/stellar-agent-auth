@@ -162,14 +162,18 @@ describe('request evaluation mirrors wallet execution', () => {
     ['paused', () => [policy, freshState(), request(), context({ paused: true })], 'Paused'],
     ['revoked', () => [policy, freshState({ revoked: true }), request(), context()], 'Revoked'],
     ['old sequence', () => [policy, freshState({ next_sequence: 2n }), request(), context()], 'InvalidSequence'],
-    ['deadline', () => [policy, freshState(), request({ deadline: NOW }), context()], 'Expired'],
-    ['window end', () => [policy, freshState(), request(), context({ now: policy.valid_until })], 'Expired'],
-    ['before start', () => [policy, freshState(), request(), context({ now: policy.valid_after - 1n })], 'PolicyDenied'],
-    ['unapproved asset', () => [policy, freshState(), request({}, 3n, recipient, otherAsset), context()], 'PolicyDenied'],
-    ['blocked recipient', () => [policy, freshState(), request({}, 3n, stranger), context()], 'PolicyDenied'],
-    ['unlisted recipient', () => [policy, freshState(), request({}, 3n, owner), context()], 'PolicyDenied'],
-    ['above the cap', () => [policy, freshState(), request({}, 6n), context()], 'LimitExceeded'],
-    ['over the day', () => [policy, freshState({ daily_spend: [{ asset, amount: 18n }] }), request(), context()], 'LimitExceeded'],
+    ['deadline', () => [policy, freshState(), request({ deadline: NOW }), context()], 'RequestExpired'],
+    // A request whose own deadline is still ahead, so that the window's end is what refuses it.
+    ['window end', () => [policy, freshState(), request({ deadline: policy.valid_until + 300n }),
+      context({ now: policy.valid_until })], 'Expired'],
+    ['window end after the deadline', () => [policy, freshState(), request(), context({ now: policy.valid_until })],
+      'RequestExpired'],
+    ['before start', () => [policy, freshState(), request(), context({ now: policy.valid_after - 1n })], 'NotYetValid'],
+    ['unapproved asset', () => [policy, freshState(), request({}, 3n, recipient, otherAsset), context()], 'AssetNotAllowed'],
+    ['blocked recipient', () => [policy, freshState(), request({}, 3n, stranger), context()], 'RecipientNotAllowed'],
+    ['unlisted recipient', () => [policy, freshState(), request({}, 3n, owner), context()], 'RecipientNotAllowed'],
+    ['above the cap', () => [policy, freshState(), request({}, 6n), context()], 'PaymentLimitExceeded'],
+    ['over the day', () => [policy, freshState({ daily_spend: [{ asset, amount: 18n }] }), request(), context()], 'DailyLimitExceeded'],
   ])('rejects %s', (_label, input, code) => {
     expectCode(() => evaluateRequest(...input()), code);
   });
@@ -178,7 +182,7 @@ describe('request evaluation mirrors wallet execution', () => {
     const spent = freshState({ daily_spend: [{ asset, amount: 20n }] });
     const midnight = (utcDay(NOW) + 1n) * 86_400n;
     expectCode(() => evaluateRequest(policy, spent, request({ deadline: midnight }), context({ now: midnight - 1n })),
-      'LimitExceeded');
+      'DailyLimitExceeded');
     evaluateRequest(policy, spent, request({ deadline: midnight + 300n }), context({ now: midnight }));
     expect(stateAsOf(spent, midnight)).toMatchObject({ utc_day: utcDay(midnight), daily_spend: [] });
     expect(stateAsOf(spent, midnight - 1n)).toBe(spent);

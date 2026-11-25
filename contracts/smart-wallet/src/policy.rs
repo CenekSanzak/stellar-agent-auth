@@ -109,13 +109,13 @@ fn validate_for_wallet(
     Ok(())
 }
 
-/// The policy's limit for `asset`, or `PolicyDenied` for an asset the policy does not name.
+/// The policy's limit for `asset`, or `AssetNotAllowed` for an asset the policy does not name.
 pub fn asset_limit(policy: &Policy, asset: &Address) -> Result<AssetLimit, Error> {
     policy
         .assets
         .iter()
         .find(|limit| limit.asset == *asset)
-        .ok_or(Error::PolicyDenied)
+        .ok_or(Error::AssetNotAllowed)
 }
 
 /// The state as of ledger time `now`: a stored day before today has spent nothing today. Used for
@@ -129,7 +129,7 @@ pub fn as_of(env: &Env, mut state: PolicyState, now: u64) -> PolicyState {
     state
 }
 
-/// Adds `amount` of `asset` to today's spend, failing with `LimitExceeded` above `per_day` and
+/// Adds `amount` of `asset` to today's spend, failing with `DailyLimitExceeded` above `per_day` and
 /// `ArithmeticOverflow` on overflow. Spend is per asset and never combined across assets.
 pub fn add_spend(state: &mut PolicyState, limit: &AssetLimit, amount: i128) -> Result<(), Error> {
     let index = state
@@ -139,7 +139,7 @@ pub fn add_spend(state: &mut PolicyState, limit: &AssetLimit, amount: i128) -> R
     let spent = index.map_or(0, |i| state.daily_spend.get_unchecked(i as u32).amount);
     let total = spent.checked_add(amount).ok_or(Error::ArithmeticOverflow)?;
     if total > limit.per_day {
-        return Err(Error::LimitExceeded);
+        return Err(Error::DailyLimitExceeded);
     }
     let spend = AssetSpend {
         asset: limit.asset.clone(),

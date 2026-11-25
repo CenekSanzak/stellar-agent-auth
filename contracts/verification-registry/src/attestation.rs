@@ -81,10 +81,10 @@ pub fn current(env: &Env, key: &ResultKey) -> Result<VerificationResult, Error> 
     require_live_identity(env, key.agent_id, key.revision)?;
     let result = storage::result(env, key).ok_or(Error::NotFound)?;
     if result.revoked {
-        return Err(Error::Revoked);
+        return Err(Error::ResultRevoked);
     }
     if env.ledger().timestamp() >= result.expires_at {
-        return Err(Error::Expired);
+        return Err(Error::ResultExpired);
     }
     Ok(result)
 }

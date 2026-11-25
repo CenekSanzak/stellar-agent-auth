@@ -87,8 +87,8 @@ describe('smart wallet on local Stellar', () => {
 
   it('rejects an over-limit payment and an unapproved recipient', async () => {
     const { roles: { stranger } } = w;
-    await w.expectRejected(await w.payment(gate, 2n, 6n * UNIT), 'LimitExceeded', 'above 5 per payment');
-    await w.expectRejected(await w.payment(gate, 2n, 1n * UNIT, stranger.publicKey()), 'PolicyDenied',
+    await w.expectRejected(await w.payment(gate, 2n, 6n * UNIT), 'PaymentLimitExceeded', 'above 5 per payment');
+    await w.expectRejected(await w.payment(gate, 2n, 1n * UNIT, stranger.publicKey()), 'RecipientNotAllowed',
       'unapproved recipient');
     expect((await readPolicyState(w.read, gate)).next_sequence).toBe(2n);
   }, TIMEOUT);
@@ -167,7 +167,7 @@ describe('smart wallet on local Stellar', () => {
       policies: 1,
     }]);
     await w.expectRejected(await w.payment(old!, 2n, UNIT), 'Revoked', 'replaced policy');
-    await w.expectRejected(await w.payment(fresh, 1n, 3n * UNIT), 'LimitExceeded', 'new per-transfer cap');
+    await w.expectRejected(await w.payment(fresh, 1n, 3n * UNIT), 'PaymentLimitExceeded', 'new per-transfer cap');
   }, TIMEOUT);
 
   it('rolls back sequence, budget and audit head when the asset transfer fails on chain', async () => {

@@ -486,7 +486,7 @@ fn consults_the_live_verification_result() {
     t.env.set_auths(&[]);
     assert_eq!(
         t.check_transfer(&t.recipient, UNIT),
-        Err(Ok(Error::Revoked))
+        Err(Ok(Error::ResultRevoked))
     );
     // The same through a real transfer: the registry's refusal fails the token call.
     assert!(!t.pay(t.entry(&t.key, &t.recipient, UNIT, 1), &t.recipient, UNIT));

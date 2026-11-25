@@ -479,18 +479,18 @@ fn shares_one_budget_with_execute() {
     // One unit is left, whichever path asks for it.
     assert_eq!(
         t.check_transfer(&t.recipient, 2),
-        Err(Ok(Error::LimitExceeded))
+        Err(Ok(Error::DailyLimitExceeded))
     );
-    assert_eq!(t.execute(2), Err(Error::LimitExceeded));
+    assert_eq!(t.execute(2), Err(Error::DailyLimitExceeded));
     assert_eq!(t.check_transfer(&t.recipient, 1), Ok(()));
-    assert_eq!(t.execute(1), Err(Error::LimitExceeded));
+    assert_eq!(t.execute(1), Err(Error::DailyLimitExceeded));
     assert_eq!(t.spent(), 20);
 
     // Still spent one second before UTC midnight, on both paths, and free again at midnight.
     t.env.ledger().set_timestamp(NOW + UNTIL_MIDNIGHT - 1);
     assert_eq!(
         t.check_transfer(&t.recipient, 1),
-        Err(Ok(Error::LimitExceeded))
+        Err(Ok(Error::DailyLimitExceeded))
     );
     t.env.ledger().set_timestamp(NOW + UNTIL_MIDNIGHT);
     assert_eq!(t.check_transfer(&t.recipient, 5), Ok(()));
@@ -510,7 +510,7 @@ fn authorizes_only_one_transfer_of_its_own_funds_within_the_policy() {
     // The policy's own limits, as on `execute`.
     assert_eq!(
         t.check_transfer(&t.recipient, 6),
-        Err(Ok(Error::LimitExceeded))
+        Err(Ok(Error::PaymentLimitExceeded))
     );
     assert_eq!(
         t.check_transfer(&t.recipient, 0),
@@ -522,12 +522,19 @@ fn authorizes_only_one_transfer_of_its_own_funds_within_the_policy() {
     );
     assert_eq!(
         t.check_transfer(&t.stranger, 1),
-        Err(Ok(Error::PolicyDenied))
+        Err(Ok(Error::RecipientNotAllowed))
+    );
+
+    // An asset the wallet holds but the policy does not list.
+    assert_eq!(
+        t.check(
+            &signature,
+            one(t.call(&t.other_asset, "transfer", &t.wallet, &t.recipient, 1))
+        ),
+        Err(Ok(Error::AssetNotAllowed))
     );
 
     let denied = [
-        // An asset the wallet holds but the policy does not list.
-        one(t.call(&t.other_asset, "transfer", &t.wallet, &t.recipient, 1)),
         // The policy's asset, but not a transfer. An allowance would let the spender take funds
         // later, outside every cap.
         one(t.call(&t.asset, "approve", &t.wallet, &t.recipient, 1)),
@@ -592,7 +599,10 @@ fn requires_the_policy_signer_over_the_payload_and_the_policy() {
         policy_hash: large.clone(),
         ..small.clone()
     };
-    assert_eq!(t.check(&small, contexts(40)), Err(Ok(Error::LimitExceeded)));
+    assert_eq!(
+        t.check(&small, contexts(40)),
+        Err(Ok(Error::PaymentLimitExceeded))
+    );
     assert!(matches!(t.check(&moved, contexts(40)), Err(Err(_))));
     assert_eq!(t.spent(), 0);
     // The agent itself may choose the large policy, and only that policy's budget is charged.
@@ -703,10 +713,7 @@ fn is_not_valid_before_the_policy_starts() {
     let policy = t.as_owner(|| t.client().approve_policy(&later));
     let signature = t.sign(&t.key, &PAYLOAD, &policy);
     let contexts = || vec![&t.env, t.transfer(&t.recipient, 1)];
-    assert_eq!(
-        t.check(&signature, contexts()),
-        Err(Ok(Error::PolicyDenied))
-    );
+    assert_eq!(t.check(&signature, contexts()), Err(Ok(Error::NotYetValid)));
     t.env.ledger().set_timestamp(NOW + DAY);
     assert_eq!(t.check(&signature, contexts()), Ok(()));
 }
@@ -726,7 +733,10 @@ fn consults_the_live_identity_and_verification() {
             &1,
         )
     });
-    assert_eq!(t.check_transfer(&t.recipient, 1), Err(Ok(Error::Revoked)));
+    assert_eq!(
+        t.check_transfer(&t.recipient, 1),
+        Err(Ok(Error::ResultRevoked))
+    );
     assert!(!t.pay(signed_before, &t.recipient, 1));
     t.env.set_auths(&[]);
 
@@ -764,11 +774,17 @@ fn check_payment_explains_a_refusal_without_authorization() {
     assert_eq!(after.next_sequence, 1);
     assert_eq!((t.state(), t.client().audit_head()), before);
 
-    assert_eq!(check(&t.asset, &t.recipient, 6), Err(Error::LimitExceeded));
-    assert_eq!(check(&t.asset, &t.stranger, 1), Err(Error::PolicyDenied));
+    assert_eq!(
+        check(&t.asset, &t.recipient, 6),
+        Err(Error::PaymentLimitExceeded)
+    );
+    assert_eq!(
+        check(&t.asset, &t.stranger, 1),
+        Err(Error::RecipientNotAllowed)
+    );
     assert_eq!(
         check(&t.other_asset, &t.recipient, 1),
-        Err(Error::PolicyDenied)
+        Err(Error::AssetNotAllowed)
     );
     assert_eq!(check(&t.asset, &t.recipient, 0), Err(Error::InvalidInput));
     assert_eq!(check(&t.asset, &t.wallet, 1), Err(Error::InvalidInput));
@@ -793,7 +809,10 @@ fn check_payment_explains_a_refusal_without_authorization() {
         20
     );
     assert_eq!(t.check_transfer(&t.recipient, 5), Ok(()));
-    assert_eq!(check(&t.asset, &t.recipient, 1), Err(Error::LimitExceeded));
+    assert_eq!(
+        check(&t.asset, &t.recipient, 1),
+        Err(Error::DailyLimitExceeded)
+    );
 
     t.as_owner(|| t.client().pause());
     assert_eq!(check(&t.asset, &t.recipient, 1), Err(Error::Paused));
@@ -1100,7 +1119,10 @@ fn authorizes_a_service_call_only_in_exactly_the_permitted_shape() {
         ),
         t.transfer(&t.stranger, PRICE),
     ];
-    assert_eq!(t.check(&signature, unlisted), Err(Ok(Error::PolicyDenied)));
+    assert_eq!(
+        t.check(&signature, unlisted),
+        Err(Ok(Error::RecipientNotAllowed))
+    );
     assert_eq!(t.client().policy_state(&s.policy), before);
 
     assert_eq!(
@@ -1172,11 +1194,11 @@ fn service_payments_need_the_permission_and_share_the_budget() {
     );
     assert_eq!(
         t.check(&signature, purchase()),
-        Err(Ok(Error::LimitExceeded))
+        Err(Ok(Error::DailyLimitExceeded))
     );
     assert_eq!(
         t.check(&signature, vec![&t.env, t.transfer(&t.recipient, 1)]),
-        Err(Ok(Error::LimitExceeded))
+        Err(Ok(Error::DailyLimitExceeded))
     );
 
     // A policy for the service alone does not permit a plain transfer.
@@ -1224,5 +1246,5 @@ fn check_payment_explains_a_service_payment() {
     if let Action::ServicePayment(payment) = &mut large {
         payment.payment.amount = 6;
     }
-    assert_eq!(check(&s.policy, &large), Err(Error::LimitExceeded));
+    assert_eq!(check(&s.policy, &large), Err(Error::PaymentLimitExceeded));
 }

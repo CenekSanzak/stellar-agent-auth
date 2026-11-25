@@ -172,6 +172,10 @@ export const CONTRACT_ERRORS = [
   'UnsupportedVersion', 'InvalidInput', 'LimitExceeded', 'Duplicate', 'NotFound', 'InvalidSequence', 'Expired',
   'Revoked', 'IdentityChanged', 'VerificationDenied', 'PolicyDenied', 'Paused', 'ArithmeticOverflow',
   'TransferFailed',
+  // 15 onwards name one cause each, where the codes above used to cover several.
+  'AgentDisabled', 'ProviderNotApproved', 'ProviderDisabled', 'ResultRevoked', 'ResultExpired', 'RiskFlagged',
+  'CheckNotPassed', 'RiskTooHigh', 'RequestExpired', 'NotYetValid', 'AssetNotAllowed', 'RecipientNotAllowed',
+  'PaymentLimitExceeded', 'DailyLimitExceeded',
 ] as const;
 export type ContractErrorName = (typeof CONTRACT_ERRORS)[number];
 

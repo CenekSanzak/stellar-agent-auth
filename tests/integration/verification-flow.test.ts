@@ -335,7 +335,7 @@ describe('verification registry on local Stellar', () => {
       .toEqual(result);
     for (const kind of ['SignerHistory', 'ThreatFeed', 'Token'] as const) {
       await expectRegistryError(checkVerification(read, key(agent), { ...requirement, required_checks: [kind] }),
-        'VerificationDenied');
+        'CheckNotPassed');
     }
   }, TIMEOUT);
 
@@ -359,7 +359,7 @@ describe('verification registry on local Stellar', () => {
     assertAuthFailure(await enforce('publish', args, []), 'missing', provider.publicKey(), 'no provider authorization');
 
     const unapproved = { ...result, provider: attacker.publicKey() };
-    expectContractError(await publishRaw(attacker, encodeVerification(unapproved)), 'VerificationDenied', 'unapproved');
+    expectContractError(await publishRaw(attacker, encodeVerification(unapproved)), 'ProviderNotApproved', 'unapproved');
     const wrongMode = { ...result, mode: 'Fixture' as const };
     expectContractError(await publishRaw(provider, encodeVerification(wrongMode)), 'InvalidInput', 'live provider fixture');
     const fixtureAsLive = { ...(await fixture('passing', agent, 2n)), mode: 'Live' as const };
@@ -378,7 +378,7 @@ describe('verification registry on local Stellar', () => {
       ['schema version 2', patched(base, 'schema_version', u32(2)), 'UnsupportedVersion'],
       ['issued in the future', encodeVerification({ ...base, issued_at: now + 600n, expires_at: now + HOUR }), 'InvalidInput'],
       ['expiry at issue', encodeVerification({ ...base, expires_at: base.issued_at }), 'InvalidInput'],
-      ['already expired', encodeVerification({ ...base, issued_at: now - 20n, expires_at: now - 10n }), 'Expired'],
+      ['already expired', encodeVerification({ ...base, issued_at: now - 20n, expires_at: now - 10n }), 'ResultExpired'],
       ['published revoked', encodeVerification({ ...base, revoked: true }), 'InvalidInput'],
       ['scored unsupported check', encodeVerification({
         ...base, checks: [...base.checks, { kind: 'Token', outcome: 'Unsupported', score: 0 }],
@@ -409,10 +409,10 @@ describe('verification registry on local Stellar', () => {
     await publish(failure, provider);
     await expectRegistryError(checkVerification(read, key(agent), {
       required_checks: ['Endpoint'], max_age: HOUR, max_risk_score: 100,
-    }), 'VerificationDenied');
+    }), 'CheckNotPassed');
     await expectRegistryError(checkVerification(read, key(agent), {
       required_checks: ['Metadata'], max_age: HOUR, max_risk_score: 33,
-    }), 'VerificationDenied');
+    }), 'RiskTooHigh');
     expect(await readLatestResult(read, key(agent))).toEqual(failure);
 
     const revoke = { ...key(agent), sequence: 2n };
@@ -426,7 +426,7 @@ describe('verification registry on local Stellar', () => {
     const revoked = { ...failure, revoked: true };
     expect(decodeVerification(returnValue(confirmed))).toEqual(revoked);
     expectEvent(confirmed, assessmentTopics(revoked), encodeVerification(revoked));
-    await expectRegistryError(readCurrentResult(read, key(agent)), 'Revoked');
+    await expectRegistryError(readCurrentResult(read, key(agent)), 'ResultRevoked');
     expect(await readLatestResult(read, key(agent))).toEqual(revoked);
     await expectSignedFailure('revoke', revoke, provider, 'Duplicate', 'revoke twice');
 
@@ -443,10 +443,10 @@ describe('verification registry on local Stellar', () => {
     expect(await checkVerification(read, key(agent, fixtureProvider), requirement)).toEqual(result);
     while (await ledgerTime() < result.issued_at + 2n) await new Promise((resolve) => setTimeout(resolve, 500));
     await expectRegistryError(checkVerification(read, key(agent, fixtureProvider), { ...requirement, max_age: 1n }),
-      'Expired');
+      'ResultExpired');
     while (await ledgerTime() < result.expires_at) await new Promise((resolve) => setTimeout(resolve, 500));
-    await expectRegistryError(readCurrentResult(read, key(agent, fixtureProvider)), 'Expired');
-    await expectRegistryError(checkVerification(read, key(agent, fixtureProvider), requirement), 'Expired');
+    await expectRegistryError(readCurrentResult(read, key(agent, fixtureProvider)), 'ResultExpired');
+    await expectRegistryError(checkVerification(read, key(agent, fixtureProvider), requirement), 'ResultExpired');
   }, TIMEOUT);
 
   it('denies high-risk and seriously flagged fixture results whatever their timestamps', async () => {
@@ -454,12 +454,12 @@ describe('verification registry on local Stellar', () => {
     const highRisk = await fixture('high-risk', agent, 3n);
     expect(highRisk.risk_score).toBe(100);
     await publish({ ...highRisk, checks: highRisk.checks }, fixtureProvider);
-    await expectRegistryError(checkVerification(read, key(agent, fixtureProvider), requirement), 'VerificationDenied');
+    await expectRegistryError(checkVerification(read, key(agent, fixtureProvider), requirement), 'CheckNotPassed');
     const flagged = await fixture('serious-wallet-risk', agent, 4n);
     expect(flagged.risk_score).toBe(0);
     await publish(flagged, fixtureProvider);
     await expectRegistryError(checkVerification(read, key(agent, fixtureProvider), { ...requirement, max_risk_score: 100 }),
-      'VerificationDenied');
+      'RiskFlagged');
   }, TIMEOUT);
 
   it('retires results and already signed publications when the identity changes', async () => {
@@ -492,9 +492,9 @@ describe('verification registry on local Stellar', () => {
 
     const disabled = await agentCall('disable', { agent_id: agent.agent_id, expected_revision: 2n }, [controller]);
     await expectRegistryError(readCurrentResult(read, key(updated)), 'IdentityChanged');
-    await expectRegistryError(readCurrentResult(read, key(disabled)), 'Revoked');
+    await expectRegistryError(readCurrentResult(read, key(disabled)), 'AgentDisabled');
     await expect(readCurrent({ ...read, contractId: agentRegistry }, agent.agent_id, disabled.revision))
-      .rejects.toHaveProperty('code', 'Revoked');
+      .rejects.toHaveProperty('code', 'AgentDisabled');
     const reactivated = await agentCall('reactivate', { agent_id: agent.agent_id, expected_revision: 3n }, [controller]);
     await expectRegistryError(readCurrentResult(read, key(reactivated)), 'NotFound');
     agent = reactivated;
@@ -511,11 +511,11 @@ describe('verification registry on local Stellar', () => {
       'forged', admin.publicKey(), 'attacker disabling');
     await verificationCall('disable_provider', args, admin);
     expect(await readProvider(read, fixtureProvider.publicKey())).toEqual({ mode: 'Fixture', approved: false });
-    await expectRegistryError(readCurrentResult(read, key(agent, fixtureProvider)), 'Revoked');
+    await expectRegistryError(readCurrentResult(read, key(agent, fixtureProvider)), 'ProviderDisabled');
     expectContractError(await publishRaw(fixtureProvider, encodeVerification(await fixture('passing', agent, 2n))),
-      'Revoked', 'publish after disable');
+      'ProviderDisabled', 'publish after disable');
     await expectSignedFailure('approve_provider', { provider: fixtureProvider.publicKey(), mode: 'Fixture' }, admin,
-      'Revoked', 're-approval');
+      'ProviderDisabled', 're-approval');
     await expectSignedFailure('disable_provider', args, admin, 'Duplicate', 'disable twice');
     expect(await readLatestResult(read, key(agent, fixtureProvider))).toEqual(result);
   }, TIMEOUT);
