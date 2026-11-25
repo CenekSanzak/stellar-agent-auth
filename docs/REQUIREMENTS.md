@@ -105,6 +105,13 @@ The [Phase 5 validation record](P5_VALIDATION.md) covers the P5 test runs, the r
 - A28: the SDK imports from outside the workspace, and the CLI example completes the flow on the local network with a separate key per role. The browser smoke test belongs to P7.
 - F07 does not hold for the payment flow test, which fetches metadata from a public host.
 
+## P6 evidence
+
+The [Phase 6 validation record](P6_VALIDATION.md) covers the indexer, its audit verification and the SDK and CLI reads through it. Rules are in [ADR 0009](decisions/0009-durable-history.md).
+
+- A26: restart, repeated delivery, a failure between pages and a failure inside a page are shown in unit tests against a store on disk and an RPC stand-in, and restart and repeated passes again on the local network against a real RPC.
+- A27: altered, substituted, duplicated, relabelled and missing entries, a contradicting head and a retention gap each produce `mismatch` or `incomplete` in unit tests; a deleted and an altered row are shown on the local network. A retention gap is not reproduced on a network.
+
 ## P9 evidence
 
 The [Phase 9 validation record](P9_VALIDATION.md) covers the wallet's account payment path, service payments, the error codes and the total cap. Rules are in [ADR 0007](decisions/0007-account-payment-path.md) and [ADR 0008](decisions/0008-error-codes.md).

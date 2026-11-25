@@ -163,6 +163,19 @@ describe('command line', () => {
     expect(await main(['help'], env(), io().io)).toBe(EXIT.ok);
   });
 
+  it('reads history from an indexer only over HTTPS or loopback, and not together with a start ledger', async () => {
+    const wallet = ['history', '--wallet', contract(41), '--json'];
+    for (const [argv, message] of [
+      [['--indexer', 'not a url'], 'must be a URL'],
+      [['--indexer', 'http://indexer.example/'], 'requires HTTPS'],
+      [['--indexer', 'http://127.0.0.1:8788/', '--start-ledger', '5'], 'does not apply'],
+    ] as const) {
+      const run = io();
+      expect(await main([...wallet, ...argv], env(), run.io), argv.join(' ')).toBe(EXIT.usage);
+      expect(run.err.join()).toContain(message);
+    }
+  });
+
   it('refuses a secret passed as a key and never echoes it', async () => {
     const secret = Keypair.random().secret();
     const run = io();

@@ -24,6 +24,9 @@
       ],
       "@stellar-agent-auth/cli": [
         "./packages/cli/src/index.ts"
+      ],
+      "@stellar-agent-auth/indexer": [
+        "./services/indexer/src/index.ts"
       ]
     }
   },

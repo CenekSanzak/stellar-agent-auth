@@ -19,7 +19,7 @@ node packages/cli/dist/index.js help
 | `wallet` | `create`, `show`, `balance`, `fund`, `withdraw`, `pause`, `resume` |
 | `policy` | `approve`, `show`, `revoke`, `replace` |
 | `execute` | `transfer`, `sign`, `submit` through the wallet's `execute`; `pay` on its account path |
-| `history` | Reads the wallet's audit events and verifies them against the stored audit head |
+| `history` | Reads the wallet's audit events and verifies them against the stored audit head. `--start-ledger <n>` reads from the RPC, which reaches back only as far as it retains events; `--indexer <url>` reads the entries from an indexer and verifies them the same way |
 | `tx` | `status`: settle a journaled transaction by hash |
 | `keys` | `create`, `address`, `fund` (Friendbot; local and Testnet only) |
 
