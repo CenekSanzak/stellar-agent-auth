@@ -14,11 +14,17 @@
  * fresh local network has none; everything after it is a CLI command, printed as it runs. Keys are generated into
  * `.local/example/<run>/keys` (owner-only, git-ignored) and referenced by name. Verification is real: the verifier
  * fetches the public metadata over HTTPS, so the machine needs internet access.
+ *
+ * `examples/payment-flow.offline.json` runs the same flow with no public host. The verifier is still the real one,
+ * run in this process: it checks the identity and the signer account on the ledger and publishes its result as the
+ * provider. Only its transport is replaced, by one that serves the metadata document from a file in the repository
+ * and answers the endpoint probe itself. So the endpoint check in an offline run says nothing about any real host.
  */
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
+import { Readable } from 'node:stream';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   Address, Asset, Operation, TransactionBuilder, hash, nativeToScVal, rpc, xdr,
@@ -31,6 +37,7 @@ import {
   type NetworkContext, type Signer,
 } from '@stellar-agent-auth/sdk';
 import { createNamedKey, loadKeypair } from '@stellar-agent-auth/sdk/node';
+import { ReportStore, assess, readCapped, type NetworkOptions } from '@stellar-agent-auth/verifier';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const CLI = join(ROOT, 'packages/cli/dist/index.js');
@@ -43,6 +50,13 @@ export interface FlowConfig {
   network: 'local';
   rpc_url: string;
   metadata_uri: string;
+  /**
+   * `live` (the default) fetches `metadata_uri` over HTTPS through the CLI. `offline` contacts no public host: the
+   * metadata is read from `metadata_file` and the verifier runs in this process over a transport that serves it.
+   */
+  verification?: 'live' | 'offline';
+  /** For `offline`: the document registered at `metadata_uri`, as a path from the repository root. */
+  metadata_file?: string;
   asset_code: string;
   issue: string;
   fund: string;
@@ -197,7 +211,7 @@ export interface FlowSummary {
   contracts: { agent_registry: string; verification_registry: string; wallet: string; asset: string; service: string };
   roles: Record<Role, string>;
   agent_id: string;
-  verification: { sequence: string; risk_score: unknown; checks: unknown };
+  verification: { sequence: unknown; risk_score: unknown; checks: unknown };
   policy_hash: string;
   payment: Record<string, unknown>;
   /** The service pulling its price from the wallet, in the service's own call. */
@@ -240,15 +254,52 @@ export async function runPaymentFlow(config: FlowConfig, log: Log = console.log)
     VERIFIER_PUBLIC_ADDRESS: keys.provider.address,
   };
 
+  const offline = config.verification === 'offline';
+  let metadata: Buffer | undefined;
+  if (offline) {
+    if (!config.metadata_file) throw new Error('Offline verification needs metadata_file');
+    metadata = await readFile(resolve(ROOT, config.metadata_file));
+  }
+
   log('\n1. The controller registers the agent; the agent key proves control of its signer');
   const registered = await expectOk(cli(env, ['agent', 'register', '--controller', 'controller', '--signer', 'agent',
-    '--metadata-uri', config.metadata_uri], log), 'agent register');
+    '--metadata-uri', config.metadata_uri,
+    // Offline, the hash is computed here from the file instead of from a fetch of the public URL.
+    ...(metadata ? ['--metadata-sha256', Buffer.from(hash(metadata)).toString('hex')] : [])], log), 'agent register');
   const identity = registered['identity'] as { agent_id: string; revision: string };
 
   log('\n2. The verifier assesses the live identity and publishes the result as the approved provider');
-  const verified = await expectOk(cli(env, ['verify', 'run', '--agent', identity.agent_id, '--publish',
-    '--provider', 'provider'], log), 'verify run');
-  const result = verified['result'] as { sequence: string; risk_score: unknown; checks: unknown };
+  let result: { sequence: unknown; risk_score: unknown; checks: unknown };
+  if (metadata) {
+    log('   offline: the real verifier, in this process, over a transport that serves the metadata from '
+      + `${config.metadata_file}; the endpoint probe is answered locally and says nothing about a real host`);
+    const document = metadata;
+    const network: NetworkOptions = {
+      // A public documentation address: the transport below never connects anywhere.
+      resolver: async () => [{ address: '93.184.216.34', family: 4 }],
+      transport: async ({ url, maxBytes }) => {
+        const served = url.href === config.metadata_uri;
+        return {
+          status: served ? 200 : 204, location: undefined, contentType: 'application/json',
+          body: await readCapped(Readable.from([served ? document : new Uint8Array()]), maxBytes),
+          tls: { protocol: 'TLSv1.3', authorized: true },
+        };
+      },
+    };
+    const outcome = await assess({
+      server, networkPassphrase: context.networkPassphrase, agentRegistry: contracts.agentRegistry,
+      verificationRegistry: contracts.verificationRegistry, provider: keys.provider.address,
+      reports: new ReportStore(join(directory, 'verifier', 'reports')), stateDirectory: join(directory, 'verifier', 'pending'),
+      network,
+    }, { agentId: BigInt(identity.agent_id), publisher: await loadKeypair('provider', baseEnv) });
+    if (!outcome.published) throw new Error('The verifier did not publish its result');
+    const { sequence, risk_score, checks } = outcome.assessment.result;
+    result = { sequence: sequence.toString(), risk_score, checks };
+  } else {
+    const verified = await expectOk(cli(env, ['verify', 'run', '--agent', identity.agent_id, '--publish',
+      '--provider', 'provider'], log), 'verify run');
+    result = verified['result'] as typeof result;
+  }
 
   log('\n3. The owner deploys a wallet, and a separate funder funds it');
   const created = await expectOk(cli(env, ['wallet', 'create', '--owner', 'owner'], log), 'wallet create');

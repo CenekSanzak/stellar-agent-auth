@@ -16,7 +16,8 @@ import {
 import { runChecks, type CheckFinding, type NetworkOptions } from './checks.js';
 
 export { ReportStore, readAccountSnapshot, settlePending, PublicationPending } from './attestations.js';
-export { safeFetch } from './net.js';
+export { readCapped, safeFetch, type Resolver, type Transport } from './net.js';
+export type { NetworkOptions } from './checks.js';
 
 /**
  * Verifier process: an explicit job that assesses one agent revision, stores the report and, only with `--publish`,
