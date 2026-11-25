@@ -1,15 +1,20 @@
-import { Address, Contract, Keypair, StrKey, authorizeEntry, hash, nativeToScVal, type xdr } from '@stellar/stellar-sdk';
+import { Address, Contract, Keypair, StrKey, authorizeEntry, hash, nativeToScVal, xdr } from '@stellar/stellar-sdk';
 import { assertAuthWindow } from './actions.js';
 import { signingAddress } from './credentials.js';
 import { encodeAccountSignature } from './encoding.js';
 import type { Signer } from './signers.js';
-import type { Hash32 } from './types.js';
+import { SERVICE_PAYMENT_METHOD, type Action, type Hash32, type ServiceRule } from './types.js';
 
 /**
- * The wallet's account path. `execute` covers payments the agent pushes. A service that pulls its payment instead
- * transfers from the payer inside its own call, and the payer must authorize that transfer; an x402 `exact` payment
- * on Stellar has this shape. The wallet authorizes such a transfer as a custom account, under the same policies and
- * the same budgets as `execute`.
+ * The wallet's account path. `execute` covers payments the agent pushes. A payment that is pulled works the other
+ * way round: someone else transfers from the payer, and the payer must authorize that transfer. The wallet does so
+ * as a custom account, under the same policies and the same budgets as `execute`. It authorizes two shapes:
+ *
+ * - a plain `asset.transfer(wallet, recipient, amount)`. Whoever holds the signed entry can make exactly that
+ *   transfer; an x402 `exact` payment on Stellar has this shape;
+ * - a service payment, when `service` is given: `service.pay_for_service(wallet, asset, recipient, amount,
+ *   service_id)` with the transfer inside it. The entry is rooted at the service call, so the payment cannot be
+ *   taken without the service running. The policy must permit that service.
  *
  * What the agent signs differs from `execute` in two ways the caller should know:
  * - it signs as a key. The signer account's own signers and thresholds are not consulted;
@@ -28,6 +33,8 @@ export interface AccountPayment {
   recipient: string;
   /** Contract units; positive. */
   amount: bigint;
+  /** Pay this service in its own call, instead of a plain transfer. */
+  service?: ServiceRule;
 }
 
 const sameBytes = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((byte, i) => byte === b[i]);
@@ -43,31 +50,64 @@ function validated(payment: AccountPayment) {
   if (!(payment.policyHash instanceof Uint8Array) || payment.policyHash.length !== 32) {
     throw new Error('Expected a 32-byte policy hash');
   }
-  return [
-    Address.fromString(payment.wallet).toScVal(), Address.fromString(payment.recipient).toScVal(),
-    nativeToScVal(payment.amount, { type: 'i128' }),
-  ];
+  const { service } = payment;
+  if (service && (!StrKey.isValidContract(service.contract) || service.contract === payment.wallet
+    || !(service.service_id instanceof Uint8Array) || service.service_id.length !== 32)) {
+    throw new Error('Expected a service contract other than the wallet and a 32-byte service ID');
+  }
+  const wallet = Address.fromString(payment.wallet).toScVal();
+  const recipient = Address.fromString(payment.recipient).toScVal();
+  const amount = nativeToScVal(payment.amount, { type: 'i128' });
+  return {
+    transfer: [wallet, recipient, amount],
+    service: service && [wallet, Address.fromString(payment.asset).toScVal(), recipient, amount,
+      xdr.ScVal.scvBytes(service.service_id)],
+  };
+}
+
+/** The payment as the wallet's `check_payment` and its audit entries describe it. */
+export function accountPaymentAction(payment: AccountPayment): Action {
+  validated(payment);
+  const transfer = { asset: payment.asset, recipient: payment.recipient, amount: payment.amount };
+  return payment.service ? { kind: 'ServicePayment', service: payment.service, payment: transfer }
+    : { kind: 'Transfer', transfer };
 }
 
 /**
- * The plain `asset.transfer(wallet, recipient, amount)` the wallet authorizes. Any contract or relayer may make
- * this call; a service that pulls its payment makes the same transfer inside its own call.
+ * The call that makes the payment: the plain `asset.transfer(wallet, recipient, amount)`, or the service's
+ * `pay_for_service` when the payment names a service. Anyone may submit it; the wallet's entry authorizes it.
  */
 export function accountPaymentOperation(payment: AccountPayment): xdr.Operation {
-  return new Contract(payment.asset).call('transfer', ...validated(payment));
+  const args = validated(payment);
+  return payment.service && args.service
+    ? new Contract(payment.service.contract).call(SERVICE_PAYMENT_METHOD, ...args.service)
+    : new Contract(payment.asset).call('transfer', ...args.transfer);
 }
 
-/** Throws unless `root` is exactly `asset.transfer(wallet, recipient, amount)` with no child invocations. */
-export function assertAccountPaymentTree(root: xdr.SorobanAuthorizedInvocation, payment: AccountPayment): void {
-  const expected = validated(payment);
-  const fn = root.function;
-  if (root.subInvocations.length !== 0 || fn.type !== 'sorobanAuthorizedFunctionTypeContractFn') {
-    throw new Error('Expected a single asset transfer invocation');
-  }
+function isCall(invocation: xdr.SorobanAuthorizedInvocation, contract: string, method: string, args: xdr.ScVal[]) {
+  const fn = invocation.function;
+  if (fn.type !== 'sorobanAuthorizedFunctionTypeContractFn') return false;
   const call = fn.contractFn;
-  if (Address.fromScAddress(call.contractAddress).toString() !== payment.asset
-    || call.functionName.toString() !== 'transfer' || call.args.length !== expected.length
-    || call.args.some((arg, i) => arg.toXdr('hex') !== expected[i]!.toXdr('hex'))) {
+  return Address.fromScAddress(call.contractAddress).toString() === contract
+    && call.functionName.toString() === method && call.args.length === args.length
+    && call.args.every((arg, i) => arg.toXdr('hex') === args[i]!.toXdr('hex'));
+}
+
+/**
+ * Throws unless `root` is exactly what the payment asks the wallet to authorize: the transfer alone, or the
+ * service call with that transfer as its only child. Nothing else may hang below either.
+ */
+export function assertAccountPaymentTree(root: xdr.SorobanAuthorizedInvocation, payment: AccountPayment): void {
+  const args = validated(payment);
+  const transfer = payment.service ? root.subInvocations[0] : root;
+  if (!transfer || transfer.subInvocations.length !== 0
+    || root.subInvocations.length !== (payment.service ? 1 : 0)) {
+    throw new Error(payment.service ? 'Expected a service call with a single asset transfer below it'
+      : 'Expected a single asset transfer invocation');
+  }
+  if (!isCall(transfer, payment.asset, 'transfer', args.transfer)
+    || (payment.service && args.service
+      && !isCall(root, payment.service.contract, SERVICE_PAYMENT_METHOD, args.service))) {
     throw new Error('Authorization invocation does not match the expected payment');
   }
 }
@@ -85,8 +125,8 @@ interface AccountPaymentAuthorization {
 
 /**
  * Inspect a recorded entry before giving the agent key any bytes, then sign it for the wallet's account path. The
- * entry must be the wallet's own credential for exactly `asset.transfer(wallet, recipient, amount)`. The agent key
- * signs the host payload followed by the policy hash, and the signature is checked against the agent's address
+ * entry must be the wallet's own credential for exactly the payment's transfer, or its service call with that
+ * transfer inside. The agent key signs the host payload followed by the policy hash, and the signature is checked against the agent's address
  * before it is used. The Stellar SDK builds the payload for whichever credential type was recorded.
  */
 export async function signAccountPayment(input: AccountPaymentAuthorization): Promise<xdr.SorobanAuthorizationEntry> {

@@ -140,7 +140,10 @@ describe('audit decoding and chain verification', () => {
       { kind: 'PauseChanged', paused: true },
       { kind: 'OwnerWithdrawal', transfer: { asset: contract(3), recipient: account(4), amount: 5n } },
       { kind: 'AccountPayment', policy_hash: bytes(6), authorization: bytes(7),
-        transfer: { asset: contract(3), recipient: contract(8), amount: 5n } },
+        action: { kind: 'Transfer', transfer: { asset: contract(3), recipient: contract(8), amount: 5n } } },
+      { kind: 'AccountPayment', policy_hash: bytes(6), authorization: bytes(7),
+        action: { kind: 'ServicePayment', service: { contract: contract(9), service_id: bytes(10) },
+          payment: { asset: contract(3), recipient: contract(8), amount: 5n } } },
     ];
     for (const outcome of outcomes) expect(decodeAudit(encodeAudit({ ...audit, outcome })).outcome).toEqual(outcome);
     const encoded = encodeAudit(audit);

@@ -159,8 +159,8 @@ function addressOf(value: xdr.ScVal, label: string) {
 }
 
 /**
- * What a payment under the policy would leave as its state, from the wallet's `check_payment`. It applies every rule
- * `execute` and the account path share and authenticates nobody. A refusal throws `WalletError` with the wallet's
+ * What an action under the policy would leave as its state on the account path, from the wallet's `check_payment`.
+ * It applies every rule `execute` and the account path share and authenticates nobody. A refusal throws `WalletError` with the wallet's
  * own code, which is the only place a client learns why an account-path payment would be refused.
  */
 export async function readPaymentCheck(wallet: WalletRead, args: WalletArgs['check_payment']): Promise<PolicyState> {

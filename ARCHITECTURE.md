@@ -2,7 +2,7 @@
 
 This project lets a wallet owner give an AI agent limited permission to use funds on Stellar. The owner keeps control of the wallet, while the agent can perform only the actions the owner has approved.
 
-**Current status:** The agent registry (P2), verification registry and limited verifier (P3), the smart wallet (P4), and the SDK pipeline, submitter and CLI (P5) are implemented and tested on a local network. The wallet's account payment path (P9) is built and tested on a local network; its service contract and CLI command are not. The indexer and demo below are still planned. The P3 registries are deployed on Testnet as a development checkpoint, recorded in `deployments/testnet/p3-checkpoint.json`.
+**Current status:** The agent registry (P2), verification registry and limited verifier (P3), the smart wallet (P4), and the SDK pipeline, submitter and CLI (P5) are implemented and tested on a local network. The wallet's account payment path (P9), with a demo service and the CLI command for it, is built and tested on a local network. The indexer and demo below are still planned. The P3 registries are deployed on Testnet as a development checkpoint, recorded in `deployments/testnet/p3-checkpoint.json`.
 
 ## Example: paying for services
 
@@ -103,7 +103,7 @@ Revocation blocks subsequent execution once confirmed on-chain, including reques
 
 `execute` covers payments the agent pushes. Some services pull their payment instead: inside their own call they transfer from the payer, and the payer must authorize that transfer. An x402 `exact` payment on Stellar has this shape.
 
-The wallet supports it as a custom account. When an asset contract requires the wallet's authorization, the host calls the wallet's `__check_auth`, and the same policy runs there: the agent key's signature, the asset, the recipient, the caps, the live identity and the current verification result. It authorizes one thing only, a transfer of a policy asset out of the wallet, and both paths draw on the same budget. Every other call is refused, so the wallet is not a general signer.
+The wallet supports it as a custom account. When an asset contract requires the wallet's authorization, the host calls the wallet's `__check_auth`, and the same policy runs there: the agent key's signature, the asset, the recipient, the caps, the live identity and the current verification result. Both paths draw on the same budget. It authorizes two shapes only. One is a plain transfer of a policy asset out of the wallet, which anyone holding the signed entry can submit. The other is a call to the one service a policy permits together with the transfer inside it, so that the payment cannot be taken without the service running. Every other call is refused, so the wallet is not a general signer.
 
 Two things differ from `execute`. The agent signs as a key, so the signer account's own signers and thresholds are not applied. And there is no policy sequence or request deadline; the host's nonce prevents replay. A refusal on this path reaches the caller only as an authorization failure, so the wallet also offers `check_payment`, which says in advance whether a payment would pass and why not.
 

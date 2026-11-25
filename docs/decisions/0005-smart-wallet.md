@@ -36,7 +36,7 @@ The constructor checks that both registries are contracts and that the verificat
 
 1. The shared canonical rules (`Policy::canonicalize`). These are the version, collection caps, required fields, a positive per-transfer cap no greater than the daily cap, and sorted sets without duplicates.
 2. The wallet's own rules, all `InvalidInput`:
-   - `Transfer` is the only action kind and the service permission is `Disabled`. Service payments arrive with the restricted service path in P9; until then such a policy is refused rather than stored unenforceable.
+   - `Transfer` is the only action kind and the service permission is `Disabled`. Service payments arrive with the restricted service path in P9; until then such a policy is refused rather than stored unenforceable. *Since P9 the wallet accepts a policy that permits one service; see [ADR 0007](0007-account-payment-path.md).*
    - The signer is a standard account other than the owner.
    - Every asset is a contract.
    - The wallet is never an allowed or blocked recipient.

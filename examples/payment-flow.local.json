@@ -14,5 +14,7 @@
     "valid_for_seconds": 604800
   },
   "payment": "3",
-  "presigned_payment": "2"
+  "presigned_payment": "2",
+  "service_price": "1",
+  "account_payment": "1"
 }

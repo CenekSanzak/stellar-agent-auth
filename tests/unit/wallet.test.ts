@@ -119,7 +119,8 @@ describe('policy rules mirror the wallet contract', () => {
   });
 
   it.each<[string, Partial<Policy>, ContractErrorName]>([
-    ['service payments', { action_kinds: ['ServicePayment', 'Transfer'], service: { contract: contract(3), service_id: bytes(3) } }, 'InvalidInput'],
+    ['an account as the service', { action_kinds: ['ServicePayment', 'Transfer'], service: { contract: recipient, service_id: bytes(3) } }, 'InvalidInput'],
+    ['the wallet as the service', { action_kinds: ['ServicePayment'], service: { contract: walletAddress, service_id: bytes(3) } }, 'InvalidInput'],
     ['contract signer', { signer: contract(4) }, 'InvalidInput'],
     ['owner as signer', { signer: owner }, 'InvalidInput'],
     ['account asset', { assets: [{ asset: recipient, per_transaction: 1n, per_day: 1n }] }, 'InvalidInput'],
@@ -133,6 +134,14 @@ describe('policy rules mirror the wallet contract', () => {
   it('accepts the SOW policy', () => {
     expect(validatePolicy(transferPolicy(), { wallet: walletAddress, owner, now: NOW })).toEqual(
       canonicalPolicy(transferPolicy()));
+  });
+
+  it('accepts a policy that permits one service, with or without plain transfers', () => {
+    const service = { contract: contract(3), service_id: bytes(3) };
+    for (const action_kinds of [['Transfer', 'ServicePayment'], ['ServicePayment']] as const) {
+      const policy = transferPolicy({ action_kinds, service });
+      expect(validatePolicy(policy, { wallet: walletAddress, owner, now: NOW })).toEqual(canonicalPolicy(policy));
+    }
   });
 });
 

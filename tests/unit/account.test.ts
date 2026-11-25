@@ -1,7 +1,7 @@
 import { Address, Keypair, Networks, authorizeEntry, hash, nativeToScVal, rpc, xdr } from '@stellar/stellar-sdk';
 import { describe, expect, it } from 'vitest';
 import {
-  accountPaymentOperation, assertAccountPaymentTree, signAccountPayment, type AccountPayment,
+  accountPaymentAction, accountPaymentOperation, assertAccountPaymentTree, signAccountPayment, type AccountPayment,
 } from '../../packages/sdk/src/account.js';
 import { accountPaymentInvocation } from '../../packages/sdk/src/client.js';
 import { encodeAccountSignature, encodePolicyState } from '../../packages/sdk/src/encoding.js';
@@ -176,6 +176,81 @@ describe('account payment signing', () => {
   });
 });
 
+describe('service payments', () => {
+  const service = { contract: contract(70), service_id: bytes(71) };
+  const purchase: AccountPayment = { ...payment, service };
+  const transferArgs = [Address.fromString(wallet).toScVal(), Address.fromString(recipient).toScVal(),
+    nativeToScVal(payment.amount, { type: 'i128' })];
+  const serviceArgs = (overrides: Partial<{ asset: string; to: string; amount: bigint; id: Uint8Array }> = {}) => [
+    Address.fromString(wallet).toScVal(), Address.fromString(overrides.asset ?? asset).toScVal(),
+    Address.fromString(overrides.to ?? recipient).toScVal(),
+    nativeToScVal(overrides.amount ?? payment.amount, { type: 'i128' }), xdr.ScVal.scvBytes(overrides.id ?? service.service_id),
+  ];
+  const transferChild = (args = transferArgs, method = 'transfer') => recorded({ args, method }).rootInvocation;
+  /** What recording returns for the wallet authorizing the service call, with `children` below it. */
+  const tree = (overrides: Partial<{ contractId: string; method: string; args: xdr.ScVal[];
+    children: xdr.SorobanAuthorizedInvocation[] }> = {}) => recorded({
+    contractId: service.contract, method: 'pay_for_service', args: serviceArgs(), children: [transferChild()],
+    ...overrides,
+  });
+
+  it('calls the service\'s own method with the terms of the payment', () => {
+    const { body } = accountPaymentOperation(purchase);
+    if (body.type !== 'invokeHostFunction') throw new Error('Expected an invocation');
+    const fn = body.invokeHostFunctionOp.hostFunction;
+    if (fn.type !== 'hostFunctionTypeInvokeContract') throw new Error('Expected a contract call');
+    expect(Address.fromScAddress(fn.invokeContract.contractAddress).toString()).toBe(service.contract);
+    expect(fn.invokeContract.functionName.toString()).toBe('pay_for_service');
+    expect(fn.invokeContract.args.map((arg) => arg.toXdr('hex'))).toEqual(serviceArgs().map((arg) => arg.toXdr('hex')));
+    expect(accountPaymentAction(purchase)).toEqual({
+      kind: 'ServicePayment', service, payment: { asset, recipient, amount: payment.amount },
+    });
+    expect(accountPaymentAction(payment)).toEqual({ kind: 'Transfer', transfer: { asset, recipient, amount: payment.amount } });
+    for (const bad of [{ contract: wallet, service_id: bytes(71) }, { contract: agent.address, service_id: bytes(71) },
+      { contract: contract(70), service_id: new Uint8Array(31) }]) {
+      expect(() => accountPaymentOperation({ ...payment, service: bad })).toThrow('service contract');
+    }
+  });
+
+  it('signs the service call with exactly the transfer inside it, and nothing else', async () => {
+    const { signer, messages } = spying();
+    const signed = await signAccountPayment({
+      entry: tree(), payment: purchase, agent: signer, networkPassphrase: passphrase, ...window,
+    });
+    expect(messages).toHaveLength(1);
+    expect(signed.rootInvocation.subInvocations).toHaveLength(1);
+
+    const grandchild = recorded({ children: [transferChild()] }).rootInvocation;
+    const cases: [string, xdr.SorobanAuthorizationEntry][] = [
+      ['no transfer below the call', tree({ children: [] })],
+      ['two transfers below the call', tree({ children: [transferChild(), transferChild()] })],
+      ['something below the transfer', tree({ children: [grandchild] })],
+      ['an allowance below the call', tree({ children: [transferChild(transferArgs, 'approve')] })],
+      ['a transfer of another amount', tree({ children: [transferChild([transferArgs[0]!, transferArgs[1]!,
+        nativeToScVal(payment.amount + 1n, { type: 'i128' })])] })],
+      ['another service', tree({ contractId: contract(72) })],
+      ['another method', tree({ method: 'open_allowance' })],
+      ['another service ID', tree({ args: serviceArgs({ id: bytes(73) }) })],
+      ['another amount in the call', tree({ args: serviceArgs({ amount: payment.amount + 1n }) })],
+      ['another recipient in the call', tree({ args: serviceArgs({ to: contract(74) }) })],
+      ['another asset in the call', tree({ args: serviceArgs({ asset: contract(75) }) })],
+      // The plain transfer alone is not this payment: it could be taken without the service running.
+      ['the transfer without the service call', recorded()],
+    ];
+    for (const [label, entry] of cases) {
+      const spy = spying();
+      await expect(signAccountPayment({
+        entry, payment: purchase, agent: spy.signer, networkPassphrase: passphrase, ...window,
+      }), label).rejects.toThrow();
+      expect(spy.messages, label).toHaveLength(0);
+    }
+    // And a plain payment never signs a service tree.
+    const spy = spying();
+    await expect(sign(tree(), { agent: spy.signer })).rejects.toThrow('single asset transfer');
+    expect(spy.messages).toHaveLength(0);
+  });
+});
+
 describe('payment check', () => {
   const state = { policy_hash: payment.policyHash, revoked: false, next_sequence: 4n, utc_day: 20_833n,
     daily_spend: [{ asset, amount: 30_000_000n }] };
@@ -185,7 +260,7 @@ describe('payment check', () => {
   });
   const ok = (retval: xdr.ScVal) => ({ id: '1', latestLedger: 1, events: [], _parsed: true, minResourceFee: '0',
     transactionData: {}, result: { auth: [], retval } });
-  const args = { policy_hash: payment.policyHash, asset, recipient, amount: payment.amount };
+  const args = { policy_hash: payment.policyHash, action: accountPaymentAction(payment) };
 
   it('returns the prospective state and maps a refusal to the wallet\'s own error', async () => {
     expect(await readPaymentCheck(read(ok(encodePolicyState(state))), args)).toEqual(state);

@@ -83,15 +83,16 @@ export interface PolicyContext {
 }
 
 /**
- * Mirrors the wallet's approval checks that need no ledger reads: `canonicalPolicy`, then the v1 wallet rules
- * (transfers only, a standard-account signer other than the owner, contract assets, never the wallet as a
- * recipient), then an unexpired window. The contract additionally rejects a reused policy ID, a full active set and
+ * Mirrors the wallet's approval checks that need no ledger reads: `canonicalPolicy`, then the wallet's own rules
+ * (a permitted service that is a contract other than the wallet, a standard-account signer other than the owner,
+ * contract assets, never the wallet as a recipient), then an unexpired window. The contract additionally rejects a reused policy ID, a full active set and
  * an identity whose live revision or signer differs.
  */
 export function validatePolicy(policy: Policy, context: PolicyContext): Policy {
   const canonical = canonicalPolicy(policy);
-  if (canonical.action_kinds.length !== 1 || canonical.action_kinds[0] !== 'Transfer' || canonical.service !== null) {
-    fail('InvalidInput', 'The v1 wallet executes plain transfers only');
+  if (canonical.service && (!StrKey.isValidContract(canonical.service.contract)
+    || canonical.service.contract === context.wallet)) {
+    fail('InvalidInput', 'A permitted service must be a contract other than the wallet');
   }
   if (!StrKey.isValidEd25519PublicKey(canonical.signer) || canonical.signer === context.owner) {
     fail('InvalidInput', 'The agent signer must be a standard account other than the owner');

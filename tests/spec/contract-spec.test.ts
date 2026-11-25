@@ -6,6 +6,7 @@ import {
   decodeVerification, encodeAccountSignature, encodeRegistryArgs, encodeVerificationArgs,
   encodeVerificationConstructorArgs, encodeWalletArgs, encodeWalletConstructorArgs,
 } from '../../packages/sdk/src/encoding.js';
+import { accountPaymentOperation } from '../../packages/sdk/src/account.js';
 import { canonicalPolicy } from '../../packages/sdk/src/policies.js';
 import {
   CONTRACT_ERRORS, type ActionRequest, type AgentIdentity, type Policy, type RegistryArgs, type VerificationArgs,
@@ -140,7 +141,10 @@ const walletCases: Case<WalletArgs> = {
   policies: { sdk: {}, native: {} },
   policy: { sdk: { policy_hash: bytes(6) }, native: { policy_hash: buf(bytes(6)) } },
   policy_state: { sdk: { policy_hash: bytes(6) }, native: { policy_hash: buf(bytes(6)) } },
-  check_payment: { sdk: { policy_hash: bytes(6), ...transfer }, native: { policy_hash: buf(bytes(6)), ...transfer } },
+  check_payment: {
+    sdk: { policy_hash: bytes(6), action: { kind: 'Transfer', transfer } },
+    native: { policy_hash: buf(bytes(6)), action: tuple('Transfer', nativeTransfer(transfer)) },
+  },
   audit_head: { sdk: {}, native: {} },
 };
 
@@ -219,5 +223,35 @@ describe('SDK conformance with the contracts\' published interfaces', () => {
     expect(encodeAccountSignature(bytes(6), signature).toXdr('hex')).toBe(expected!.toXdr('hex'));
     expect(decodePolicyState(returned(interfaceSpec, 'check_payment', { ...state, policy_hash: buf(state.policy_hash) })))
       .toEqual(state);
+    // A service payment is checked as the same `Action` the audit entry records.
+    const service = { contract: contractId(21), service_id: bytes(22) };
+    const [, servicePayment] = interfaceSpec.funcArgsToScVals('check_payment', {
+      policy_hash: buf(bytes(6)),
+      action: tuple('ServicePayment', {
+        service: { contract: service.contract, service_id: buf(service.service_id) }, payment: nativeTransfer(transfer),
+      }),
+    });
+    expect(encodeWalletArgs('check_payment', {
+      policy_hash: bytes(6), action: { kind: 'ServicePayment', service, payment: transfer },
+    })[1]!.toXdr('hex')).toBe(servicePayment!.toXdr('hex'));
+  });
+
+  it('demo service', () => {
+    // The SDK calls a service through the one method a wallet's service permission covers.
+    const service = spec('demo_service');
+    const payment = {
+      wallet: contractId(1), policyHash: bytes(6), asset: transfer.asset, recipient: transfer.recipient,
+      amount: transfer.amount, service: { contract: contractId(21), service_id: bytes(22) },
+    };
+    const { body } = accountPaymentOperation(payment);
+    if (body.type !== 'invokeHostFunction' || body.invokeHostFunctionOp.hostFunction.type !== 'hostFunctionTypeInvokeContract') {
+      throw new Error('Expected a contract call');
+    }
+    const call = body.invokeHostFunctionOp.hostFunction.invokeContract;
+    expect(call.functionName.toString()).toBe('pay_for_service');
+    expect(hex(call.args)).toEqual(hex(service.funcArgsToScVals('pay_for_service', {
+      wallet: payment.wallet, asset: payment.asset, recipient: payment.recipient, amount: payment.amount,
+      service_id: buf(payment.service.service_id),
+    })));
   });
 });

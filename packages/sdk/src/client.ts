@@ -75,8 +75,8 @@ export function executeInvocation(network: NetworkContext, request: ActionReques
 }
 
 /**
- * A payment on the wallet's account path: a plain `asset.transfer(wallet, recipient, amount)` whose one entry is the
- * wallet's own, signed by the policy's agent key. The wallet is never the transaction source, so there is no source
+ * A payment on the wallet's account path: a plain `asset.transfer(wallet, recipient, amount)`, or the service's own
+ * call when the payment names a service. Its one entry is the wallet's own, signed by the policy's agent key. The wallet is never the transaction source, so there is no source
  * check: a sponsor or another fee payer submits it and authorizes nothing.
  */
 export function accountPaymentInvocation(network: NetworkContext, payment: AccountPayment, agent: Signer): Invocation {

@@ -22,8 +22,13 @@ import { ownerCall, walletId } from './wallet.js';
  *   "assets": [{ "asset": "C...", "per_transfer": "5", "per_day": "20" }],
  *   "allowed_recipients": ["G..."],
  *   "blocked_recipients": [],
- *   "valid_for_seconds": 604800            // or "valid_after" / "valid_until" in Unix seconds
+ *   "valid_for_seconds": 604800,           // or "valid_after" / "valid_until" in Unix seconds
+ *   "service": { "contract": "C...", "service_id": "<64 hex>" },   // optional: one service the agent may pay
+ *   "plain_transfers": true                // optional; false permits the service only
  * }
+ *
+ * A policy without "service" permits plain transfers only. With it, the agent may also pay that one service in the
+ * service's own call ("execute pay --service"), under the same assets, recipients and caps.
  *
  * An optional "policy_id" (64 hex characters) names the policy; otherwise a random one is generated. IDs are
  * reserved forever by the wallet, even after revocation.
@@ -44,12 +49,14 @@ interface PolicyFile {
   valid_after?: string | number;
   valid_until?: string | number;
   valid_for_seconds?: string | number;
+  service?: { contract: string; service_id: string };
+  plain_transfers?: boolean;
 }
 
 const ALLOWED = new Set([
   'policy_id', 'agent_id', 'revision', 'signer', 'provider', 'required_checks', 'max_assessment_age_seconds',
   'max_risk_score', 'assets', 'allowed_recipients', 'blocked_recipients', 'valid_after', 'valid_until',
-  'valid_for_seconds',
+  'valid_for_seconds', 'service', 'plain_transfers',
 ]);
 
 const text = (value: string | number | undefined) => (value === undefined ? undefined : String(value));
@@ -86,6 +93,13 @@ export async function loadPolicy(runtime: Runtime, path: string, wallet: string)
       per_day: await runtime.units(asset, limit.per_day, 'assets[].per_day'),
     });
   }
+  if (file.service === undefined && file.plain_transfers === false) {
+    throw new UsageError('A policy must permit plain transfers or name a "service"');
+  }
+  const service = file.service === undefined ? null : {
+    contract: contractAddress(file.service.contract, 'service.contract'),
+    service_id: hex32(file.service.service_id, 'service.service_id'),
+  };
   const policy: Policy = {
     schema_version: SCHEMA_VERSION,
     policy_id: file.policy_id === undefined ? Uint8Array.from(randomBytes(32)) : hex32(file.policy_id, 'policy_id'),
@@ -101,8 +115,9 @@ export async function loadPolicy(runtime: Runtime, path: string, wallet: string)
     blocked_recipients: (file.blocked_recipients ?? []).map((value) => address(value, 'blocked_recipients[]')),
     valid_after: validAfter,
     valid_until: validUntil,
-    action_kinds: ['Transfer'],
-    service: null,
+    action_kinds: [...(service ? ['ServicePayment' as const] : []),
+      ...(file.plain_transfers === false ? [] : ['Transfer' as const])],
+    service,
   };
   return validatePolicy(policy, { wallet, owner: await readWalletOwner(read), now });
 }

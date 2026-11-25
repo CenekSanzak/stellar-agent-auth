@@ -2,7 +2,7 @@
 
 The smart wallet gains a second way to pay. [ADR 0006](0006-custom-account-spike.md) decided it and showed it on a test contract; this record describes what is built into `contracts/smart-wallet`. The wallet's first path, `execute`, is unchanged and is described in [ADR 0005](0005-smart-wallet.md). The SDK side is `packages/sdk/src/account.ts`.
 
-**Status:** the contract path, the SDK signing helper and the payment check are built and tested on the local network. A service contract that pulls its payment, the CLI command, finer error codes, the lifetime cap and a Testnet payment from the real wallet are the rest of P9 and are not built yet.
+**Status:** the contract path for both payment shapes, the demo service, the SDK helpers and the CLI command are built and tested on the local network. Finer error codes, the lifetime cap and a Testnet payment from the real wallet are the rest of P9 and are not built yet.
 
 ## Why two paths
 
@@ -12,16 +12,29 @@ The wallet answers that as a custom account. When an asset contract requires the
 
 ## What `__check_auth` authorizes
 
-One thing: a single `transfer(wallet, recipient, amount)` call on a contract, where the named policy lists that contract as an asset and the recipient as allowed. It checks, in order:
+Two shapes, and nothing else.
+
+- **A plain transfer.** One context: `transfer(wallet, recipient, amount)` on a contract the named policy lists as an asset. Whoever holds the signed entry can make exactly that transfer. This is what an x402 `exact` payment needs: a facilitator makes the transfer and the service observes it.
+- **A service payment.** Two contexts: `pay_for_service(wallet, asset, recipient, amount, service_id)` on the one service the policy permits, and below it the transfer of exactly that amount of that asset to that recipient. The entry is rooted at the service call, so the transfer cannot be made without it.
+
+The second shape exists because the first does not bind the payment to anything. A plain transfer entry can be submitted by anyone who holds it, with or without the service running. For a service contract that must issue something in exchange, the payer has to authorize the service's own call.
+
+It checks, in order:
 
 1. The policy named in the signature exists (`NotFound`).
 2. The policy signer's ed25519 key signed the host payload followed by the policy hash. A wrong signature fails with a host crypto error.
-3. There is exactly one context, it is a contract call named `transfer` with three arguments, the first is this wallet and the amount is positive (`PolicyDenied`; `InvalidInput` for the amount).
-4. Everything `execute` checks about the wallet, the policy and the transfer: not paused, not revoked, inside the validity window, an asset the policy lists, a recipient on the allowlist and not on the blocklist, the per-payment cap, today's budget, the live identity and signer, and the provider's current verification result.
+3. The contexts are one of the two shapes, moving this wallet's own funds, with a positive amount (`PolicyDenied`; `InvalidInput` for the amount). For a service payment the call must be on the policy's service contract, be named `pay_for_service`, carry the policy's service ID, and state the same asset, recipient and amount as the transfer below it.
+4. Everything `execute` checks about the wallet, the policy and the transfer: not paused, not revoked, inside the validity window, the action kind permitted, an asset the policy lists, a recipient on the allowlist and not on the blocklist, the per-payment cap, today's budget, the live identity and signer, and the provider's current verification result. A service payment's transfer is held to the same rules as a plain one.
 
 It then stores the spend and appends an audit entry. The asset contract moves the funds only after `__check_auth` returns; if that transfer fails, the invocation fails and the spend and the audit entry are rolled back.
 
-Everything else is refused: `approve`, `burn`, `transfer_from`, a transfer of another holder's funds, a call on the wallet itself, two calls under one signature, no call, and any deployment. The wallet is not a general signer.
+Everything else is refused: `approve`, `burn`, `transfer_from`, a transfer of another holder's funds, a call on the wallet itself, another service or another method of the permitted one, the transfer before the call, an allowance below the call, three calls under one signature, no call, and any deployment. The wallet is not a general signer.
+
+### Service permission in a policy
+
+The v1 ABI has carried `ServicePermission::Restricted(ServiceRule { contract, service_id })` and the `ServicePayment` action kind since [ADR 0002](0002-v1-abi-and-authorization.md); the wallet used to refuse such policies. It now accepts them. A policy may permit plain transfers, one service, or both, and the service must be a contract other than the wallet. `execute` still pushes plain transfers only: a service payment has to be authorized together with the service's call, which only the account path can do.
+
+`pay_for_service` is a fixed interface. A service that wants to be paid this way offers that method, requires the wallet's authorization for it, and transfers exactly the stated amount inside it. `contracts/demo-service` is one.
 
 ## One budget
 
@@ -45,28 +58,31 @@ The wallet's credential carries an `AccountSignature { policy_hash, signature }`
 
 ## Explaining a refusal: `check_payment`
 
-`check_payment(policy_hash, asset, recipient, amount)` runs step 4 above for a prospective payment, authenticates nobody, stores nothing, and returns the state the payment would leave or the wallet's own error. A client calls it before signing; the SDK's `readPaymentCheck` wraps it. It is the only place a client learns that a payment would fail for the daily cap and not for a bad signature.
+`check_payment(policy_hash, action)` runs step 4 above for a prospective payment of either shape, authenticates nobody, stores nothing, and returns the state the payment would leave or the wallet's own error. For a service payment it also requires the action's service to be the one the policy permits. A client calls it before signing; the SDK's `readPaymentCheck` wraps it. It is the only place a client learns that a payment would fail for the daily cap and not for a bad signature.
 
 It reports what would happen now. A payment can still be refused later if the state changes before it is included.
 
 ## Audit
 
-An account payment appends `AuditOutcome::AccountPayment { policy_hash, authorization, transfer }`, with the policy signer as actor. `authorization` is the host payload hash, which is unique to the authorization and lets an indexer tie the entry to the transaction that carried it. The chain, the head and the `audit_v1` event are as in ADR 0005.
+An account payment appends `AuditOutcome::AccountPayment { policy_hash, authorization, action }`, with the policy signer as actor. `action` is the plain transfer, or the service payment with its service. `authorization` is the host payload hash, which is unique to the authorization and lets an indexer tie the entry to the transaction that carried it. The chain, the head and the `audit_v1` event are as in ADR 0005.
 
 ## ABI additions
 
 Schema version 1 is kept, because no wallet has been deployed to Testnet. The policy, action and existing audit vectors are unchanged.
 
 - `AccountSignature { policy_hash, signature }`.
-- `AuditOutcome::AccountPayment(AccountPayment)` and `AccountPayment { policy_hash, authorization, transfer }`.
+- `AuditOutcome::AccountPayment(AccountPayment)` and `AccountPayment { policy_hash, authorization, action }`.
 - Wallet entry points `__check_auth` and `check_payment`.
 - `identity::account_key`, the key of a standard account address.
+- The constant `SERVICE_PAYMENT_METHOD = "pay_for_service"`, and `Action::transfer`.
+- The wallet now approves policies with a `Restricted` service permission.
 
 ## Evidence
 
-- **Host tests:** 10 in `contracts/smart-wallet/src/test_account.rs`, with authorization enforced. They make real `asset.transfer` calls carrying a signed entry, and call `__check_auth` as the host would. The 30 existing wallet tests pass unchanged.
-- **Unit tests:** `tests/unit/account.test.ts` for signing and the payment check; the spec test compares the SDK's `AccountSignature` and `check_payment` encoding with the wallet's published interface.
-- **Local network:** 4 tests in `tests/integration/account-path.test.ts`. The agent signs through the SDK, and an SDK `Sponsor` configured only for the asset's `transfer` submits. `execute` and the account path alternate up to the daily cap and then both refuse.
-- **Cost on the local network:** 4,737,045 instructions and a minimum resource fee of 23,253 stroops for an account payment, against 4,849,451 instructions for `execute` in the [P4 record](../P4_VALIDATION.md).
+- **Host tests:** 16 in `contracts/smart-wallet/src/test_account.rs`, with authorization enforced. They make real `asset.transfer` and `pay_for_service` calls carrying a signed entry, and call `__check_auth` as the host would. The 30 existing wallet tests pass, with one updated: service policies are no longer refused. `contracts/demo-service` has 2 tests of its own.
+- **Unit tests:** `tests/unit/account.test.ts` for signing both shapes and for the payment check. The spec test compares the SDK's encoding of `AccountSignature`, `check_payment` and the service call with the published interfaces of the wallet and the demo service.
+- **Local network:** 5 tests in `tests/integration/account-path.test.ts`. The agent signs through the SDK and an SDK `Sponsor` that knows nothing about the wallet submits. `execute` and the account path alternate up to the daily cap and then both refuse. A service is paid in its own call; the same signed entry does not authorize the bare transfer, and the service's request for an allowance is refused.
+- **CLI example:** `examples/payment-flow.ts` now pays a service with `execute pay --service` and makes a plain account payment with `execute pay`, between the `execute` payment and the revocation. After the revocation both paths refuse, and the account path names the reason before signing. Its test runs the built CLI and submitter as separate processes.
+- **Cost on the local network:** 4,737,045 instructions and a minimum resource fee of 23,253 stroops for a plain account payment, against 4,849,451 instructions for `execute` in the [P4 record](../P4_VALIDATION.md). The figure was taken before service payments were added and has not been re-measured.
 
-Not shown yet: a Testnet payment from the real wallet, a service contract that pulls the payment, and protocol 30 credentials on the real wallet. The spike showed the last on the test contract.
+Not shown yet: a Testnet payment from the real wallet, and protocol 30 credentials on the real wallet. The spike showed the latter on the test contract.

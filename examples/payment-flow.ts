@@ -21,12 +21,13 @@ import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
-  Address, Asset, Operation, TransactionBuilder, hash, rpc, xdr,
+  Address, Asset, Operation, TransactionBuilder, hash, nativeToScVal, rpc, xdr,
 } from '@stellar/stellar-sdk';
 import {
   MemoryJournal, contractDeployment, encodeVerificationConstructorArgs, fromContractUnits, invoke, keypairSigner,
   loadSource,
-  networkContext, pipelineLimits, readAssetBalance, submit, uploadInvocation, verificationInvocation, verificationOperation,
+  networkContext, pipelineLimits, readAssetBalance, submit, toContractUnits, uploadInvocation, verificationInvocation,
+  verificationOperation,
   type NetworkContext, type Signer,
 } from '@stellar-agent-auth/sdk';
 import { createNamedKey, loadKeypair } from '@stellar-agent-auth/sdk/node';
@@ -55,6 +56,9 @@ export interface FlowConfig {
   };
   payment: string;
   presigned_payment: string;
+  /** What the demo service charges, and what the agent then pays as a plain transfer on the account path. */
+  service_price: string;
+  account_payment: string;
 }
 
 export interface CliResult {
@@ -91,13 +95,18 @@ async function expectOk(result: Promise<CliResult>, label: string): Promise<Reco
   return json;
 }
 
-/** Start the submitter for `wallet` with the sponsor key; resolves with its URL. */
-function startSubmitter(env: NodeJS.ProcessEnv, wallet: string, stateDirectory: string, log: Log) {
-  log(`$ stellar-agent-auth-submitter   (SUBMITTER_CONTRACTS=${wallet}, SUBMITTER_METHODS=execute)`);
+/**
+ * Start the submitter with the sponsor key; resolves with its URL. It sponsors the wallet's `execute`, the asset's
+ * `transfer` and the service's `pay_for_service`. For the last two it only relays: the wallet's own entry, signed
+ * by the agent, is what authorizes the payment.
+ */
+function startSubmitter(env: NodeJS.ProcessEnv, contracts: string[], stateDirectory: string, log: Log) {
+  const methods = 'execute,transfer,pay_for_service';
+  log(`$ stellar-agent-auth-submitter   (SUBMITTER_CONTRACTS=${contracts.join(',')}, SUBMITTER_METHODS=${methods})`);
   const child = spawn(process.execPath, [SUBMITTER], {
     cwd: ROOT,
     env: {
-      ...env, SUBMITTER_SPONSOR_KEY: 'sponsor', SUBMITTER_CONTRACTS: wallet, SUBMITTER_METHODS: 'execute',
+      ...env, SUBMITTER_SPONSOR_KEY: 'sponsor', SUBMITTER_CONTRACTS: contracts.join(','), SUBMITTER_METHODS: methods,
       SUBMITTER_PORT: '0', SUBMITTER_STATE_DIR: stateDirectory,
     },
   });
@@ -138,7 +147,7 @@ async function setup(
     return Address.fromScVal(created.returnValue).toString();
   }
 
-  log('Setup (SDK): deploy registries, approve the Live provider, issue the test asset');
+  log('Setup (SDK): deploy registries, approve the Live provider, issue the test asset, deploy the demo service');
   const agentRegistry = await deploy('agent_registry', keys.admin, []);
   const verificationRegistry = await deploy('verification_registry', keys.admin,
     encodeVerificationConstructorArgs(keys.admin.address, agentRegistry));
@@ -164,18 +173,38 @@ async function setup(
   const sac = await invoke(context, keys.admin, { operation: Operation.createStellarAssetContract({ asset }) }, journal,
     { limits });
   if (sac.status !== 'success') throw new Error('Asset contract deployment failed');
-  return { agentRegistry, verificationRegistry, asset: asset.contractId(context.networkPassphrase) };
+  const assetId = asset.contractId(context.networkPassphrase);
+
+  // A small paid service: it sells one thing for a fixed price in the test asset, paid to the recipient, and takes
+  // the price by transferring from the paying wallet inside its own call.
+  const serviceId = hash(Buffer.from('stellar-agent-auth payment-flow demo service'));
+  const entry = (key: string, val: xdr.ScVal) => new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol(key), val });
+  const service = await deploy('demo_service', keys.admin, [xdr.ScVal.scvMap([
+    entry('asset', Address.fromString(assetId).toScVal()),
+    entry('payee', Address.fromString(keys.recipient.address).toScVal()),
+    entry('price', nativeToScVal(toContractUnits(config.service_price, 7), { type: 'i128' })),
+    entry('service_id', xdr.ScVal.scvBytes(serviceId)),
+  ])]);
+  return {
+    agentRegistry, verificationRegistry, asset: assetId, service, serviceId: Buffer.from(serviceId).toString('hex'),
+  };
 }
 
 export interface FlowSummary {
   run: string;
-  contracts: { agent_registry: string; verification_registry: string; wallet: string; asset: string };
+  contracts: { agent_registry: string; verification_registry: string; wallet: string; asset: string; service: string };
   roles: Record<Role, string>;
   agent_id: string;
   verification: { sequence: string; risk_score: unknown; checks: unknown };
   policy_hash: string;
   payment: Record<string, unknown>;
+  /** The service pulling its price from the wallet, in the service's own call. */
+  service_payment: Record<string, unknown>;
+  /** A plain transfer the wallet authorized as an account. */
+  account_payment: Record<string, unknown>;
   presigned_rejection: Record<string, unknown>;
+  /** The account path refused after the revocation, with the wallet's own reason. */
+  account_rejection: Record<string, unknown>;
   balances: { recipient: string; wallet: string };
   history: Record<string, unknown>;
 }
@@ -233,12 +262,15 @@ export async function runPaymentFlow(config: FlowConfig, log: Log = console.log)
     max_assessment_age_seconds: config.policy.max_assessment_age_seconds, max_risk_score: config.policy.max_risk_score,
     assets: [{ asset: contracts.asset, per_transfer: config.policy.per_transfer, per_day: config.policy.per_day }],
     allowed_recipients: [keys.recipient.address], valid_for_seconds: config.policy.valid_for_seconds,
+    // The agent may also pay this one service in the service's own call, under the same caps.
+    service: { contract: contracts.service, service_id: contracts.serviceId },
   }, null, 2)}\n`);
   const approved = await expectOk(cli(env, ['policy', 'approve', '--owner', 'owner', '--file', policyFile], log),
     'policy approve');
   const policyHash = approved['policy_hash'] as string;
 
-  const submitter = await startSubmitter(env, wallet, join(directory, 'submitter'), log);
+  const submitter = await startSubmitter(env, [wallet, contracts.asset, contracts.service],
+    join(directory, 'submitter'), log);
   try {
     log('\n5. The agent signs a payment; the sponsor pays the fee and submits it');
     // Only the agent's commands go through the sponsor; the owner pays for its own transactions.
@@ -247,22 +279,39 @@ export async function runPaymentFlow(config: FlowConfig, log: Log = console.log)
     const payment = await expectOk(cli(env, ['execute', 'transfer', ...transfer, '--amount', config.payment], log),
       'execute transfer');
 
-    log('\n6. The agent signs a second payment but does not submit it yet');
+    log('\n6. A service pulls its price: the wallet authorizes the service\'s own call, signed by the agent key');
+    const account = ['--agent-key', 'agent', '--policy', policyHash, '--to', keys.recipient.address,
+      '--asset', contracts.asset, '--sponsor-url', submitter.url];
+    const servicePayment = await expectOk(cli(env, ['execute', 'pay', ...account, '--amount', config.service_price,
+      '--service', contracts.service, '--service-id', contracts.serviceId], log), 'execute pay --service');
+
+    log('\n7. The wallet authorizes a plain transfer that any relayer can submit, under the same budget');
+    const accountPayment = await expectOk(cli(env, ['execute', 'pay', ...account, '--amount', config.account_payment],
+      log), 'execute pay');
+
+    log('\n8. The agent signs a second payment but does not submit it yet');
     const signedFile = join(directory, 'presigned-payment.json');
     await expectOk(cli(env, ['execute', 'sign', ...transfer, '--amount', config.presigned_payment, '--out', signedFile],
       log), 'execute sign');
 
-    log('\n7. The owner revokes the policy');
+    log('\n9. The owner revokes the policy');
     await expectOk(cli(env, ['policy', 'revoke', '--owner', 'owner', '--policy', policyHash], log), 'policy revoke');
 
-    log('\n8. The previously signed payment is submitted and rejected against the live revocation');
+    log('\n10. The previously signed payment is submitted and rejected against the live revocation');
     const rejected = await cli(env, ['execute', 'submit', '--file', signedFile, '--sponsor-url', submitter.url], log);
     if (rejected.code !== 3 || rejected.json['error'] !== 'Revoked') {
       throw new Error(`Expected the presigned payment to be rejected as Revoked, got exit ${rejected.code}: ${rejected.stderr}`);
     }
     log(`   rejected (exit ${rejected.code}): ${String(rejected.json['message'])}`);
 
-    log('\n9. History and balances');
+    log('\n11. The account path is refused as well, and the wallet says why before anything is signed');
+    const refused = await cli(env, ['execute', 'pay', ...account, '--amount', config.account_payment], log);
+    if (refused.code !== 3 || refused.json['error'] !== 'Revoked') {
+      throw new Error(`Expected the account payment to be refused as Revoked, got exit ${refused.code}: ${refused.stderr}`);
+    }
+    log(`   refused (exit ${refused.code}): ${String(refused.json['message'])}`);
+
+    log('\n12. History and balances');
     const history = await expectOk(cli(env, ['history'], log), 'history');
     if (history['status'] !== 'verified') throw new Error(`History is ${String(history['status'])}`);
     const shown = await expectOk(cli(env, ['wallet', 'show', '--asset', contracts.asset], log), 'wallet show');
@@ -274,14 +323,19 @@ export async function runPaymentFlow(config: FlowConfig, log: Log = console.log)
       run,
       contracts: {
         agent_registry: contracts.agentRegistry, verification_registry: contracts.verificationRegistry, wallet,
-        asset: contracts.asset,
+        asset: contracts.asset, service: contracts.service,
       },
       roles: Object.fromEntries(ROLES.map((role) => [role, keys[role].address])) as Record<Role, string>,
       agent_id: identity.agent_id,
       verification: { sequence: result.sequence, risk_score: result.risk_score, checks: result.checks },
       policy_hash: policyHash,
       payment: { transaction: payment['transaction'], ledger: payment['ledger'], request: payment['request'] },
+      service_payment: {
+        transaction: servicePayment['transaction'], ledger: servicePayment['ledger'], receipt: servicePayment['receipt'],
+      },
+      account_payment: { transaction: accountPayment['transaction'], ledger: accountPayment['ledger'] },
       presigned_rejection: { exit_code: rejected.code, error: rejected.json['error'] },
+      account_rejection: { exit_code: refused.code, error: refused.json['error'] },
       balances: { recipient: fromContractUnits(recipientUnits, 7), wallet: String(shown['balance']) },
       history: { status: history['status'], detail: history['detail'], entries: (history['entries'] as unknown[]).length },
     };

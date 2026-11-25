@@ -202,6 +202,18 @@ describe('command line', () => {
     await expect(readdir(join(directory, 'keys'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+  it('needs a service and its ID together on the account path', async () => {
+    for (const extra of [['--service', contract(41)], ['--service-id', 'ab'.repeat(32)]]) {
+      const run = io();
+      expect(await main(['execute', 'pay', '--policy', 'cd'.repeat(32), ...extra], env(), run.io)).toBe(EXIT.usage);
+      expect(run.err.join()).toContain('go together');
+    }
+    // Without them it is a plain payment, which still needs a wallet before anything else happens.
+    const run = io();
+    expect(await main(['execute', 'pay', '--policy', 'cd'.repeat(32)], env(), run.io)).toBe(EXIT.usage);
+    expect(run.err.join()).toContain('WALLET_ID');
+  });
+
   it('queries a journaled hash and knows nothing about others', async () => {
     const run = io();
     expect(await main(['tx', 'status', '--hash', 'ab'.repeat(32)], env(), run.io)).toBe(EXIT.usage);

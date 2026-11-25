@@ -1,7 +1,9 @@
-import { Address, Operation, authorizeEntry, nativeToScVal, rpc, xdr, type Keypair } from '@stellar/stellar-sdk';
+import {
+  Address, Operation, authorizeEntry, contract, nativeToScVal, rpc, scValToNative, xdr, type Keypair,
+} from '@stellar/stellar-sdk';
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
-  accountPaymentOperation, signAccountPayment, type AccountPayment,
+  accountPaymentAction, accountPaymentOperation, signAccountPayment, type AccountPayment,
 } from '../../packages/sdk/src/account.js';
 import { accountPaymentInvocation } from '../../packages/sdk/src/client.js';
 import { encodeAccountSignature } from '../../packages/sdk/src/encoding.js';
@@ -14,13 +16,14 @@ import {
 import type { ContractErrorName, Hash32 } from '../../packages/sdk/src/types.js';
 import { readPaymentCheck, readPolicyState } from '../../packages/sdk/src/wallet.js';
 import { assertResourceFit, resourceLimits } from '../local/phase1-resources.js';
-import { contractEvents, successfulSimulation } from './support/local-network.js';
+import { contractEvents, readWasm, successfulSimulation } from './support/local-network.js';
 import { UNIT, unsignedEntry, walletWorld, type WalletWorld } from './support/wallet-world.js';
 
 /**
- * A30 on the local network: the smart wallet pays a plain `asset.transfer(wallet, payee, amount)` as a custom
- * account. The agent's key signs the wallet's one authorization entry; a sponsor that is configured only for the
- * asset's `transfer`, and knows nothing about the wallet, submits it. Both payment paths draw on one budget.
+ * A30 on the local network: the smart wallet pays as a custom account. The agent's key signs the wallet's one
+ * authorization entry, and a sponsor that knows nothing about the wallet submits it. Two shapes are paid: a plain
+ * `asset.transfer(wallet, payee, amount)`, and a service's own call with the transfer inside it. Both payment paths
+ * draw on one budget, and everything else the wallet is asked to authorize is refused.
  */
 
 const TIMEOUT = 240_000;
@@ -100,8 +103,8 @@ function expectAuthRefusal(simulation: rpc.Api.SimulateTransactionResponse, labe
 }
 
 async function expectCheck(overrides: Partial<AccountPayment> & { amount: bigint }, code: ContractErrorName) {
-  const { asset, recipient, amount, policyHash: policy } = payment(overrides.amount, overrides);
-  const refusal = await readPaymentCheck(w.read, { policy_hash: policy, asset, recipient, amount })
+  const asked = payment(overrides.amount, overrides);
+  const refusal = await readPaymentCheck(w.read, { policy_hash: asked.policyHash, action: accountPaymentAction(asked) })
     .catch((error: unknown) => error);
   expect(refusal, code).toBeInstanceOf(WalletError);
   expect(refusal, code).toHaveProperty('code', code);
@@ -113,7 +116,7 @@ describe('account payment path', () => {
     const before = await w.snapshot(policyHash);
     // The wallet says in advance what the payment would leave.
     const preview = await readPaymentCheck(read,
-      { policy_hash: policyHash, asset, recipient: recipient.publicKey(), amount: 3n * UNIT });
+      { policy_hash: policyHash, action: accountPaymentAction(payment(3n * UNIT)) });
     expect(preview.daily_spend).toEqual([{ asset, amount: 3n * UNIT }]);
 
     const { operation, outcome } = await pay(3n * UNIT);
@@ -138,7 +141,7 @@ describe('account payment path', () => {
     const confirmed = outcome.response as rpc.Api.GetSuccessfulTransactionResponse;
     await w.expectAudit(confirmed, before.head, signer.publicKey(), [{
       kind: 'AccountPayment', policy_hash: policyHash, authorization: await payloadOf(entry!),
-      transfer: { asset, recipient: recipient.publicKey(), amount: 3n * UNIT },
+      action: accountPaymentAction(payment(3n * UNIT)),
     }]);
 
     const tx = await w.net.build(sponsor, accountPaymentOperation(payment(1n)));
@@ -232,5 +235,84 @@ describe('account payment path', () => {
     await w.ownerCall('revoke_policy', { policy_hash: policy });
     expectAuthRefusal(await attempt(), 'revoked', /Error\(Contract, #8\)/);
     await expectCheck({ amount: UNIT, policyHash: policy }, 'Revoked');
+  }, TIMEOUT);
+
+  it('pays a service in the service\'s own call, and only in that shape', async () => {
+    const { roles: { signer, sponsor, recipient, attacker }, asset, read } = w;
+    // A service selling for 3 units, paid to the policy's recipient, and a policy that permits it.
+    const wasm = readWasm('demo_service');
+    const spec = contract.Spec.fromWasm(wasm);
+    const serviceId = new Uint8Array(32).fill(7);
+    const service = await w.net.deploy(sponsor, wasm, spec.funcArgsToScVals('__constructor', {
+      terms: { asset, payee: recipient.publicKey(), price: 3n * UNIT, service_id: Buffer.from(serviceId) },
+    }));
+    const rule = { contract: service, service_id: serviceId };
+    const policy = await w.approve(await w.policy(4, { action_kinds: ['ServicePayment', 'Transfer'], service: rule }));
+    const purchase = payment(3n * UNIT, { policyHash: policy, service: rule });
+    const receipts = async () => scValToNative(successfulSimulation(await w.net.simulate(await w.net.build(sponsor,
+      Operation.invokeContractFunction({ contract: service, function: 'receipts', args: [] })), 'record'))
+      .result.retval) as bigint;
+
+    const before = await w.snapshot(policy);
+    await readPaymentCheck(read, { policy_hash: policy, action: accountPaymentAction(purchase) });
+    const sign = () => signForSponsor(context, sponsor.publicKey(),
+      accountPaymentInvocation(context, purchase, agent()), limits);
+
+    // An entry signed for the purchase is rooted at the service call: it does not authorize the transfer alone,
+    // so the payment cannot be taken without the service running.
+    const [unused] = entriesOf(await sign());
+    expect(unused!.rootInvocation.subInvocations).toHaveLength(1);
+    expectAuthRefusal(await enforce(asset, 'transfer', transferArgs(recipient.publicKey(), 3n * UNIT), [unused!]),
+      'the transfer without the service call');
+
+    // The sponsor is configured for the service's method only. It knows nothing about the wallet.
+    const operation = await sign();
+    const outcome = await sponsoredInvoke(context, new Sponsor(context, keypairSigner(sponsor),
+      sponsorPolicy([service], { methods: ['pay_for_service'], limits: { pollIntervalMs: 500 } }), new MemoryJournal()),
+    operation, new MemoryJournal(), 'account:service');
+    expect(outcome.status).toBe('success');
+
+    // The service took its price and issued its receipt in the same transaction.
+    expect(scValToNative(outcome.returnValue!)).toMatchObject({ number: 1n, wallet: w.wallet, amount: 3n * UNIT });
+    expect(await receipts()).toBe(1n);
+    const after = await w.snapshot(policy);
+    expect(after.recipient).toBe(before.recipient + 3n * UNIT);
+    expect(after.wallet).toBe(before.wallet - 3n * UNIT);
+    expect(after.state.daily_spend).toEqual([{ asset, amount: 3n * UNIT }]);
+    const confirmed = outcome.response as rpc.Api.GetSuccessfulTransactionResponse;
+    await w.expectAudit(confirmed, before.head, signer.publicKey(), [{
+      kind: 'AccountPayment', policy_hash: policy, authorization: await payloadOf(entriesOf(operation)[0]!),
+      action: accountPaymentAction(purchase),
+    }]);
+
+    // The service also has a method that asks the wallet for an allowance. The agent key signs exactly the tree
+    // that call needs, and the wallet still refuses: it is not a payment.
+    const live = await w.net.latestLedger() + 1_000;
+    const amount = nativeToScVal(50n * UNIT, { type: 'i128' });
+    const ask = [Address.fromString(w.wallet).toScVal(), amount, nativeToScVal(live, { type: 'u32' })];
+    const approval = unsignedEntry(w.wallet, asset, 'approve',
+      [Address.fromString(w.wallet).toScVal(), Address.fromString(service).toScVal(), amount,
+        nativeToScVal(live, { type: 'u32' })]).rootInvocation;
+    const base = unsignedEntry(w.wallet, service, 'open_allowance', ask);
+    const tree = new xdr.SorobanAuthorizationEntry({
+      credentials: base.credentials,
+      rootInvocation: new xdr.SorobanAuthorizedInvocation({
+        function: base.rootInvocation.function, subInvocations: [approval],
+      }),
+    });
+    const expiration = await w.net.latestLedger() + AUTH_LEDGERS;
+    const signedTree = await authorizeEntry(tree, async (_preimage, payload) => ({
+      signatureScVal: encodeAccountSignature(policy,
+        w.roles.signer.sign(Buffer.concat([Buffer.from(payload), Buffer.from(policy)]))),
+    }), expiration, w.net.passphrase, w.wallet);
+    expectAuthRefusal(await enforce(service, 'open_allowance', ask, [signedTree]), 'an allowance for the service',
+      /Error\(Contract, #11\)/);
+
+    // Another service's call, or this service under a policy that does not permit it, is refused before signing.
+    await expectCheck({ amount: 3n * UNIT, policyHash: policy, service: { contract: asset, service_id: serviceId } },
+      'PolicyDenied');
+    await expectCheck({ amount: 3n * UNIT, service: rule }, 'PolicyDenied');
+    expect(await receipts()).toBe(1n);
+    expect(attacker.publicKey()).not.toBe(signer.publicKey());
   }, TIMEOUT);
 });

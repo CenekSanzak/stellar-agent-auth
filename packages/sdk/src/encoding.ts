@@ -495,7 +495,7 @@ const WALLET_ENCODERS: { [M in WalletMethod]: (args: WalletArgs[M]) => xdr.ScVal
   policies: () => [],
   policy: (a) => [bytes32(a.policy_hash)],
   policy_state: (a) => [bytes32(a.policy_hash)],
-  check_payment: (a) => [bytes32(a.policy_hash), address(a.asset), address(a.recipient), positiveAmount(a.amount)],
+  check_payment: (a) => [bytes32(a.policy_hash), actionScVal(a.action)],
   audit_head: () => [],
 };
 
@@ -545,7 +545,7 @@ function auditOutcome(outcome: AuditOutcome): xdr.ScVal {
       return vec([sym(outcome.kind), record({
         policy_hash: bytes32(outcome.policy_hash),
         authorization: bytes32(outcome.authorization),
-        transfer: transferScVal(outcome.transfer),
+        action: actionScVal(outcome.action),
       })]);
     default:
       throw new Error('Unknown audit outcome');
@@ -630,10 +630,10 @@ function decodeAuditOutcome(value: xdr.ScVal): AuditOutcome {
       };
     }
     case 'AccountPayment': {
-      const field = fields(payload, ['authorization', 'policy_hash', 'transfer'] as const, 'AccountPayment');
+      const field = fields(payload, ['action', 'authorization', 'policy_hash'] as const, 'AccountPayment');
       return {
         kind: tag, policy_hash: decodeBytes32(field('policy_hash')),
-        authorization: decodeBytes32(field('authorization')), transfer: decodeTransfer(field('transfer')),
+        authorization: decodeBytes32(field('authorization')), action: decodeActionValue(field('action')),
       };
     }
     default:
