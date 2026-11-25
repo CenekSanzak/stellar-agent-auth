@@ -10,8 +10,9 @@
 //! chain whose head is stored on-chain.
 //!
 //! The wallet is also a custom account with one narrow power: under the same policies and the same
-//! budgets it authorizes a transfer of a policy asset that an asset contract asks it to authorize.
-//! That lets a service pull its payment from the wallet; see `account`.
+//! budgets it authorizes a payment that another contract asks it to authorize. That is a plain
+//! transfer of a policy asset, or a call to the one service a policy permits together with the
+//! transfer that call makes. See `account`.
 
 use soroban_sdk::{
     auth::{Context, CustomAccountInterface},
@@ -22,7 +23,7 @@ use soroban_sdk::{
     Address, BytesN, Env, Vec,
 };
 use stellar_agent_auth_shared_types::{
-    action::{AccountSignature, ActionRequest, Transfer},
+    action::{AccountSignature, Action, ActionRequest, Transfer},
     audit::{AuditHead, AuditOutcome},
     errors::Error,
     identity::require_contract,
@@ -163,28 +164,18 @@ impl SmartWallet {
         execution::execute(&env, &hash, policy, request)
     }
 
-    /// What a payment of `amount` of `asset` to `recipient` under the policy would leave as the
-    /// policy's state, or the error that would refuse it now. It applies every rule both payment
-    /// paths share and authenticates nobody, so it says why a payment would be refused before
-    /// anything is signed. A refusal on the account path otherwise reaches the caller only as a
-    /// host authorization failure.
+    /// What `action` under the policy would leave as the policy's state on the account path, or
+    /// the error that would refuse it now. It applies every rule both payment paths share and
+    /// authenticates nobody, so it says why a payment would be refused before anything is signed.
+    /// A refusal on the account path otherwise reaches the caller only as a host authorization
+    /// failure.
     pub fn check_payment(
         env: Env,
         policy_hash: BytesN<32>,
-        asset: Address,
-        recipient: Address,
-        amount: i128,
+        action: Action,
     ) -> Result<PolicyState, Error> {
         storage::extend_instance(&env);
-        account::preview(
-            &env,
-            &policy_hash,
-            &Transfer {
-                asset,
-                recipient,
-                amount,
-            },
-        )
+        account::preview(&env, &policy_hash, &action)
     }
 
     pub fn owner(env: Env) -> Address {

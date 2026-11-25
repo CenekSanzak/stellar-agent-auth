@@ -729,15 +729,24 @@ fn approval_rejects_policies_the_wallet_cannot_enforce() {
         service_id: BytesN::from_array(env, &[3; 32]),
     };
     let cases = [
-        // Service payments are outside the v1 wallet.
+        // A permitted service must be a contract, and not the wallet itself.
         with(&|p| {
             p.action_kinds = vec![env, ActionKind::ServicePayment, ActionKind::Transfer];
-            p.service = ServicePermission::Restricted(service.clone());
+            p.service = ServicePermission::Restricted(ServiceRule {
+                contract: account(env),
+                ..service.clone()
+            });
         }),
         with(&|p| {
             p.action_kinds = vec![env, ActionKind::ServicePayment];
-            p.service = ServicePermission::Restricted(service.clone());
+            p.service = ServicePermission::Restricted(ServiceRule {
+                contract: t.wallet.clone(),
+                ..service.clone()
+            });
         }),
+        // The canonical shape ties the permission to the action kind, both ways.
+        with(&|p| p.service = ServicePermission::Restricted(service.clone())),
+        with(&|p| p.action_kinds = vec![env, ActionKind::ServicePayment, ActionKind::Transfer]),
         // The signer must be a standard account other than the owner.
         with(&|p| p.signer = Address::generate(env)),
         with(&|p| p.signer = t.owner.clone()),

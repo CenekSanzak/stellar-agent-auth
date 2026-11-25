@@ -15,8 +15,11 @@ use soroban_sdk::{
     Address, Bytes, BytesN, Env, Event, IntoVal, InvokeError, String, Symbol, TryFromVal, Val, Vec,
 };
 use stellar_agent_auth_agent_registry::{AgentRegistry, AgentRegistryClient};
+use stellar_agent_auth_demo_service::{DemoService, DemoServiceClient, Terms};
 use stellar_agent_auth_shared_types::{
-    action::{AccountSignature, Action, ActionKind, ActionRequest, Transfer},
+    action::{
+        AccountSignature, Action, ActionKind, ActionRequest, ServicePayment, ServiceRule, Transfer,
+    },
     attestation::{
         risk_score, AssessmentMode, CheckKind, CheckOutcome, CheckResult, VerificationResult,
     },
@@ -276,30 +279,48 @@ impl Test {
         )
     }
 
-    /// A complete entry for `asset.transfer(wallet, to, amount)` under `policy`, signed by `key`
-    /// over the real payload hash, and that hash.
-    fn entry(
+    /// The authorized invocation `contract.name(args)` with `children` below it.
+    fn invocation(
+        &self,
+        contract: &Address,
+        name: &str,
+        args: std::vec::Vec<xdr::ScVal>,
+        children: std::vec::Vec<xdr::SorobanAuthorizedInvocation>,
+    ) -> xdr::SorobanAuthorizedInvocation {
+        xdr::SorobanAuthorizedInvocation {
+            function: xdr::SorobanAuthorizedFunction::ContractFn(xdr::InvokeContractArgs {
+                contract_address: sc_address(&self.env, contract),
+                function_name: name.try_into().unwrap(),
+                args: args.try_into().unwrap(),
+            }),
+            sub_invocations: children.try_into().unwrap(),
+        }
+    }
+
+    fn transfer_invocation(&self, to: &Address, amount: i128) -> xdr::SorobanAuthorizedInvocation {
+        let env = &self.env;
+        self.invocation(
+            &self.asset,
+            "transfer",
+            std::vec![
+                scval(env, self.wallet.clone()),
+                scval(env, to.clone()),
+                scval(env, amount),
+            ],
+            std::vec![],
+        )
+    }
+
+    /// The wallet's entry for `invocation` under `policy`, signed by `key` over the real payload
+    /// hash, and that hash.
+    fn signed(
         &self,
         key: &SigningKey,
         policy: &BytesN<32>,
-        to: &Address,
-        amount: i128,
+        invocation: xdr::SorobanAuthorizedInvocation,
         nonce: i64,
     ) -> (xdr::SorobanAuthorizationEntry, [u8; 32]) {
         let env = &self.env;
-        let args = std::vec![
-            scval(env, self.wallet.clone()),
-            scval(env, to.clone()),
-            scval(env, amount),
-        ];
-        let invocation = xdr::SorobanAuthorizedInvocation {
-            function: xdr::SorobanAuthorizedFunction::ContractFn(xdr::InvokeContractArgs {
-                contract_address: sc_address(env, &self.asset),
-                function_name: "transfer".try_into().unwrap(),
-                args: args.try_into().unwrap(),
-            }),
-            sub_invocations: xdr::VecM::default(),
-        };
         let expiration = env.ledger().sequence() + 10;
         let preimage =
             xdr::HashIdPreimage::SorobanAuthorization(xdr::HashIdPreimageSorobanAuthorization {
@@ -323,6 +344,18 @@ impl Test {
             root_invocation: invocation,
         };
         (entry, payload)
+    }
+
+    /// A complete entry for `asset.transfer(wallet, to, amount)` under `policy`, signed by `key`.
+    fn entry(
+        &self,
+        key: &SigningKey,
+        policy: &BytesN<32>,
+        to: &Address,
+        amount: i128,
+        nonce: i64,
+    ) -> (xdr::SorobanAuthorizationEntry, [u8; 32]) {
+        self.signed(key, policy, self.transfer_invocation(to, amount), nonce)
     }
 
     /// A plain `asset.transfer(wallet, to, amount)` carrying `entry` and nothing else.
@@ -358,6 +391,15 @@ impl Test {
     }
 }
 
+/// A plain transfer, as `check_payment` takes it.
+fn pay(asset: &Address, to: &Address, amount: i128) -> Action {
+    Action::Transfer(Transfer {
+        asset: asset.clone(),
+        recipient: to.clone(),
+        amount,
+    })
+}
+
 #[test]
 fn pays_a_plain_transfer_and_records_it() {
     let t = setup(100);
@@ -377,11 +419,11 @@ fn pays_a_plain_transfer_and_records_it() {
         outcome: AuditOutcome::AccountPayment(AccountPayment {
             policy_hash: t.policy.clone(),
             authorization: BytesN::from_array(&t.env, &payload),
-            transfer: Transfer {
+            action: Action::Transfer(Transfer {
                 asset: t.asset.clone(),
                 recipient: t.recipient.clone(),
                 amount: 3,
-            },
+            }),
         }),
     };
     let hash = audit_hash(&t.env, &expected).unwrap();
@@ -710,7 +752,7 @@ fn check_payment_explains_a_refusal_without_authorization() {
     let t = setup(100);
     let check = |asset: &Address, to: &Address, amount: i128| {
         t.client()
-            .try_check_payment(&t.policy, asset, to, &amount)
+            .try_check_payment(&t.policy, &pay(asset, to, amount))
             .map(|state| state.unwrap())
             .map_err(|error| error.unwrap())
     };
@@ -733,7 +775,7 @@ fn check_payment_explains_a_refusal_without_authorization() {
     let unknown = BytesN::from_array(&t.env, &[2; 32]);
     assert_eq!(
         t.client()
-            .try_check_payment(&unknown, &t.asset, &t.recipient, &1)
+            .try_check_payment(&unknown, &pay(&t.asset, &t.recipient, 1))
             .map_err(|error| error.unwrap()),
         Err(Error::NotFound)
     );
@@ -755,4 +797,432 @@ fn check_payment_explains_a_refusal_without_authorization() {
 
     t.as_owner(|| t.client().pause());
     assert_eq!(check(&t.asset, &t.recipient, 1), Err(Error::Paused));
+}
+
+// --- Service payments ---------------------------------------------------------------------------
+
+/// The demo service's price, within the policy's 5-per-payment cap.
+const PRICE: i128 = 3;
+
+struct Service {
+    address: Address,
+    rule: ServiceRule,
+    /// A 5-per-payment, 20-per-day policy that permits this service.
+    policy: BytesN<32>,
+}
+
+impl Test {
+    /// Deploys the demo service, selling for `PRICE` paid to the policy's recipient, and approves a
+    /// policy permitting it with the given action kinds.
+    fn with_service(&self, id: u8, kinds: &[ActionKind]) -> Service {
+        let env = &self.env;
+        let service_id = BytesN::from_array(env, &[7; 32]);
+        let address = env.register(
+            DemoService,
+            (Terms {
+                asset: self.asset.clone(),
+                payee: self.recipient.clone(),
+                price: PRICE,
+                service_id: service_id.clone(),
+            },),
+        );
+        let rule = ServiceRule {
+            contract: address.clone(),
+            service_id,
+        };
+        let mut terms = self.terms(id, 5, 20);
+        terms.action_kinds = Vec::from_slice(env, kinds);
+        terms.service = ServicePermission::Restricted(rule.clone());
+        let policy = self.as_owner(|| self.client().approve_policy(&terms));
+        Service {
+            address,
+            rule,
+            policy,
+        }
+    }
+
+    /// The context of `contract.name(wallet, asset, recipient, amount, service_id)`.
+    fn service_call(
+        &self,
+        contract: &Address,
+        name: &str,
+        asset: &Address,
+        recipient: &Address,
+        amount: i128,
+        service_id: &BytesN<32>,
+    ) -> Context {
+        let env = &self.env;
+        Context::Contract(ContractContext {
+            contract: contract.clone(),
+            fn_name: Symbol::new(env, name),
+            args: vec![
+                env,
+                self.wallet.clone().into_val(env),
+                asset.into_val(env),
+                recipient.into_val(env),
+                amount.into_val(env),
+                service_id.into_val(env),
+            ],
+        })
+    }
+
+    /// The service's own call for `PRICE`, as the wallet's policy expects it.
+    fn purchase(&self, service: &Service) -> Context {
+        self.service_call(
+            &service.address,
+            "pay_for_service",
+            &self.asset,
+            &self.recipient,
+            PRICE,
+            &service.rule.service_id,
+        )
+    }
+
+    /// The authorized tree of a purchase: the service call with the transfer it makes below it.
+    fn purchase_invocation(&self, service: &Service) -> xdr::SorobanAuthorizedInvocation {
+        let env = &self.env;
+        self.invocation(
+            &service.address,
+            "pay_for_service",
+            std::vec![
+                scval(env, self.wallet.clone()),
+                scval(env, self.asset.clone()),
+                scval(env, self.recipient.clone()),
+                scval(env, PRICE),
+                scval(env, service.rule.service_id.clone()),
+            ],
+            std::vec![self.transfer_invocation(&self.recipient, PRICE)],
+        )
+    }
+
+    /// Calls the service the way anyone would, carrying `entry` and nothing else.
+    fn buy(&self, service: &Service, entry: xdr::SorobanAuthorizationEntry) -> bool {
+        self.env.set_auths(&[entry]);
+        DemoServiceClient::new(&self.env, &service.address)
+            .try_pay_for_service(
+                &self.wallet,
+                &self.asset,
+                &self.recipient,
+                &PRICE,
+                &service.rule.service_id,
+            )
+            .is_ok()
+    }
+
+    fn service_payment(&self, service: &Service) -> Action {
+        Action::ServicePayment(ServicePayment {
+            service: service.rule.clone(),
+            payment: Transfer {
+                asset: self.asset.clone(),
+                recipient: self.recipient.clone(),
+                amount: PRICE,
+            },
+        })
+    }
+}
+
+#[test]
+fn pays_a_service_in_its_own_call_and_records_it() {
+    let t = setup(100);
+    let s = t.with_service(9, &[ActionKind::ServicePayment, ActionKind::Transfer]);
+    let head: AuditHead = t.client().audit_head();
+    let (entry, payload) = t.signed(&t.key, &s.policy, t.purchase_invocation(&s), 1);
+    assert!(t.buy(&s, entry));
+
+    // Read before any other call: the test host keeps the events of the latest invocation only.
+    let expected = AuditEntry {
+        schema_version: 1,
+        wallet: t.wallet.clone(),
+        sequence: head.sequence + 1,
+        previous_hash: head.hash.clone(),
+        ledger: t.env.ledger().sequence(),
+        timestamp: NOW,
+        actor: t.signer.clone(),
+        outcome: AuditOutcome::AccountPayment(AccountPayment {
+            policy_hash: s.policy.clone(),
+            authorization: BytesN::from_array(&t.env, &payload),
+            action: t.service_payment(&s),
+        }),
+    };
+    let hash = audit_hash(&t.env, &expected).unwrap();
+    let event = WalletAudit {
+        sequence: expected.sequence,
+        entry: expected,
+        hash,
+    };
+    assert_eq!(
+        t.env.events().all().filter_by_contract(&t.wallet),
+        std::vec![event.to_xdr(&t.env, &t.wallet)]
+    );
+    t.env.set_auths(&[]);
+
+    // The service took its price and issued its receipt in the same invocation.
+    assert_eq!(DemoServiceClient::new(&t.env, &s.address).receipts(), 1);
+    assert_eq!(t.balance(&t.recipient), PRICE);
+    assert_eq!(t.balance(&t.wallet), 100 - PRICE);
+    let state = t.client().policy_state(&s.policy);
+    assert_eq!(state.daily_spend.get_unchecked(0).amount, PRICE);
+    assert_eq!(state.next_sequence, 1);
+}
+
+#[test]
+fn a_service_payment_cannot_be_split_from_its_service_call() {
+    let t = setup(100);
+    let s = t.with_service(9, &[ActionKind::ServicePayment, ActionKind::Transfer]);
+    let service = DemoServiceClient::new(&t.env, &s.address);
+
+    // An entry signed for the purchase is rooted at the service call. It does not authorize the
+    // transfer on its own, so nobody can take the payment and skip the service.
+    let (purchase, _) = t.signed(&t.key, &s.policy, t.purchase_invocation(&s), 1);
+    assert!(!t.pay(purchase.clone(), &t.recipient, PRICE));
+    // An entry signed for a plain transfer does not buy the service either: the service requires
+    // the wallet's authorization for its own call.
+    let (plain, _) = t.entry(&t.key, &s.policy, &t.recipient, PRICE, 2);
+    assert!(!t.buy(&s, plain));
+    t.env.set_auths(&[]);
+    assert_eq!(service.receipts(), 0);
+    assert_eq!(t.balance(&t.recipient), 0);
+
+    // Still good for exactly what it was signed for.
+    assert!(t.buy(&s, purchase));
+    t.env.set_auths(&[]);
+    assert_eq!(service.receipts(), 1);
+}
+
+#[test]
+fn authorizes_a_service_call_only_in_exactly_the_permitted_shape() {
+    let t = setup(100);
+    let s = t.with_service(9, &[ActionKind::ServicePayment, ActionKind::Transfer]);
+    let signature = t.sign(&t.key, &PAYLOAD, &s.policy);
+    let id = &s.rule.service_id;
+    let other = Address::generate(&t.env);
+    let other_id = BytesN::from_array(&t.env, &[8; 32]);
+    let transfer = || t.transfer(&t.recipient, PRICE);
+    let call = |contract: &Address, name: &str, asset: &Address, to: &Address, amount, id| {
+        t.service_call(contract, name, asset, to, amount, id)
+    };
+    let before = t.client().policy_state(&s.policy);
+
+    let denied = [
+        // Another service contract, or another method of the permitted one.
+        vec![
+            &t.env,
+            call(&other, "pay_for_service", &t.asset, &t.recipient, PRICE, id),
+            transfer(),
+        ],
+        vec![
+            &t.env,
+            call(
+                &s.address,
+                "open_allowance",
+                &t.asset,
+                &t.recipient,
+                PRICE,
+                id,
+            ),
+            transfer(),
+        ],
+        // Another service ID than the policy names.
+        vec![
+            &t.env,
+            call(
+                &s.address,
+                "pay_for_service",
+                &t.asset,
+                &t.recipient,
+                PRICE,
+                &other_id,
+            ),
+            transfer(),
+        ],
+        // Terms in the call that are not the terms of the transfer below it.
+        vec![
+            &t.env,
+            call(
+                &s.address,
+                "pay_for_service",
+                &t.asset,
+                &t.recipient,
+                PRICE + 1,
+                id,
+            ),
+            transfer(),
+        ],
+        vec![
+            &t.env,
+            call(
+                &s.address,
+                "pay_for_service",
+                &t.asset,
+                &t.stranger,
+                PRICE,
+                id,
+            ),
+            transfer(),
+        ],
+        vec![
+            &t.env,
+            call(
+                &s.address,
+                "pay_for_service",
+                &t.other_asset,
+                &t.recipient,
+                PRICE,
+                id,
+            ),
+            transfer(),
+        ],
+        // The transfer first, the call alone, the call twice, and a third call.
+        vec![&t.env, transfer(), t.purchase(&s)],
+        vec![&t.env, t.purchase(&s)],
+        vec![&t.env, t.purchase(&s), t.purchase(&s)],
+        vec![&t.env, t.purchase(&s), transfer(), transfer()],
+        // The service call with an allowance below it in place of the transfer.
+        vec![
+            &t.env,
+            t.purchase(&s),
+            t.call(&t.asset, "approve", &t.wallet, &s.address, PRICE),
+        ],
+    ];
+    for contexts in denied {
+        assert_eq!(t.check(&signature, contexts), Err(Ok(Error::PolicyDenied)));
+    }
+    // A transfer to a recipient the policy does not list fails the same rule as a plain one.
+    let unlisted = vec![
+        &t.env,
+        call(
+            &s.address,
+            "pay_for_service",
+            &t.asset,
+            &t.stranger,
+            PRICE,
+            id,
+        ),
+        t.transfer(&t.stranger, PRICE),
+    ];
+    assert_eq!(t.check(&signature, unlisted), Err(Ok(Error::PolicyDenied)));
+    assert_eq!(t.client().policy_state(&s.policy), before);
+
+    assert_eq!(
+        t.check(&signature, vec![&t.env, t.purchase(&s), transfer()]),
+        Ok(())
+    );
+}
+
+#[test]
+fn refuses_an_allowance_the_service_asks_for() {
+    let t = setup(100);
+    let s = t.with_service(9, &[ActionKind::ServicePayment, ActionKind::Transfer]);
+    let env = &t.env;
+    let live_until = env.ledger().sequence() + 100;
+    // The agent key signs exactly what the service will ask the wallet to authorize: its call and
+    // the allowance below it. The wallet still refuses, because that is not a payment.
+    let approval = t.invocation(
+        &t.asset,
+        "approve",
+        std::vec![
+            scval(env, t.wallet.clone()),
+            scval(env, s.address.clone()),
+            scval(env, 50_i128),
+            scval(env, live_until),
+        ],
+        std::vec![],
+    );
+    let ask = t.invocation(
+        &s.address,
+        "open_allowance",
+        std::vec![
+            scval(env, t.wallet.clone()),
+            scval(env, 50_i128),
+            scval(env, live_until)
+        ],
+        std::vec![approval],
+    );
+    let (entry, _) = t.signed(&t.key, &s.policy, ask, 1);
+    env.set_auths(&[entry]);
+    assert!(DemoServiceClient::new(env, &s.address)
+        .try_open_allowance(&t.wallet, &50, &live_until)
+        .is_err());
+    env.set_auths(&[]);
+    assert_eq!(
+        TokenClient::new(env, &t.asset).allowance(&t.wallet, &s.address),
+        0
+    );
+}
+
+#[test]
+fn service_payments_need_the_permission_and_share_the_budget() {
+    let t = setup(100);
+    let s = t.with_service(9, &[ActionKind::ServicePayment, ActionKind::Transfer]);
+    let purchase = || vec![&t.env, t.purchase(&s), t.transfer(&t.recipient, PRICE)];
+
+    // The default policy permits no service: the same two calls are refused under it.
+    assert_eq!(
+        t.check(&t.sign(&t.key, &PAYLOAD, &t.policy), purchase()),
+        Err(Ok(Error::PolicyDenied))
+    );
+    // Under the service policy, purchases and plain transfers draw on one 20-unit day.
+    let signature = t.sign(&t.key, &PAYLOAD, &s.policy);
+    for _ in 0..5 {
+        assert_eq!(t.check(&signature, purchase()), Ok(()));
+    }
+    assert_eq!(
+        t.check(&signature, vec![&t.env, t.transfer(&t.recipient, 5)]),
+        Ok(())
+    );
+    assert_eq!(
+        t.check(&signature, purchase()),
+        Err(Ok(Error::LimitExceeded))
+    );
+    assert_eq!(
+        t.check(&signature, vec![&t.env, t.transfer(&t.recipient, 1)]),
+        Err(Ok(Error::LimitExceeded))
+    );
+
+    // A policy for the service alone does not permit a plain transfer.
+    let only = t.with_service(10, &[ActionKind::ServicePayment]);
+    let signature = t.sign(&t.key, &PAYLOAD, &only.policy);
+    assert_eq!(
+        t.check(&signature, vec![&t.env, t.transfer(&t.recipient, 1)]),
+        Err(Ok(Error::PolicyDenied))
+    );
+    assert_eq!(
+        t.check(
+            &signature,
+            vec![&t.env, t.purchase(&only), t.transfer(&t.recipient, PRICE)]
+        ),
+        Ok(())
+    );
+}
+
+#[test]
+fn check_payment_explains_a_service_payment() {
+    let t = setup(100);
+    let s = t.with_service(9, &[ActionKind::ServicePayment, ActionKind::Transfer]);
+    let check = |policy: &BytesN<32>, action: &Action| {
+        t.client()
+            .try_check_payment(policy, action)
+            .map(|state| state.unwrap())
+            .map_err(|error| error.unwrap())
+    };
+    let after = check(&s.policy, &t.service_payment(&s)).unwrap();
+    assert_eq!(after.daily_spend.get_unchecked(0).amount, PRICE);
+    assert_eq!(t.client().policy_state(&s.policy).daily_spend.len(), 0);
+
+    // Another service, another service ID, or a policy that permits no service.
+    let mut other = t.service_payment(&s);
+    if let Action::ServicePayment(payment) = &mut other {
+        payment.service.service_id = BytesN::from_array(&t.env, &[8; 32]);
+    }
+    assert_eq!(check(&s.policy, &other), Err(Error::PolicyDenied));
+    assert_eq!(
+        check(&t.policy, &t.service_payment(&s)),
+        Err(Error::PolicyDenied)
+    );
+    // The payment inside is held to the policy's own rules.
+    let mut large = t.service_payment(&s);
+    if let Action::ServicePayment(payment) = &mut large {
+        payment.payment.amount = 6;
+    }
+    assert_eq!(check(&s.policy, &large), Err(Error::LimitExceeded));
 }

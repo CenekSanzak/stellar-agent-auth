@@ -44,14 +44,19 @@ pub fn execute(
     if now >= request.deadline {
         return Err(Error::Expired);
     }
-    if !policy.action_kinds.contains(request.action.kind()) {
-        return Err(Error::PolicyDenied);
-    }
     let Action::Transfer(ref transfer) = request.action else {
-        // Approval admits transfer-only policies, so this is unreachable in v1; deny regardless.
+        // `execute` pushes plain transfers. A service payment has to be authorized together with
+        // the service's own call, which only the account path can do.
         return Err(Error::PolicyDenied);
     };
-    permit(env, &policy, &mut state, transfer, now)?;
+    permit(
+        env,
+        &policy,
+        &mut state,
+        ActionKind::Transfer,
+        transfer,
+        now,
+    )?;
 
     state.next_sequence = state
         .next_sequence
@@ -87,14 +92,16 @@ pub fn gate(env: &Env, hash: &BytesN<32>, now: u64) -> Result<PolicyState, Error
 /// Whether `policy` permits `transfer` at `now`, adding it to `state`'s spend. Both payment paths
 /// apply exactly these rules to one budget, so neither can spend what the other has spent. Checks,
 /// in order: the validity window (`Expired` at or after `valid_until`, `PolicyDenied` before
-/// `valid_after`); transfers as a permitted action kind, an approved asset, and a recipient on the
+/// `valid_after`); `kind` as a permitted action kind, an approved asset, and a recipient on the
 /// allowlist and not on the blocklist (`PolicyDenied`); the per-transfer cap and today's per-asset
 /// budget (`LimitExceeded`); then the live identity and signer, and the provider's current
-/// verification result. Nothing is stored.
+/// verification result. A service payment's transfer is held to the same asset, recipient and
+/// budget rules as a plain one. Nothing is stored.
 pub fn permit(
     env: &Env,
     policy: &Policy,
     state: &mut PolicyState,
+    kind: ActionKind,
     transfer: &Transfer,
     now: u64,
 ) -> Result<(), Error> {
@@ -104,7 +111,7 @@ pub fn permit(
     if now < policy.valid_after {
         return Err(Error::PolicyDenied);
     }
-    if !policy.action_kinds.contains(ActionKind::Transfer) {
+    if !policy.action_kinds.contains(kind) {
         return Err(Error::PolicyDenied);
     }
     let limit = rules::asset_limit(policy, &transfer.asset)?;

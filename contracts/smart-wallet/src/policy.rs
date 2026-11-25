@@ -1,6 +1,5 @@
 use soroban_sdk::{Address, BytesN, Env, Vec};
 use stellar_agent_auth_shared_types::{
-    action::ActionKind,
     audit::AuditOutcome,
     encoding::policy_hash,
     errors::Error,
@@ -81,21 +80,21 @@ pub fn revoke(env: &Env, owner: &Address, hash: &BytesN<32>) -> Result<PolicySta
     Ok(state)
 }
 
-/// Rules beyond the shared canonical shape. In v1 the wallet executes plain transfers only, so a
-/// policy naming service payments is refused until the restricted service path exists. The signer
-/// must be a standard account other than the owner, every asset a contract, and no recipient the
-/// wallet itself.
+/// Rules beyond the shared canonical shape. The signer must be a standard account other than the
+/// owner, every asset a contract, and no recipient the wallet itself. A policy that permits service
+/// payments names one service contract, which must be a contract other than the wallet; the
+/// canonical shape already ties that permission to the `ServicePayment` action kind.
 fn validate_for_wallet(
     env: &Env,
     wallet: &Address,
     owner: &Address,
     policy: &Policy,
 ) -> Result<(), Error> {
-    if policy.action_kinds.len() != 1
-        || policy.action_kinds.get_unchecked(0) != ActionKind::Transfer
-        || policy.service != ServicePermission::Disabled
-    {
-        return Err(Error::InvalidInput);
+    if let ServicePermission::Restricted(rule) = &policy.service {
+        require_contract(env, &rule.contract)?;
+        if rule.contract == *wallet {
+            return Err(Error::InvalidInput);
+        }
     }
     require_account(env, &policy.signer)?;
     if policy.signer == *owner {
