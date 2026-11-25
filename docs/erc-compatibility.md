@@ -1,33 +1,41 @@
 # ERC-8126 and ERC-8196 compatibility
 
 **Specs:** [ERC-8126](https://eips.ethereum.org/EIPS/eip-8126) (AI Agent Verification) and
-[[ERC-8196](https://eips.ethereum.org/EIPS/eip-8196)](AI Agent Authenticated Wallet). 
+[ERC-8196](https://eips.ethereum.org/EIPS/eip-8196) (AI Agent Authenticated Wallet).
 
-Related repository which will use these standards: [Stellar Agent Services](https://github.com/AlgoriaLabs/stellar-agent-services)
+**Whose view this is.** This document was written by the
+[Stellar Agent Services](https://github.com/AlgoriaLabs/stellar-agent-services) project. It describes what that
+project needs from Stellar implementations of ERC-8126 and ERC-8196, and this repository is one such implementation.
+"Stellar Agent Services", "the provider verifier" and "the payment client" mean that project; "this repository"
+means stellar-agent-auth. Everything marked **Proposed** is that project's proposal, not a decision made here.
+[Where this repository stands](#where-this-repository-stands) records what is and is not implemented.
 
 ## Goal
 
-Implement stellar versions of these standards. To have common interfaces for future integrations.
+Implement Stellar versions of these standards with interfaces both projects can share, so that future integrations
+fit together.
 
 ## How the layers fit
 
 | Layer | Question it answers | Score | Built by |
 | --- | --- | --- | --- |
 | Stellar 8004 (ERC-8004) | Who is this agent? | – | `stellar-8004` (exists) |
-| ERC-8126 | Is this agent safe? | risk 0–100, **lower is better** | parallel project |
-| Provider Standard verifier (this repo) | Does this service follow the standard, take payment correctly and recover jobs? | conformance 0–100, **higher is better** | this repo |
-| ERC-8196 | Is this action allowed right now? | – | parallel project (on-chain); our payment client enforces off-chain first |
+| ERC-8126 | Is this agent safe? | risk 0–100, **lower is better** | this repository |
+| Provider Standard verifier | Does this service follow the standard, take payment correctly and recover jobs? | conformance 0–100, **higher is better** | Stellar Agent Services |
+| ERC-8196 | Is this action allowed right now? | – | this repository (on-chain); the payment client enforces off-chain first |
 | x402 | How is the service paid? | – | public `@x402/*` packages |
 
-- **Complementary, not overlapping.** Our checks (C1–C6) test conformance, while ERC-8126 tests security risk.
-  They overlap in two places:
-  - ERC-8126 Web Application Verification touches our C1 and C6 (HTTPS, reachability).
-  - ERC-8126 Wallet Verification touches our C4 (the `payTo` wallet).
-- **No compliance claim.** We never say our receipts are ERC-8126.
+- **Complementary, not overlapping.** The provider verifier's checks (C1–C6) test conformance, while ERC-8126 tests
+  security risk. They overlap in two places:
+  - ERC-8126 Web Application Verification touches C1 and C6 (HTTPS, reachability).
+  - ERC-8126 Wallet Verification touches C4 (the `payTo` wallet).
+- **No compliance claim.** Stellar Agent Services never presents its receipts as ERC-8126 results. This repository
+  does not claim full ERC-8126 or ERC-8196 compliance either; see
+  [verification coverage](VERIFICATION_COVERAGE.md).
 
 ## Ethereum to Stellar mapping
 
-Both projects need this table. Where we pick different answers, our code and theirs stop fitting together.
+Both projects need this table. Where they pick different answers, their code stops fitting together.
 
 | ERC concept | Stellar equivalent |
 | --- | --- |
@@ -42,7 +50,7 @@ Both projects need this table. Where we pick different answers, our code and the
 | `agentWallet` | Stellar 8004 `get_agent_wallet(agent_id)` |
 | `eth_getCode` (ETV, SCV) | Soroban contract instance and Wasm hash; SAC or SEP-41 for tokens |
 
-ETV and SCV are Ethereum/Solidity-specific. Their Stellar versions (Soroban Wasm) are for the parallel project to
+ETV and SCV are Ethereum/Solidity-specific. Their Stellar versions (Soroban Wasm) are for this repository to
 define.
 
 ## Touchpoints
@@ -54,10 +62,10 @@ define.
 - **Proposed: `payTo` equals the on-chain `agent_wallet`.**
   - ERC-8004 defines `agentWallet` as "the address where the agent receives payments".
   - With this rule, ERC-8126 Wallet Verification assesses exactly the address that users pay.
-  - Our verifier enforces it in C2.
-- **Registration file fields.** The provider's registration file lists our manifest under `services`. It keeps the
-  standard ERC-8004 fields (`image`, `services[].endpoint`), so an ERC-8126 resolver finds the HTTPS endpoint
-  without knowing our manifest format.
+  - The provider verifier enforces it in C2.
+- **Registration file fields.** The provider's registration file lists the Stellar Agent Services manifest under
+  `services`. It keeps the standard ERC-8004 fields (`image`, `services[].endpoint`), so an ERC-8126 resolver finds
+  the HTTPS endpoint without knowing that manifest format.
 
 ### T2. Validation Registry records
 
@@ -71,7 +79,7 @@ corrupt every average.
 **Proposed:**
 - `response` is always higher-is-better. ERC-8126 posts `100 − overallRiskScore`. The raw risk score and the proof
   ids go in the response document.
-- Each standard uses its own tag. Ours is `provider-standard-v1`; ERC-8126 uses e.g. `erc8126` or one tag per type
+- Each standard uses its own tag. The provider verifier's is `provider-standard-v1`; ERC-8126 uses e.g. `erc8126` or one tag per type
   (`erc8126-wav` and so on).
 - Response documents share an envelope:
   - `standard`, `agentId`, `network`, `validator`, `checkedAt`
@@ -88,31 +96,31 @@ corrupt every average.
 ERC-8196 gates actions on `getLatestRiskScore(agentId)`. The payment client and Stellar Agent Search will want the
 same value.
 
-**Proposed:** the Stellar ERC-8126 project does one of two things:
+**Proposed:** this repository does one of two things:
 - exposes `get_latest_risk_score(agent_id) -> Option<u32>` on a Soroban contract, or
 - documents exactly how to derive it from the Validation Registry (validator address plus tag).
 
-Our code reads it through one small interface (a "risk source"), so either choice works. We don't depend on their
-code.
+Stellar Agent Services reads it through one small interface (a "risk source"), so either choice works and neither
+project depends on the other's code.
 
 ### T4. Payment policy
 
 This is input to the payment client design, which is still open.
 
-ERC-8196's policy is close to our "spending controls": a per-transaction cap, a daily cap, a validity window,
+ERC-8196's policy is close to the payment client's "spending controls": a per-transaction cap, a daily cap, a validity window,
 allow and block lists, and a verification gate. Applied to x402 on Stellar, it has four gaps that need a shared
 answer:
 
 1. **Limits are in native value (`wei`).** x402 pays USDC through the token contract's `transfer`, so the native
    value is 0. Limits must be per asset.
 2. **`allowedContracts` would only ever contain the USDC contract.** The real payee is an argument of `transfer`.
-   We need payee allow and block lists.
-3. **The ERC-8126 gate checks the *acting* agent**, which is the policy's `agentId`. In our flow the risk that
-   matters most is the *payee* (the provider). We need a payee-side gate, e.g. a maximum provider risk or a required
-   `provider-standard-v1` record.
+   The policy needs payee allow and block lists.
+3. **The ERC-8126 gate checks the *acting* agent**, which is the policy's `agentId`. In the x402 flow the risk that
+   matters most is the *payee* (the provider). The policy needs a payee-side gate, e.g. a maximum provider risk or a
+   required `provider-standard-v1` record.
 4. **The name `minVerificationScore` is misleading.** It is actually a *maximum* risk score.
 
-**Proposed for the policy:** whichever design we choose, the payment client's policy uses ERC-8196 field names plus
+**Proposed for the policy:** whichever design is chosen, the payment client's policy uses ERC-8196 field names plus
 named Stellar extensions. The same policy can then be registered on an ERC-8196 smart account later.
 
 **Proposed for the journal:** ERC-8196 requires a hash-chained audit trail (`previousHash`). The payment client
@@ -135,25 +143,48 @@ The facilitator imposes these constraints:
 
 The policy check runs inside `__check_auth`, which is outside the auth tree, so these should hold.
 
-**Not verified yet.** This needs a testnet spike, run jointly with the parallel project.
+**Not verified yet.** This needs a testnet spike, run jointly by both projects.
 
-## What this repository does and doesn't do
+## What Stellar Agent Services does and doesn't do
 
 **Does** (cheap, and keeps the door open):
 - C2 checks that `payTo` equals `agent_wallet` (T1).
 - Validation records are higher-is-better, use their own tag, and are hashed with JCS (T2).
-- A risk-source interface with no dependency on the parallel project (T3).
+- A risk-source interface with no dependency on this repository (T3).
 - Payment client policy and journal formats aligned with ERC-8196, once that design is chosen (T4).
 
 **Doesn't do:**
 - ERC-8126 checks, zero-knowledge proofs (PDV) or QCV
 - an ERC-8196 contract
-- block any SOW deliverable on the parallel project's timeline
+- make any of its SOW deliverables wait on this repository's timeline
 
-## Open questions for the parallel project
+## Open questions for this repository
 
 1. The score direction and tag names in the Validation Registry (T2).
 2. An on-chain risk-score contract, or a score derived from the registry (T3)?
 3. The Stellar profiles for ETV and SCV.
 4. The policy extensions: per-asset limits, payee lists, a payee gate (T4).
-5. Which smart-account base they will build on, and when a testnet x402 spike is possible (T5).
+5. Which smart-account base it will build on, and when a testnet x402 spike is possible (T5).
+
+## Where this repository stands
+
+As of 2026-11-20. None of the proposals above has been accepted or rejected here, and none of the open questions is
+answered. This section only records what the code does today.
+
+| Touchpoint | In this repository today | Fits the proposal? |
+| --- | --- | --- |
+| Mapping: agent identity | Its own agent registry allocates `u64` agent IDs. It does not resolve identities from Stellar 8004. | No |
+| T1: registration file | Metadata schema v1 has `name`, `description` and `endpoints`. It has no `payTo` or agent wallet field. | No |
+| T2: validation records | Results live in this repository's verification registry, with risk 0–100 where lower is better. Nothing is posted to a Validation Registry. The evidence hash is the SHA-256 of the verifier's own canonical JSON report, which has not been compared with RFC 8785. | No |
+| T3: reading a risk score | `latest`, `current` and `check` are keyed by agent ID, identity revision and provider. There is no `get_latest_risk_score(agent_id)`. | No |
+| T4: per-asset limits | Per-transfer and per-UTC-day caps for each asset contract | Yes |
+| T4: payee lists | Recipient allow and block lists; an empty allowlist permits nothing | Yes |
+| T4: risk threshold name | `max_risk_score`, an inclusive maximum | Yes |
+| T4: payee-side gate | The wallet checks only the acting agent's verification, never the recipient's | No |
+| T4: audit trail | Every owner action and execution extends a hash chain whose head is stored on-chain | Yes |
+| T5: paying x402 services | The wallet is a custody contract that pays through its own `execute` entry point. It is not a custom account and has no `__check_auth`, so it cannot authorize a token `transfer` as the payer. | No |
+
+The rules behind these rows are in [the wallet decision](decisions/0005-smart-wallet.md),
+[the verification registry decision](decisions/0004-verification-registry.md) and
+[verification coverage](VERIFICATION_COVERAGE.md). Whether the wallet should also be a custom account is an open
+design question, tracked in [issue #2](https://github.com/CenekSanzak/stellar-agent-auth/issues/2).
