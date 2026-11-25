@@ -2,7 +2,7 @@
 
 This project lets a wallet owner give an AI agent limited permission to use funds on Stellar. The owner keeps control of the wallet, while the agent can perform only the actions the owner has approved.
 
-**Current status:** The agent registry (P2), verification registry and limited verifier (P3), the smart wallet (P4), and the SDK pipeline, submitter and CLI (P5) are implemented and tested on a local network. The wallet's account payment path (P9), with a demo service and the CLI command for it, is built and tested on a local network and on Testnet. The indexer and demo below are still planned. The P3 registries are deployed on Testnet as a development checkpoint, recorded in `deployments/testnet/p3-checkpoint.json`.
+**Current status:** The agent registry (P2), verification registry and limited verifier (P3), the smart wallet (P4), and the SDK pipeline, submitter and CLI (P5) are implemented and tested on a local network. The wallet's account payment path (P9), with a demo service and the CLI command for it, is built and tested on a local network and on Testnet. The indexer (P6) is built and tested on a local network, and has indexed a Testnet wallet from the public RPC. The demo below is still planned. The P3 registries are deployed on Testnet as a development checkpoint, recorded in `deployments/testnet/p3-checkpoint.json`.
 
 ## Example: paying for services
 
@@ -111,9 +111,9 @@ The design is in [ADR 0007](docs/decisions/0007-account-payment-path.md) and the
 
 ## History, storage, and trust
 
-Successful actions and owner changes emit events. Audit entries include the previous entry's hash, and the wallet stores the latest hash and sequence. The indexer reconstructs this history and can detect missing or altered entries. It has no authority to approve transactions.
+Successful actions and owner changes emit events. Audit entries include the previous entry's hash, and the wallet stores the latest hash and sequence. The indexer keeps these events in its own database, because an RPC retains them only for a window of recent ledgers. It reconstructs the history and reports it as verified, syncing, incomplete or mismatched against the stored head. It has no authority to approve transactions, and a client need not trust it: the SDK hashes and links the entries again and reads the head from the network ([ADR 0009](docs/decisions/0009-durable-history.md)).
 
-Rejected actions are shown through simulation errors or transaction results. Failed transactions do not leave committed wallet events.
+Rejected actions are shown through simulation errors or transaction results. Failed transactions do not leave committed wallet events. A client may report them to the indexer, which keeps them apart from the audit chain as attempts: they are what a client observed, not what the network recorded.
 
 Policies, revocations, spending counters, and sequence numbers use persistent storage. Storage maintenance must extend Soroban data lifetimes and handle restoration. Restoring data must preserve spending history and revocation; it must never reactivate an expired policy.
 

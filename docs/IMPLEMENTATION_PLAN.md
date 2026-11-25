@@ -8,6 +8,7 @@ Reviewed: 3 November 2026. Baseline: `c12bd39`. Revised: 25 November 2026.
 - The wallet gains a second payment path as a custom account (`__check_auth`), decided in [ADR 0006](decisions/0006-custom-account-spike.md). This replaces the restricted service adapter as P9.
 - P9 now also carries the other contract changes that must land before the interface freezes: finer error codes and a lifetime cap.
 - P9 moves ahead of P6. The indexer, demo and final deployment are then built once, on the final contract interface.
+- P9 and P6 were both finished on 25 November, ahead of the revised schedule below; see their validation records. The days gained go to P7 and P8, not to new scope.
 
 This is a proposed implementation plan, not an implementation or deployment report. The review changed no application code, made no commits, and performed no deployment. The existing untracked statement-of-work PDF was read without modification.
 
@@ -219,6 +220,8 @@ Dependencies: `P0 -> P1 -> P2/P3 -> P4 -> P5 -> P9 -> P6/P7 -> P8` (revised 25 N
 - Detect an RPC retention gap using its advertised oldest ledger. Stop claiming complete history and require an archival source, backup or explicit incomplete checkpoint; a hash chain detects missing data but cannot recover it. Stellar RPC event history is bounded, so ongoing ingestion and database backup are required. See [getEvents](https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getEvents).
 
 **Gate:** restart and duplicate ingestion preserve counts; interrupted ingestion loses no cursor-covered data; reconstructed history matches the on-chain head; missing history is visibly incomplete.
+
+*Built on 25 November 2026; see [ADR 0009](decisions/0009-durable-history.md) and [P6 validation](P6_VALIDATION.md).* Three things differ from the text above. The head and the entries are compared by sequence, not at one ledger, because the RPC offers no read at a chosen ledger and an entry's hash for a sequence never changes. A retention gap is reported and kept; reading from an archival source was not built. And the SDK gained `readIndexedHistory`, so a client verifies what the indexer returns instead of trusting it.
 
 ### P7. Focused owner demo (days 20-23)
 

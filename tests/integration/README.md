@@ -4,4 +4,6 @@ From the root, run `npm run build:contracts`, `npm run dev` and `npm run test:in
 
 `account-path.test.ts` (its scenario is in `support/account-path-scenario.ts`, shared with an opt-in Testnet run) pays from the real smart wallet as a custom account, through a sponsor that knows nothing of the wallet: a plain asset transfer, and a demo service in the service's own call. It shows that `execute` and the account path share one budget and that the service's request for an allowance is refused ([ADR 0007](../../docs/decisions/0007-account-payment-path.md)). `account-probe.test.ts` is the spike that preceded it, not an acceptance suite: it pays a plain asset transfer from the custom account in `tests/contracts/account-probe` ([ADR 0006](../../docs/decisions/0006-custom-account-spike.md)).
 
+`indexer.test.ts` runs the indexer in-process against the local RPC: it follows a fresh deployment from its first ledger, reconstructs the audit chain and matches the stored head, survives a restart with payments published while it was down, serves the CLI's `history --indexer`, and reports a database that lost or changed an entry ([results](../../docs/P6_VALIDATION.md)). A local network cannot produce a retention gap; the unit suite covers those.
+
 Empty executable suites fail.

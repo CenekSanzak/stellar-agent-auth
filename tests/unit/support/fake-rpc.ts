@@ -98,7 +98,7 @@ function failedResult() {
 export const hex = (bytes: Uint8Array) => Buffer.from(bytes).toString('hex');
 
 /** A parsed successful simulation with `auth` entries and a 5,000-stroop resource fee. */
-export function success(auth: xdr.SorobanAuthorizationEntry[] = [], retval = xdr.ScVal.scvVoid(), fee = '5000') {
+export function success(auth: xdr.SorobanAuthorizationEntry[] = [], retval: xdr.ScVal = xdr.ScVal.scvVoid(), fee = '5000') {
   return {
     id: '1', latestLedger: 100, events: [], _parsed: true, transactionData: new SorobanDataBuilder().setResourceFee(BigInt(fee)),
     minResourceFee: fee, result: { auth, retval },
