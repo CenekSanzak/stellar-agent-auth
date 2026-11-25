@@ -1740,6 +1740,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
+name = "stellar-agent-auth-account-probe"
+version = "0.0.0"
+dependencies = [
+ "ed25519-dalek",
+ "soroban-sdk",
+ "stellar-agent-auth-agent-registry",
+ "stellar-agent-auth-shared-types",
+ "stellar-agent-auth-verification-registry",
+]
+
+[[package]]
 name = "stellar-agent-auth-agent-registry"
 version = "0.0.0"
 dependencies = [

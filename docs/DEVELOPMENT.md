@@ -31,7 +31,7 @@ cargo install stellar-cli --version 30.0.1 --locked
 npm run check
 ```
 
-Alternatively install the matching Stellar CLI release binary for your OS/architecture. `npm run build:contracts` rejects a different CLI version. Contract compilation uses `stellar contract build`, which applies the SDK's required WASM processing. The build creates the four application WASM files plus the local-only auth probe under `target/wasm32v1-none/release`. The shared types remain a library.
+Alternatively install the matching Stellar CLI release binary for your OS/architecture. `npm run build:contracts` rejects a different CLI version. Contract compilation uses `stellar contract build`, which applies the SDK's required WASM processing. The build creates the four application WASM files plus two local-only test contracts, the auth probe and the custom account spike ([ADR 0006](decisions/0006-custom-account-spike.md)), under `target/wasm32v1-none/release`. The shared types remain a library.
 
 `npm run check` typechecks source, deployments and tests; builds all TS workspaces; runs fast TS tests; runs Rust check, format, clippy and non-empty tests; and builds WASM. Fast checks need no network credentials. Rust and Node dependencies must be downloaded once.
 
