@@ -1,4 +1,4 @@
-import { Account, Address, StrKey, xdr } from '@stellar/stellar-sdk';
+import { Account, Address, FeeBumpTransaction, StrKey, TransactionBuilder, xdr } from '@stellar/stellar-sdk';
 import { signingAddress } from './credentials.js';
 import type { Signer } from './signers.js';
 import {
@@ -204,30 +204,99 @@ export async function signForSponsor(
   const account = await loadSource(context, sponsor).catch(() => new Account(sponsor, '0'));
   const recording = await simulate(context, buildTransaction(context, account, invocation.operation, limits), 'record');
   const auth = await authorizeEntries(recording.result.auth, invocation.authorizers ?? {},
-    authWindow(recording.latestLedger, limits), false);
+    authWindow(recording.latestLedger, limits));
   return withAuth(invocation.operation, auth);
 }
 
 /**
- * Submit through a sponsor and journal the result locally under `scope`, so a pending or unknown outcome blocks the
- * next request in that scope until the hash settles on the ledger.
+ * The sponsor did not give a usable answer, so whether it submitted the operation is not known. The operation stays
+ * valid until `expirationLedger`; a new request signed before then could be applied as well as this one.
+ */
+export class SponsorOutcomeUnknown extends Error {
+  override readonly name = 'SponsorOutcomeUnknown';
+  constructor(readonly expirationLedger: number, readonly cause: unknown) {
+    super('The sponsor did not answer, so this operation may or may not have been submitted. It can be applied '
+      + `until ledger ${expirationLedger}. Sign nothing new for this action before then; afterwards read the `
+      + 'on-chain state to see whether it was applied.');
+  }
+}
+
+/** The last ledger at which any signed entry of `operation` is still valid. */
+export function authExpiration(operation: xdr.Operation): number {
+  const { body } = operation;
+  const entries = body.type === 'invokeHostFunction' ? body.invokeHostFunctionOp.auth : [];
+  return Math.max(0, ...entries.map(({ credentials }) =>
+    credentials.type === 'sorobanCredentialsAddress' ? credentials.address.signatureExpirationLedger
+      : credentials.type === 'sorobanCredentialsAddressV2' ? credentials.addressV2.signatureExpirationLedger : 0));
+}
+
+/**
+ * The record a sponsor reported, rebuilt from what the client can check itself. The envelope must be a plain
+ * transaction from the sponsor that carries exactly the one operation the client signed, and the reported hash must
+ * be that envelope's hash on this network. The time bound comes from the envelope and the earliest possible ledger
+ * from the client's own view, never from the sponsor's report.
+ */
+export function verifiedSponsorRecord(
+  context: Pick<NetworkContext, 'networkPassphrase'>, sponsor: string, operation: xdr.Operation,
+  reported: TransactionRecord, scope: string, submittedAfterLedger: number,
+): TransactionRecord {
+  let tx: ReturnType<typeof TransactionBuilder.fromXDR>;
+  try {
+    tx = TransactionBuilder.fromXDR(String(reported?.envelope), context.networkPassphrase);
+  } catch {
+    throw new Error('Sponsor returned an unreadable transaction');
+  }
+  const envelope = tx.toEnvelope();
+  const operations = envelope.type === 'envelopeTypeTx' ? envelope.v1.tx.operations : [];
+  const maxTime = 'timeBounds' in tx ? tx.timeBounds?.maxTime : undefined;
+  if (tx instanceof FeeBumpTransaction || operations.length !== 1 || tx.source !== sponsor
+    || operations[0]!.toXdr('base64') !== operation.toXdr('base64')
+    || Array.from(tx.hash(), (byte) => byte.toString(16).padStart(2, '0')).join('') !== reported.hash
+    || !maxTime || maxTime === '0') {
+    throw new Error('Sponsor reported a transaction other than the one this client signed');
+  }
+  const created = new Date().toISOString();
+  return {
+    scope, hash: reported.hash, envelope: reported.envelope, source: sponsor, max_time: maxTime,
+    submitted_after_ledger: submittedAfterLedger, status: 'pending', created_at: created, updated_at: created,
+  };
+}
+
+/**
+ * Submit through a sponsor and journal the transaction locally under `scope`, so a pending or unknown outcome blocks
+ * the next request in that scope until the hash settles on the ledger.
+ *
+ * The sponsor's report is not trusted. Its transaction is checked against the operation this client signed
+ * (`verifiedSponsorRecord`), and the outcome is then read from the network by that hash: a sponsor cannot pass off
+ * another transaction as this one, and its `rejected` or `expired` counts only once the network shows the envelope
+ * can no longer be included. Until then this throws `SubmissionUnsettled`. A sponsor that does not answer leaves
+ * the outcome unknown (`SponsorOutcomeUnknown`).
  */
 export async function sponsoredInvoke(
   context: NetworkContext, endpoint: SponsorEndpoint, operation: xdr.Operation, journal: TransactionJournal,
   scope: string,
 ): Promise<TransactionOutcome> {
   await settleScope(context, journal, scope);
-  const result = await endpoint.sponsor(operation.toXdr('base64'));
-  const record = { ...result.record, scope };
-  await journal.put(record);
-  if (!isSettled(result.status)) throw new SubmissionUnsettled(record);
-  // Read the confirmed result directly from the network rather than trusting the sponsor's report.
-  const outcome = await settle(context, { ...record, status: 'pending' });
-  await journal.put(outcome.record);
-  if (outcome.status !== result.status && !(result.status === 'expired' || result.status === 'rejected')) {
-    throw new Error(`Sponsor reported ${result.status} but the network reports ${outcome.status}`);
+  const before = await context.server.getLatestLedger();
+  let result: SponsorshipResult;
+  try {
+    result = await endpoint.sponsor(operation.toXdr('base64'));
+  } catch (error) {
+    // A refusal is an answer: nothing was submitted. Anything else may have been lost after submission.
+    if (error instanceof SponsorRefused || error instanceof SimulationRejected) throw error;
+    throw new SponsorOutcomeUnknown(authExpiration(operation), error);
   }
-  return outcome.status === 'pending' ? { ...outcome, status: result.status, record } : outcome;
+  let record: TransactionRecord;
+  try {
+    record = verifiedSponsorRecord(context, endpoint.address, operation, result?.record, scope, before.sequence);
+  } catch (error) {
+    throw new SponsorOutcomeUnknown(authExpiration(operation), error);
+  }
+  await journal.put(record);
+  const outcome = await settle(context, record);
+  await journal.put(outcome.record);
+  if (!isSettled(outcome.status)) throw new SubmissionUnsettled(outcome.record);
+  return outcome;
 }
 
 /** HTTP client for the submitter service. */
@@ -242,7 +311,11 @@ export function httpSponsor(
     const response = await request(new URL(path, url), { ...init, headers });
     const body = await response.json() as SponsorshipResult & { error?: string; detail?: string; kind?: string };
     if (response.status === 422 && body.kind === 'simulation') throw new SimulationRejected(body.detail ?? body.error ?? '');
-    if (!response.ok) throw new SponsorRefused(body.error ?? `Submitter answered HTTP ${response.status}`);
+    // Only a client error is a refusal. A server error can follow a submission, so it is not "nothing was sent".
+    if (response.status >= 400 && response.status < 500) {
+      throw new SponsorRefused(body.error ?? `Submitter answered HTTP ${response.status}`);
+    }
+    if (!response.ok) throw new Error(body.error ?? `Submitter answered HTTP ${response.status}`);
     return body;
   }
   return {

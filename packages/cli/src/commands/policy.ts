@@ -107,7 +107,18 @@ export async function loadPolicy(runtime: Runtime, path: string, wallet: string)
   return validatePolicy(policy, { wallet, owner: await readWalletOwner(read), now });
 }
 
-const hashResult = (value: xdr.ScVal) => ({ policy_hash: Uint8Array.from(scValToNative(value) as Uint8Array) });
+/**
+ * The hash the wallet stored the policy under, which must be the one computed locally. A difference means the SDK
+ * and the contract disagree on the canonical policy, and the local hash would name nothing on chain.
+ */
+const hashResult = (expected: Hash32) => (value: xdr.ScVal) => {
+  const stored = Uint8Array.from(scValToNative(value) as Uint8Array);
+  if (Buffer.from(stored).toString('hex') !== Buffer.from(expected).toString('hex')) {
+    throw new Error(`The wallet stored this policy as ${Buffer.from(stored).toString('hex')}, not the locally `
+      + `computed ${Buffer.from(expected).toString('hex')}; use the stored hash and report the mismatch`);
+  }
+  return { policy_hash: stored };
+};
 
 async function describe(runtime: Runtime, wallet: string, policyHashValue: Hash32) {
   const read = runtime.read(wallet);
@@ -124,7 +135,8 @@ export const policyCommands: Record<string, Command> = {
       const wallet = walletId(runtime, values['wallet']);
       const policy = await loadPolicy(runtime, required(values['file'], 'file'), wallet);
       const expected = policyHash(runtime.config.passphrase, wallet, policy);
-      const result = await ownerCall(runtime, wallet, 'approve_policy', { policy }, values['owner'], hashResult);
+      const result = await ownerCall(runtime, wallet, 'approve_policy', { policy }, values['owner'],
+        hashResult(expected));
       return { ...result, policy_hash: expected, policy };
     },
   },
@@ -157,9 +169,10 @@ export const policyCommands: Record<string, Command> = {
       const wallet = walletId(runtime, values['wallet']);
       const old_policy_hash = hex32(values['policy'], 'policy');
       const policy = await loadPolicy(runtime, required(values['file'], 'file'), wallet);
+      const expected = policyHash(runtime.config.passphrase, wallet, policy);
       const result = await ownerCall(runtime, wallet, 'replace_policy', { old_policy_hash, policy }, values['owner'],
-        hashResult);
-      return { ...result, revoked: old_policy_hash, policy_hash: policyHash(runtime.config.passphrase, wallet, policy) };
+        hashResult(expected));
+      return { ...result, revoked: old_policy_hash, policy_hash: expected };
     },
   },
 };

@@ -1,5 +1,6 @@
 import { Address, Contract, Keypair, StrKey, xdr } from '@stellar/stellar-sdk';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { ownerInvocation } from '../../packages/sdk/src/client.js';
 import { keypairSigner } from '../../packages/sdk/src/signers.js';
 import {
   FeeCeilingExceeded, MemoryJournal, SimulationRejected, SubmissionUnsettled, authorizeEntries, invoke, invokeSigned,
@@ -95,18 +96,76 @@ describe('pipeline stages', () => {
     expect(rpc.sent).toHaveLength(0);
   });
 
-  it('signs only entries with a matching authorizer and source credentials only when the source signs', async () => {
+  it('signs only entries with a matching authorizer and admits source credentials only for a checked tree', async () => {
     const agent = Keypair.random().publicKey();
     const stranger = Keypair.random().publicKey();
     const window = { latestLedger: 10, expirationLedger: 30 };
     const pass = async (recorded: xdr.SorobanAuthorizationEntry) => recorded;
-    await expect(authorizeEntries([entry(stranger)], { [agent]: pass }, window, true))
+    const asSource = (checks: Record<string, (root: xdr.SorobanAuthorizedInvocation) => void>) =>
+      ({ address: agent, checks });
+    await expect(authorizeEntries([entry(stranger)], { [agent]: pass }, window, asSource({})))
       .rejects.toThrow(`authorization from ${stranger}`);
-    await expect(authorizeEntries([entry(agent, 'source')], {}, window, false)).rejects.toThrow('transaction source');
-    expect(await authorizeEntries([entry(agent, 'source')], {}, window, true)).toHaveLength(1);
+    // A sponsored call has no authorizing source at all.
+    await expect(authorizeEntries([entry(agent, 'source')], {}, window)).rejects.toThrow('transaction source');
+    // A source with no check, or only someone else's check, may authorize nothing.
+    await expect(authorizeEntries([entry(agent, 'source')], {}, window, asSource({})))
+      .rejects.toThrow('does not expect');
+    await expect(authorizeEntries([entry(agent, 'source')], {}, window, asSource({ [stranger]: () => undefined })))
+      .rejects.toThrow('does not expect');
+    // An inherited check never counts.
+    await expect(authorizeEntries([entry(agent, 'source')], {}, window,
+      { address: agent, checks: Object.create({ [agent]: () => undefined }) as never }))
+      .rejects.toThrow('does not expect');
+    // The source's own check sees the recorded tree and decides.
+    const seen: string[] = [];
+    expect(await authorizeEntries([entry(agent, 'source')], {}, window,
+      asSource({ [agent]: (root) => void seen.push(root.function.type) }))).toHaveLength(1);
+    expect(seen).toEqual(['sorobanAuthorizedFunctionTypeContractFn']);
+    await expect(authorizeEntries([entry(agent, 'source')], {}, window, asSource({ [agent]: () => {
+      throw new Error('unexpected tree');
+    } }))).rejects.toThrow('unexpected tree');
     // Inherited properties never count as authorizers.
-    await expect(authorizeEntries([entry(stranger)], Object.create({ [stranger]: pass }) as never, window, true))
+    await expect(authorizeEntries([entry(stranger)], Object.create({ [stranger]: pass }) as never, window, asSource({})))
       .rejects.toThrow('no signer covers');
+  });
+
+  it('never lets the envelope signature authorize a tree the paying owner did not expect', async () => {
+    // An owner paying their own fee calls `pause`. A hostile contract in the call path makes the recording ask the
+    // source to authorize a nested token transfer as well; signing the envelope would authorize all of it.
+    const token = contract(22);
+    const attacker = Keypair.random().publicKey();
+    const fn = (id: string, name: string, args: xdr.ScVal[]) =>
+      xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(new xdr.InvokeContractArgs({
+        contractAddress: Address.fromString(id).toScAddress(), functionName: name, args,
+      }));
+    const sourceEntry = (subInvocations: xdr.SorobanAuthorizedInvocation[]) => new xdr.SorobanAuthorizationEntry({
+      credentials: xdr.SorobanCredentials.sorobanCredentialsSourceAccount(),
+      rootInvocation: new xdr.SorobanAuthorizedInvocation({ function: fn(target, 'pause', []), subInvocations }),
+    });
+    const drain = new xdr.SorobanAuthorizedInvocation({
+      function: fn(token, 'transfer', [Address.fromString(source.address).toScVal(),
+        Address.fromString(attacker).toScVal(), xdr.ScVal.scvU32(1_000_000)]),
+      subInvocations: [],
+    });
+    const invocation = ownerInvocation(rpc.context(), target, 'pause', {}, source);
+
+    rpc.simulateWith = (_tx, mode) => success(mode === 'record' ? [sourceEntry([drain])] : []);
+    await expect(invoke(rpc.context(), source, invocation, journal, { limits }))
+      .rejects.toThrow('single authorized smart wallet invocation');
+    // A third-party fee payer is expected to authorize nothing, whatever the tree.
+    const payer = keypairSigner(Keypair.random());
+    rpc.simulateWith = (_tx, mode) => success(mode === 'record' ? [sourceEntry([])] : []);
+    await expect(invoke(rpc.context(), payer, invocation, journal, { limits })).rejects.toThrow('does not expect');
+    expect(rpc.sent).toHaveLength(0);
+    expect(journal.records.size).toBe(0);
+
+    // Exactly the expected call is authorized by the owner's envelope signature.
+    rpc.sendResults.push(() => {
+      rpc.commit(rpc.sent.at(-1)!);
+      return { status: 'PENDING' } as never;
+    });
+    expect((await invoke(rpc.context(), source, invocation, journal, { limits })).status).toBe('success');
+    expect(rpc.sent).toHaveLength(1);
   });
 
   it('replaces authorization only on plain contract invocations', () => {

@@ -8,7 +8,7 @@ On 2026-11-04, `npm run check` passed:
   - 23 verification registry;
   - 14 agent registry;
   - 3 shared-types attestation;
-  - one each for the ABI vectors, metadata validation and the auth probe;
+  - one each for the ABI vectors, metadata validation and the demo-service probe;
 - five WASM builds with the pinned Stellar CLI 30.0.1.
 
 The typecheck, Rust format check and clippy with warnings denied also passed. On freshly started protocol 29 Quickstart networks, the local project passed 43 tests in seven files in two consecutive runs, about 65 seconds each:
@@ -46,8 +46,8 @@ The checkpoint therefore remains a record of the earlier build. The final Testne
 | Gate item | Evidence |
 | --- | --- |
 | A signed 3-unit payment under a 5-per-payment, 20-per-UTC-day, seven-day policy succeeds | `wallet-flow` "SOW gate" with real agent and owner signatures, sponsor-submitted; host `signed_three_unit_payment_succeeds_once` |
-| Over-limit payment fails | `wallet-flow` (6 units: `LimitExceeded`); `limits` (cap + 1 stroop, and one unit over the 20-unit day) |
-| Unapproved-recipient payment fails | `wallet-flow` and `limits` (`PolicyDenied`) |
+| Over-limit payment fails | Rejected in enforced simulation with real signatures, not submitted: `wallet-flow` (6 units: `LimitExceeded`); `limits` (cap + 1 stroop, and one unit over the 20-unit day) |
+| Unapproved-recipient payment fails | Rejected in enforced simulation with real signatures, not submitted: `wallet-flow` and `limits` (`PolicyDenied`) |
 | Post-revocation payment fails | `wallet-flow`: a payment signed and simulated before revocation is submitted after it and fails on the ledger, with no state or balance change |
 | Wallet security cases in section 5 pass | A08–A22 below |
 | Rollback of balances, counters, sequence and audit head | `wallet-flow` on-chain failure after a successful simulation; host tests with a failing asset contract and with an insufficient balance |
@@ -65,7 +65,7 @@ The `audit_v1` event's entry is rebuilt by the SDK byte for byte, chained to the
 
 | ID | Evidence |
 | --- | --- |
-| A02 (old policy) | A request signed before a metadata update fails with `IdentityChanged` on the local ledger. Approving a policy for the old revision fails too. In host tests, a signer rotation and a disable also fail. |
+| A02 (old policy) | A request signed before a metadata update is rejected with `IdentityChanged` in enforced simulation on the local network; it is not submitted. Approving a policy for the old revision fails too. In host tests, a signer rotation and a disable also fail. |
 | A08 | In host tests, the funder, controller, provider and attacker cannot approve, revoke, replace, pause, resume or withdraw. On the local network, the agent signing as owner fails as forged; the sponsor submitting, and the agent as transaction source, fail as missing. A funder signing as owner fails as forged. |
 | A09 | Funding and withdrawal while paused move exact amounts. Funding needs only the funder, adds no audit entry and grants no authority. A funding signature cannot cover a larger amount or another source. |
 | A10 | The gate above. |
@@ -75,9 +75,9 @@ The `audit_v1` event's entry is rebuilt by the SDK byte for byte, chained to the
 | A14 | An unapproved asset (native XLM's asset contract), a recipient both allowed and blocked, an unlisted recipient and an empty allowlist all fail with `PolicyDenied`. This holds in host tests and on the local network, without the SDK. |
 | A15 | The per-transfer cap passes exactly and fails one unit above. Zero and negative amounts signed directly fail with `InvalidInput`. Daily-spend overflow fails with `ArithmeticOverflow` in host tests. |
 | A16 | The exact 20-unit day passes and one more stroop fails. In host tests, one second before UTC midnight still fails and midnight resets the budget. Two assets in one policy, and two policies, keep separate budgets. |
-| A17 | Two different requests signed for one sequence are submitted together from two fee payers: one commits and the other fails on chain. A request signed in advance for the next sequence fails `LimitExceeded` when it would cross the cap. A seeded 300-step property test checks every committed and rejected payment against a model of the caps. |
+| A17 | Two different requests signed for one sequence are submitted together from two fee payers: one commits and the other does not. The test does not check why the loser failed, and its policy's daily cap would stop the second payment even without the sequence check, so this does not isolate the sequence guard; host tests assert `InvalidSequence` directly. A request signed in advance for the next sequence fails `LimitExceeded` when it would cross the cap. A seeded 300-step property test checks every committed and rejected payment against a model of the caps; it is sequential, with one policy and one asset. |
 | A18 | Pausing blocks execution, and resuming restores only active, in-window policies. Revocation is permanent. A revoked policy ID cannot be approved again, even with different terms. |
-| A19 | Requests signed before a revocation, identity update, provider disable, result revocation, newer failing or flagged result, or result expiry fail against live state. The first two are tested on the local ledger, the rest in host tests. |
+| A19 | Requests signed before a revocation, identity update, provider disable, result revocation, newer failing or flagged result, or result expiry fail against live state. The revocation is tested on the local ledger and the identity update in enforced simulation. The rest are host tests under mocked authorization, where the request is built after the state change rather than signed before it. |
 | A20 | On the local network, an agent request was simulated and signed, then the owner emptied the wallet. The request failed on chain with no change to sequence, spend, audit head or balances, and re-simulation reports `TransferFailed`. Host tests show the same for a failing asset contract after every wallet check passed. |
 | A21 | In host tests, ledgers advance past every entry's TTL and the host restores entries automatically, as protocol 23 transactions do. The revoked state, sequence, spend, audit head and ID reservation come back as stored, a revoked ID stays reserved, and an ended window stays expired. Host tests also check that every touched entry is extended to 30 days. Local-network archival is not exercised, because the minimum persistent TTL makes it impractical in a test run; the [maintenance notes](decisions/0005-smart-wallet.md#storage-ttl-and-restoration) cover operations. |
 | A22 | Replacement revokes the old policy and approves the new one in one transaction, with two chained audit entries. A replacement that fails rolls back the revocation. `policyExposure` reports the fresh budget and the summed daily cap per asset. |

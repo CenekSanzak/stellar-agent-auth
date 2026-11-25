@@ -80,19 +80,30 @@ export async function signInvocation(input: InvocationAuthorization): Promise<xd
   if (!StrKey.isValidEd25519PublicKey(address) || signingAddress(entry) !== address) {
     throw new Error('Expected native authorization for the signing account');
   }
-  const root = entry.rootInvocation;
+  assertInvocationTree(entry.rootInvocation, { contractId, method, methods, expectedArgs, label });
+
+  return authorizeEntry(entry, signer, expirationLedger, networkPassphrase, address);
+}
+
+export type InvocationTree = Pick<InvocationAuthorization, 'contractId' | 'method' | 'methods' | 'expectedArgs' | 'label'>;
+
+/**
+ * Throws unless `root` is exactly `contractId.method(expectedArgs)` with no child invocations. This is the whole of
+ * what an account agrees to, whichever credential carries it: a signed entry, or a source-account entry that the
+ * envelope signature authorizes.
+ */
+export function assertInvocationTree(root: xdr.SorobanAuthorizedInvocation, expected: InvocationTree): void {
+  const { contractId, method, methods, expectedArgs, label } = expected;
   const fn = root.function;
   if (!methods.includes(method) || !StrKey.isValidContract(contractId)
     || root.subInvocations.length !== 0 || fn.type !== 'sorobanAuthorizedFunctionTypeContractFn') {
     throw new Error(`Expected a single authorized ${label} invocation`);
   }
   const call = fn.contractFn;
-  const expected = expectedArgs();
+  const args = expectedArgs();
   if (Address.fromScAddress(call.contractAddress).toString() !== contractId
-    || call.functionName.toString() !== method || call.args.length !== expected.length
-    || call.args.some((arg, i) => arg.toXdr('hex') !== expected[i]!.toXdr('hex'))) {
+    || call.functionName.toString() !== method || call.args.length !== args.length
+    || call.args.some((arg, i) => arg.toXdr('hex') !== args[i]!.toXdr('hex'))) {
     throw new Error(`Authorization invocation does not match the expected ${label} call`);
   }
-
-  return authorizeEntry(entry, signer, expirationLedger, networkPassphrase, address);
 }

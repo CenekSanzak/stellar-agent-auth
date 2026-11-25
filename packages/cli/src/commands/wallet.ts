@@ -51,7 +51,8 @@ export const walletCommands: Record<string, Command> = {
           runtime.deployLimits));
       }
       const salt = randomBytes(32);
-      const deployment = walletDeployment(owner.address, wasmHash, agentRegistry, verificationRegistry, salt);
+      const deployment = walletDeployment(runtime.config.passphrase, owner.address, wasmHash, agentRegistry,
+        verificationRegistry, salt);
       const result = settled(await runtime.run(deployment, owner, `source:${owner.address}`, 'direct',
         runtime.deployLimits),
         (value) => ({ wallet: Address.fromScVal(value).toString() }));

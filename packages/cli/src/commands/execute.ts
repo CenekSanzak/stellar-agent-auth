@@ -2,7 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { Address, scValToNative, xdr } from '@stellar/stellar-sdk';
 import {
   actionHash, decodeAction, evaluateRequest, executeInvocation, readPaused, readPolicy, readPolicyState,
-  settleScope, signForSponsor, stateAsOf, transferRequest, type ActionRequest, type Hash32,
+  signForSponsor, stateAsOf, transferRequest, type ActionRequest, type Hash32,
 } from '@stellar-agent-auth/sdk';
 import type { Command } from '../index.js';
 import { UsageError, address, contractAddress, hex32, integer, required, settled, type Runtime } from '../runtime.js';
@@ -28,7 +28,8 @@ async function buildRequest(runtime: Runtime, values: Record<string, string | un
   const agent = await runtime.key(values['agent-key'], 'agent-key');
   const scope = scopeOf(wallet, policyHash);
   const context = await runtime.context();
-  await settleScope(context, runtime.journal, scope);
+  // A repeated command must first see what became of the earlier one, before it reads the next sequence.
+  if (!runtime.options.dryRun) await runtime.settleEarlier(scope);
 
   const read = runtime.read(wallet);
   const [policy, state, paused, latest] = await Promise.all([
@@ -81,9 +82,13 @@ function signedRequest(operation: xdr.Operation): { request: ActionRequest; expi
   return { request, expiration };
 }
 
-const actionResult = (value: xdr.ScVal) => ({
-  executed_action_hash: Uint8Array.from(scValToNative(value) as Uint8Array),
-});
+/** The wallet returns the hash of the action it executed; anything else is not this request's result. */
+const actionResult = (runtime: Runtime, request: ActionRequest) => (value: xdr.ScVal) => {
+  const executed = Buffer.from(scValToNative(value) as Uint8Array).toString('hex');
+  const expected = Buffer.from(actionHash(runtime.config.passphrase, request)).toString('hex');
+  if (executed !== expected) throw new Error(`The wallet reported action ${executed}, not the requested ${expected}`);
+  return { executed_action_hash: executed };
+};
 
 export const executeCommands: Record<string, Command> = {
   transfer: {
@@ -92,13 +97,14 @@ export const executeCommands: Record<string, Command> = {
     async run(runtime, values) {
       const { request, agent, scope, context } = await buildRequest(runtime, values);
       const result = settled(await runtime.run(executeInvocation(context, request, agent), undefined, scope),
-        actionResult);
+        actionResult(runtime, request));
       return { ...result, request: describe(runtime, request) };
     },
   },
   sign: {
     summary: 'Sign a transfer without submitting it: same options as transfer, plus --out <file>',
     options: { ...transferOptions, out: 'string' },
+    dryRun: false,
     async run(runtime, values) {
       const out = required(values['out'], 'out');
       const { request, agent, context } = await buildRequest(runtime, values);
@@ -128,7 +134,7 @@ export const executeCommands: Record<string, Command> = {
       }
       const { request, expiration } = signedRequest(operation);
       const result = settled(await runtime.runSigned(operation, scopeOf(request.wallet, request.policy_hash)),
-        actionResult);
+        actionResult(runtime, request));
       return { ...result, auth_expiration_ledger: expiration, request: describe(runtime, request) };
     },
   },
