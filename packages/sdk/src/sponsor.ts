@@ -4,7 +4,7 @@ import { signingAddress } from './credentials.js';
 import type { Signer } from './signers.js';
 import {
   SimulationRejected, SubmissionUnsettled, assemble, authWindow, authorizeEntries, buildTransaction, isSettled,
-  loadSource, operationHash, pipelineLimits, settle, settleScope, simulate, submit, withAuth,
+  loadSource, networkIdOf, operationHash, pipelineLimits, settle, settleScope, simulate, submit, withAuth,
   type Invocation, type NetworkContext, type PipelineLimits, type TransactionJournal, type TransactionOutcome,
   type TransactionRecord, type TransactionStatus,
 } from './transactions.js';
@@ -302,7 +302,7 @@ export function verifiedSponsorRecord(
   return {
     scope, hash: reported.hash, envelope: reported.envelope, source: sponsor, max_time: maxTime,
     submitted_after_ledger: submittedAfterLedger, status: 'pending', operation_hash: expected,
-    created_at: created, updated_at: created,
+    network_id: networkIdOf(context.networkPassphrase), created_at: created, updated_at: created,
   };
 }
 

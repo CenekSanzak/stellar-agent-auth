@@ -235,6 +235,9 @@ export function assemble(tx: Transaction, simulation: Simulated, limits: Pipelin
 export type TransactionStatus = 'pending' | 'success' | 'failed' | 'expired' | 'rejected' | 'unknown';
 const FINAL: ReadonlySet<TransactionStatus> = new Set(['success', 'failed', 'expired', 'rejected']);
 export const isSettled = (status: TransactionStatus) => FINAL.has(status);
+/** Whether a record still holds its scope: not settled, and not acknowledged as unknowable. */
+export const holdsScope = (record: Pick<TransactionRecord, 'status' | 'acknowledged_at'>) =>
+  !isSettled(record.status) && !record.acknowledged_at;
 
 /** What is persisted for every signed envelope. It contains no key material. */
 export interface TransactionRecord {
@@ -258,6 +261,11 @@ export interface TransactionRecord {
   operation_hash?: string;
   /** The network the envelope was signed for, as the hex SHA-256 of its passphrase. */
   network_id?: string;
+  /**
+   * Set when an operator accepted that this record's outcome will never be known. The status stays `unknown`,
+   * which is the truth; the record just stops holding its scope.
+   */
+  acknowledged_at?: string;
   created_at: string;
   updated_at: string;
 }
@@ -291,7 +299,7 @@ export class MemoryJournal implements TransactionJournal {
     return record && { ...record };
   }
   async unsettled(scope: string) {
-    return [...this.records.values()].filter((record) => record.scope === scope && !isSettled(record.status))
+    return [...this.records.values()].filter((record) => record.scope === scope && holdsScope(record))
       .sort((a, b) => a.created_at.localeCompare(b.created_at)).map((record) => ({ ...record }));
   }
   async byOperation(scope: string, operationHash: string) {
@@ -392,6 +400,10 @@ function fromResponse(
  */
 export async function settle(context: NetworkContext, record: TransactionRecord): Promise<TransactionOutcome> {
   if (isSettled(record.status)) return { status: record.status, hash: record.hash, record };
+  // Asked on another network, the hash would not be found and would in time look expired.
+  if (record.network_id && record.network_id !== networkIdOf(context.networkPassphrase)) {
+    throw new Error(`Transaction ${record.hash} was signed for another network and cannot be settled on this one`);
+  }
   const response = await context.server.getTransaction(record.hash);
   const final = fromResponse(record, response);
   if (final) return final;

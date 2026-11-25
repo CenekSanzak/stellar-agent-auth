@@ -37,7 +37,7 @@ A secret, or anything shaped like one, is refused and never printed.
 
 ## Who pays the fee
 
-- With `--sponsor-url` or `SUBMITTER_URL`, the acting key signs its authorization and the [submitter](../../services/submitter/README.md) pays. The sponsor sponsors `execute` and `fund` by default, so set the variable only for those commands; owner commands sent to it are refused.
+- With a sponsor, the acting key signs its authorization and the [submitter](../../services/submitter/README.md) pays. `--sponsor-url` names one for the command it is passed to. `SUBMITTER_URL` names one for the commands a sponsor is meant to pay for: `execute`, `wallet fund` and `tx status --operation`. It is ignored by every other command, so an owner's `policy approve` or a provider's `verify run --publish` pays for itself whatever the environment says. `--direct` uses no sponsor at all.
 - With `--source <key>`, that account pays and signs the envelope. It authorizes nothing else.
 - Otherwise the acting key pays for its own call. The CLI checks the exact call the envelope signature will authorize and refuses anything more.
 

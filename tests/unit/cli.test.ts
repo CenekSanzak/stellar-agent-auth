@@ -3,13 +3,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Account, Contract, Keypair } from '@stellar/stellar-sdk';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { main } from '../../packages/cli/src/index.js';
-import { EXIT, OutcomeError, Runtime, classify, settled } from '../../packages/cli/src/runtime.js';
+import { COMMANDS, main, type Command } from '../../packages/cli/src/index.js';
+import { txCommands } from '../../packages/cli/src/commands/tx.js';
+import {
+  EXIT, OutcomeError, Runtime, UsageError, classify, defaultStateDirectory, settled,
+} from '../../packages/cli/src/runtime.js';
 import { FileJournal, KeyReferenceError, createNamedKey, loadKey } from '../../packages/sdk/src/node.js';
 import { WalletError } from '../../packages/sdk/src/policies.js';
 import { SponsorOutcomeUnknown, SponsorRefused } from '../../packages/sdk/src/sponsor.js';
 import {
-  FeeCeilingExceeded, SimulationRejected, SubmissionUnsettled, buildTransaction, pipelineLimits,
+  FeeCeilingExceeded, SimulationRejected, SubmissionUnsettled, buildTransaction, networkIdOf, pipelineLimits, settle,
   type TransactionOutcome, type TransactionRecord,
 } from '../../packages/sdk/src/transactions.js';
 import { contract } from '../fixtures/abi-v1.js';
@@ -161,6 +164,97 @@ describe('command line', () => {
     expect(await main(['wallet', 'show', '--bogus', '--json'], env(), unknown.io)).toBe(EXIT.usage);
     expect(JSON.parse(unknown.out[0]!)).toMatchObject({ ok: false, exit_code: EXIT.usage });
     expect(await main(['help'], env(), io().io)).toBe(EXIT.ok);
+  });
+
+  it('sends a command to the sponsor in the environment only if a sponsor is meant to pay for it', async () => {
+    const withEnv = { ...env(), SUBMITTER_URL: 'http://127.0.0.1:9/' };
+    const sponsorOf = (options: Partial<ConstructorParameters<typeof Runtime>[1]>, environment: Record<string, string> = withEnv) => {
+      const chosen = new Runtime(environment, { json: true, dryRun: false, ...options }).sponsor();
+      chosen?.catch(() => undefined);
+      return chosen !== undefined;
+    };
+    // An owner's or a provider's command ignores the variable; an agent's command uses it.
+    expect(sponsorOf({ envSponsor: false })).toBe(false);
+    expect(sponsorOf({ envSponsor: true })).toBe(true);
+    // A flag on the command line is the user's own choice for that command, whatever the command is.
+    expect(sponsorOf({ envSponsor: false, sponsorUrl: 'http://127.0.0.1:9/' }, env())).toBe(true);
+    expect(sponsorOf({ envSponsor: true, direct: true })).toBe(false);
+    expect(sponsorOf({ envSponsor: true }, env())).toBe(false);
+
+    const sponsored = Object.entries(COMMANDS).flatMap(([group, entry]) => (typeof entry.run === 'function'
+      ? (entry.sponsored ? [group] : [])
+      : Object.entries(entry as Record<string, Command>).filter(([, command]) => command.sponsored).map(([name]) => `${group} ${name}`)));
+    expect(sponsored.sort()).toEqual(['execute pay', 'execute sign', 'execute submit', 'execute transfer', 'tx status',
+      'wallet fund']);
+
+    const run = io();
+    expect(await main(['wallet', 'pause', '--direct', '--sponsor-url', 'http://127.0.0.1:9/'], env(), run.io)).toBe(EXIT.usage);
+    expect(run.err.join()).toContain('contradict');
+    expect(await main(['tx', 'status'], env(), io().io)).toBe(EXIT.usage);
+    expect(await main(['tx', 'status', '--hash', 'a'.repeat(64), '--operation', 'b'.repeat(64)], env(), io().io)).toBe(EXIT.usage);
+    const noSponsor = io();
+    expect(await main(['tx', 'status', '--operation', 'b'.repeat(64)], env(), noSponsor.io)).toBe(EXIT.usage);
+    expect(noSponsor.err.join()).toContain('asks a sponsor');
+  });
+
+  it('keeps one journal per network, outside the working directory by default', () => {
+    const local = new Runtime(env(), { json: true, dryRun: false });
+    const testnet = new Runtime({ ...env(), STELLAR_NETWORK: 'testnet' }, { json: true, dryRun: false });
+    expect(local.journal.directory).toBe(join(directory, 'state', 'journal', 'local'));
+    expect(testnet.journal.directory).toBe(join(directory, 'state', 'journal', 'testnet'));
+    expect(defaultStateDirectory({ HOME: '/home/someone' })).toBe('/home/someone/.local/state/stellar-agent-auth');
+    expect(defaultStateDirectory({ HOME: '/home/someone', XDG_STATE_HOME: '/var/state' })).toBe('/var/state/stellar-agent-auth');
+    expect(new Runtime({ STELLAR_NETWORK: 'local', HOME: join(directory, 'home') }, { json: true, dryRun: false }).stateDirectory)
+      .toBe(join(directory, 'home', '.local', 'state', 'stellar-agent-auth'));
+  });
+
+  it('lists what holds a scope and acknowledges only what the network can no longer decide', async () => {
+    const rpc = new FakeRpc();
+    const runtime = new Runtime(env(), { json: true, dryRun: false });
+    (runtime as unknown as { network: Promise<unknown> }).network = Promise.resolve(rpc.context());
+    const scope = 'execute:wallet:policy';
+    const stuck = record({ scope, hash: 'c'.repeat(64), max_time: String(rpc.latest.closeTime - 10), submitted_after_ledger: 5 });
+    const live = record({ scope, hash: 'd'.repeat(64), max_time: String(rpc.latest.closeTime + 600), submitted_after_ledger: 100 });
+    const done = record({ scope, hash: 'e'.repeat(64), status: 'success' });
+    for (const item of [stuck, live, done]) await runtime.journal.put(item);
+    const listed = async (all = false) => ((await txCommands['list']!.run(runtime, {}, { all }))['transactions'] as { transaction: string }[])
+      .map((item) => item.transaction).sort();
+    expect(await listed()).toEqual([stuck.hash, live.hash]);
+    expect(await listed(true)).toEqual([stuck.hash, live.hash, done.hash]);
+
+    // Still inside its time bound: the network can still include it, so it cannot be waved away.
+    await expect(txCommands['acknowledge']!.run(runtime, { hash: live.hash }, {})).rejects.toMatchObject({ exitCode: EXIT.pending });
+    await expect(txCommands['acknowledge']!.run(runtime, { hash: done.hash }, {})).rejects.toThrow('nothing to acknowledge');
+    await expect(txCommands['acknowledge']!.run(runtime, { hash: 'f'.repeat(64) }, {})).rejects.toBeInstanceOf(UsageError);
+
+    // The RPC no longer retains the ledgers this one could be in, and its time bound has passed.
+    rpc.oldestLedger = 50;
+    await expect(runtime.settleEarlier(scope)).rejects.toBeInstanceOf(SubmissionUnsettled);
+    expect(await txCommands['acknowledge']!.run(runtime, { hash: stuck.hash }, {}))
+      .toMatchObject({ status: 'acknowledged', transaction: stuck.hash });
+    const kept = await runtime.journal.get(stuck.hash);
+    expect(kept).toMatchObject({ status: 'unknown', acknowledged_at: expect.any(String) });
+    expect((await runtime.journal.unsettled(scope)).map((item) => item.hash)).toEqual([live.hash]);
+    expect(await listed()).toEqual([live.hash]);
+  });
+
+  it('refuses to settle a record signed for another network', async () => {
+    const rpc = new FakeRpc();
+    const other = record({ network_id: 'ab'.repeat(32), max_time: '1' });
+    await expect(settle(rpc.context(), other)).rejects.toThrow('another network');
+    const same = record({ network_id: networkIdOf(rpc.context().networkPassphrase), max_time: '1' });
+    expect((await settle(rpc.context(), same)).status).toBe('expired');
+  });
+
+  it('finds a record by its operation and flushes what it writes', async () => {
+    const journal = new FileJournal(join(directory, 'j'));
+    await journal.put(record({ hash: '1'.repeat(64), scope: 'a', operation_hash: 'op', created_at: '2026-01-01T00:00:00Z' }));
+    await journal.put(record({ hash: '2'.repeat(64), scope: 'a', operation_hash: 'op', created_at: '2026-01-02T00:00:00Z' }));
+    await journal.put(record({ hash: '3'.repeat(64), scope: 'b', operation_hash: 'op', created_at: '2026-01-03T00:00:00Z' }));
+    expect((await journal.byOperation('a', 'op'))?.hash).toBe('2'.repeat(64));
+    expect(await journal.byOperation('a', 'other')).toBeUndefined();
+    expect((await journal.all()).map((item) => item.hash[0])).toEqual(['1', '2', '3']);
+    expect((await readdir(join(directory, 'j'))).filter((name) => name.endsWith('.tmp'))).toEqual([]);
   });
 
   it('reads history from an indexer only over HTTPS or loopback, and not together with a start ledger', async () => {

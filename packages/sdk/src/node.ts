@@ -1,8 +1,8 @@
-import { chmod, mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, open, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
 import { Keypair, StrKey } from '@stellar/stellar-sdk';
 import { keypairSigner, type Signer } from './signers.js';
-import { isSettled, newestForOperation, type TransactionJournal, type TransactionRecord } from './transactions.js';
+import { holdsScope, newestForOperation, type TransactionJournal, type TransactionRecord } from './transactions.js';
 
 /**
  * Node-only helpers, exported as `@stellar-agent-auth/sdk/node` so the main entry stays browser-safe: a durable
@@ -12,8 +12,9 @@ import { isSettled, newestForOperation, type TransactionJournal, type Transactio
 const HASH = /^[0-9a-f]{64}$/;
 
 /**
- * One owner-only JSON file per signed envelope. Writes are atomic, so a crash leaves either the old or the new
- * record and the hash is never lost. Records hold public envelopes and status only, never keys.
+ * One owner-only JSON file per signed envelope. Writes are atomic and flushed to disk, so a crash leaves either the
+ * old or the new record and the hash is never lost. Records hold public envelopes and status only, never keys.
+ * Keep one directory per network: a hash asked for on another network is not found there.
  */
 export class FileJournal implements TransactionJournal {
   constructor(readonly directory: string) {}
@@ -51,7 +52,7 @@ export class FileJournal implements TransactionJournal {
   }
 
   async unsettled(scope: string): Promise<TransactionRecord[]> {
-    return (await this.all()).filter((record) => record.scope === scope && !isSettled(record.status));
+    return (await this.all()).filter((record) => record.scope === scope && holdsScope(record));
   }
 
   async byOperation(scope: string, operationHash: string): Promise<TransactionRecord | undefined> {
@@ -62,8 +63,19 @@ export class FileJournal implements TransactionJournal {
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
     const path = this.path(record.hash);
     const temporary = `${path}.${process.pid}.tmp`;
-    await writeFile(temporary, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
+    // The record must be on disk before the envelope is sent: flush the file, then the directory entry.
+    const file = await open(temporary, 'w', 0o600);
+    try {
+      await file.writeFile(`${JSON.stringify(record, null, 2)}\n`);
+      await file.sync();
+    } finally {
+      await file.close();
+    }
     await rename(temporary, path);
+    const directory = await open(this.directory, 'r').catch(() => undefined);
+    // Not every platform can flush a directory; where it cannot, the rename is still atomic.
+    await directory?.sync().catch(() => undefined);
+    await directory?.close();
   }
 }
 

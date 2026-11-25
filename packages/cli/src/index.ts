@@ -22,6 +22,11 @@ export interface Command {
   options: Record<string, 'string' | 'boolean'>;
   /** `false` for a command with a side effect that cannot be simulated; `--dry-run` is then refused, not ignored. */
   dryRun?: false;
+  /**
+   * `true` for a command a sponsor is meant to pay for: an agent's payment, or funding. `SUBMITTER_URL` applies to
+   * these only. Every other command pays for itself unless `--sponsor-url` is passed on its own command line.
+   */
+  sponsored?: true;
   run(
     runtime: Runtime, values: Record<string, string | undefined>, flags: Record<string, boolean | undefined>,
   ): Promise<Record<string, unknown>>;
@@ -41,7 +46,8 @@ export const COMMANDS: Record<string, Record<string, Command> | Command> = {
 const GLOBAL_OPTIONS = {
   json: { type: 'boolean' }, 'dry-run': { type: 'boolean' }, help: { type: 'boolean', short: 'h' },
   network: { type: 'string' }, 'rpc-url': { type: 'string' }, source: { type: 'string' },
-  'sponsor-url': { type: 'string' }, 'state-dir': { type: 'string' }, 'max-fee': { type: 'string' },
+  'sponsor-url': { type: 'string' }, direct: { type: 'boolean' }, 'state-dir': { type: 'string' },
+  'max-fee': { type: 'string' },
 } as const satisfies ParseArgsConfig['options'];
 
 const isCommand = (value: Record<string, Command> | Command): value is Command => typeof value.run === 'function';
@@ -57,9 +63,12 @@ function usage(): string {
     '  --dry-run             Simulate with enforced authorization; sign nothing for submission and send nothing',
     '  --network <name>      local or testnet (default STELLAR_NETWORK)',
     '  --rpc-url <url>       RPC endpoint (default STELLAR_RPC_URL)',
-    '  --sponsor-url <url>   Submitter that pays fees (default SUBMITTER_URL; bearer token in SUBMITTER_TOKEN)',
+    '  --sponsor-url <url>   Submitter that pays fees (bearer token in SUBMITTER_TOKEN). SUBMITTER_URL is the default',
+    '                        for execute, wallet fund and tx status --operation only; other commands pay directly',
+    '  --direct              Use no sponsor, whatever SUBMITTER_URL says',
     '  --source <key>        Fee-paying transaction source when no sponsor is used',
-    '  --state-dir <dir>     Transaction journal location (default .local/cli)',
+    '  --state-dir <dir>     Transaction journal location (default STELLAR_AGENT_AUTH_STATE_DIR, else',
+    '                        ~/.local/state/stellar-agent-auth); one journal per network inside it',
     '  --max-fee <stroops>   Highest total fee accepted (default 50000000; 100000000 for wallet create)',
     '', 'Contracts come from AGENT_REGISTRY_ID, VERIFICATION_REGISTRY_ID and WALLET_ID, or the matching flags.',
     'Key references: file:<path> (owner-only), env:<NAME>, or a name under STELLAR_AGENT_AUTH_KEY_DIR (.local/keys).',
@@ -107,6 +116,7 @@ export async function main(argv: string[], env: Environment, io: Io = defaultIo)
       json, dryRun: Boolean(values['dry-run']),
       network: values['network'] as string | undefined, rpcUrl: values['rpc-url'] as string | undefined,
       source: values['source'] as string | undefined, sponsorUrl: values['sponsor-url'] as string | undefined,
+      direct: Boolean(values['direct']), envSponsor: command.sponsored === true,
       stateDir: values['state-dir'] as string | undefined, maxFee: values['max-fee'] as string | undefined,
     };
     const strings: Record<string, string | undefined> = {};
@@ -115,6 +125,7 @@ export async function main(argv: string[], env: Environment, io: Io = defaultIo)
       if (type === 'string') strings[name] = values[name] as string | undefined;
       else flags[name] = values[name] as boolean | undefined;
     }
+    if (global.direct && global.sponsorUrl) throw new UsageError('--direct and --sponsor-url contradict each other');
     if (global.dryRun && command.dryRun === false) {
       throw new UsageError('--dry-run is not supported by this command: its effect cannot be simulated');
     }
