@@ -2,13 +2,14 @@ import { once } from 'node:events';
 import { createServer, type Server } from 'node:http';
 import { Account, Address, Asset, Keypair, Operation, xdr } from '@stellar/stellar-sdk';
 import { afterEach, describe, expect, it } from 'vitest';
+import { MAX_AUTH_WINDOW_LEDGERS } from '../../packages/sdk/src/actions.js';
 import { keypairSigner } from '../../packages/sdk/src/signers.js';
 import {
   Sponsor, SponsorOutcomeUnknown, SponsorRefused, assertSuppliedAuth, httpSponsor, inspectSponsoredOperation,
-  sponsorPolicy, sponsoredInvoke, type SponsorEndpoint, type SponsorshipResult,
+  recoverSponsored, sponsorPolicy, sponsoredInvoke, type SponsorEndpoint, type SponsorshipResult,
 } from '../../packages/sdk/src/sponsor.js';
 import {
-  MemoryJournal, SimulationRejected, SubmissionUnsettled, buildTransaction, type TransactionRecord,
+  MemoryJournal, SimulationRejected, SubmissionUnsettled, buildTransaction, operationHash, type TransactionRecord,
   type TransactionStatus,
 } from '../../packages/sdk/src/transactions.js';
 import { RateLimiter, admit, createHandler } from '../../services/submitter/src/index.js';
@@ -28,13 +29,14 @@ interface EntryOptions {
   contractId?: string;
   method?: string;
   callArgs?: xdr.ScVal[];
+  nonce?: bigint;
 }
 
 function entry(options: EntryOptions = {}) {
   const { address = agent, credentials = 'address', signed = true, contractId = wallet, method = 'execute',
-    callArgs = args } = options;
+    callArgs = args, nonce = 1n } = options;
   const body = new xdr.SorobanAddressCredentials({
-    address: Address.fromString(address).toScAddress(), nonce: 1n, signatureExpirationLedger: 120,
+    address: Address.fromString(address).toScAddress(), nonce, signatureExpirationLedger: 120,
     signature: signed ? xdr.ScVal.scvVec([xdr.ScVal.scvU32(0)]) : xdr.ScVal.scvVoid(),
   });
   return new xdr.SorobanAuthorizationEntry({
@@ -120,9 +122,59 @@ describe('sponsor serialization', () => {
       },
     );
     const sponsor = new Sponsor(rpc.context(), keypairSigner(sponsorKey), policy, new MemoryJournal());
-    const results = await Promise.all([sponsor.sponsor(operation([entry()])), sponsor.sponsor(operation([entry()]))]);
+    const results = await Promise.all([
+      sponsor.sponsor(operation([entry()])), sponsor.sponsor(operation([entry({ nonce: 2n })])),
+    ]);
     expect(results.map(({ status }) => status)).toEqual(['success', 'success']);
     expect(events).toEqual(['build 1001', 'send 1001', 'commit 1001', 'build 1002', 'send 1002']);
+  });
+
+  it('submits an operation once however often it is sent, and can say what it did with it', async () => {
+    const rpc = new FakeRpc();
+    const journal = new MemoryJournal();
+    const sponsor = new Sponsor(rpc.context(), keypairSigner(sponsorKey), policy, journal);
+    const signed = operation([entry()]);
+    const key = operationHash(xdr.Operation.fromXdr(signed, 'base64'));
+    expect(await sponsor.lookup(key)).toEqual({ status: 'not-submitted' });
+
+    let release = () => {};
+    rpc.sendResults.push(() => {
+      const tx = rpc.sent.at(-1)!;
+      release = () => rpc.commit(tx, xdr.ScVal.scvU32(7));
+      return { status: 'PENDING' } as never;
+    });
+    // The same operation sent twice while the first is in hand: one transaction, one answer.
+    const first = sponsor.sponsor(signed);
+    const second = sponsor.sponsor(signed);
+    expect(await sponsor.lookup(key)).toEqual({ status: 'in-progress' });
+    await expect.poll(() => rpc.sent.length).toBe(1);
+    release();
+    const [a, b] = await Promise.all([first, second]);
+    expect(a).toMatchObject({ status: 'success', record: { operation_hash: key } });
+    expect(b.hash).toBe(a.hash);
+
+    // Sent again afterwards, and after a restart on the same journal: still that one transaction.
+    expect((await sponsor.sponsor(signed)).hash).toBe(a.hash);
+    const restarted = new Sponsor(rpc.context(), keypairSigner(sponsorKey), policy, journal);
+    expect((await restarted.sponsor(signed)).hash).toBe(a.hash);
+    expect(await restarted.lookup(key)).toMatchObject({ status: 'success', hash: a.hash });
+    expect(rpc.sent).toHaveLength(1);
+    await expect(sponsor.lookup('nope')).rejects.toBeInstanceOf(SponsorRefused);
+  });
+
+  it('builds a new transaction for an operation only when the earlier one can never be included', async () => {
+    const rpc = new FakeRpc();
+    const journal = new MemoryJournal();
+    const sponsor = new Sponsor(rpc.context(), keypairSigner(sponsorKey), policy, journal);
+    const signed = operation([entry()]);
+    rpc.sendResults.push(() => ({ status: 'ERROR', errorResult: undefined }) as never);
+    expect((await sponsor.sponsor(signed)).status).toBe('rejected');
+    rpc.sendResults.push(() => {
+      rpc.commit(rpc.sent.at(-1)!);
+      return { status: 'PENDING' } as never;
+    });
+    expect((await sponsor.sponsor(signed)).status).toBe('success');
+    expect(rpc.sent).toHaveLength(2);
   });
 
   it('blocks new sponsorship while an earlier submission is unsettled, including after a restart', async () => {
@@ -163,11 +215,13 @@ describe('sponsored client', () => {
     });
     return { tx, report };
   }
-  const endpoint = (sponsor: SponsorEndpoint['sponsor']): SponsorEndpoint => ({
+  const endpoint = (sponsor: SponsorEndpoint['sponsor'], lookup?: SponsorEndpoint['lookup']): SponsorEndpoint => ({
     address: sponsorKey.publicKey(), sponsor, status: async () => {
       throw new Error('unused');
     },
+    ...(lookup ? { lookup } : {}),
   });
+  const quick = { lookupWaitMs: 0 };
 
   it('settles the transaction it can tie to its own operation, read from the network', async () => {
     const rpc = new FakeRpc();
@@ -225,6 +279,74 @@ describe('sponsored client', () => {
       expect(pending, status).toMatchObject({ status: 'pending', submitted_after_ledger: 100 });
       expect(Number(pending!.max_time), status).toBeGreaterThan(rpc.latest.closeTime);
     }
+  });
+
+  it('recovers a lost answer by asking the sponsor about the operation, and still checks what comes back', async () => {
+    const rpc = new FakeRpc();
+    const journal = new MemoryJournal();
+    const key = operationHash(signedOperation());
+    let report: SponsorshipResult | undefined;
+    // The sponsor submits, and its answer is lost on the way back.
+    const lossy = async (operationXdr: string) => {
+      const built = sponsored(rpc, operationXdr);
+      rpc.commit(built.tx, xdr.ScVal.scvU32(7));
+      report = built.report('success');
+      throw new TypeError('fetch failed');
+    };
+    const asked: string[] = [];
+    const outcome = await sponsoredInvoke(rpc.context(), endpoint(lossy, async (hash) => {
+      asked.push(hash);
+      return asked.length < 2 ? { status: 'in-progress' } : report!;
+    }), signedOperation(), journal, scope, quick);
+    expect(asked).toEqual([key, key]);
+    expect(outcome).toMatchObject({ status: 'success', record: { scope, operation_hash: key } });
+
+    // A sponsor that says it submitted nothing has refused: nothing is journaled and the caller may sign again.
+    const empty = new MemoryJournal();
+    await expect(sponsoredInvoke(rpc.context(), endpoint(async () => {
+      throw new TypeError('fetch failed');
+    }, async () => ({ status: 'not-submitted' })), signedOperation(), empty, scope, quick))
+      .rejects.toThrow('submitted nothing for this operation');
+    expect(empty.records.size).toBe(0);
+
+    // One that cannot say, never finishes, or passes off another transaction leaves the outcome unknown.
+    const other = sponsored(rpc, operation([entry({ callArgs: [xdr.ScVal.scvU32(2)] })])).report('success');
+    for (const lookup of [
+      async () => { throw new Error('Submitter cannot look up operations (HTTP 404)'); },
+      async () => ({ status: 'in-progress' as const }),
+      async () => other,
+    ]) {
+      const error = await sponsoredInvoke(rpc.context(), endpoint(async () => {
+        throw new TypeError('fetch failed');
+      }, lookup), signedOperation(), empty, scope, quick).catch((thrown: unknown) => thrown);
+      expect(error).toBeInstanceOf(SponsorOutcomeUnknown);
+      expect(error).toMatchObject({ expirationLedger: 120, operationHash: key });
+    }
+    expect(empty.records.size).toBe(0);
+  });
+
+  it('recovers from the operation hash alone, in another process', async () => {
+    const rpc = new FakeRpc();
+    const journal = new MemoryJournal();
+    const signed = operation([entry()]);
+    const key = operationHash(signedOperation());
+    const built = sponsored(rpc, signed);
+    rpc.commit(built.tx, xdr.ScVal.scvU32(7));
+    const found = endpoint(async () => { throw new Error('unused'); }, async () => built.report('success'));
+    const outcome = await recoverSponsored(rpc.context(), found, key, journal, `recovered:${key}`, { waitMs: 0 });
+    expect(outcome).toMatchObject({ status: 'success', record: { operation_hash: key, source: sponsorKey.publicKey() } });
+    // The earliest ledger comes from the signatures, never from the sponsor's report, which said 100 here: they
+    // expire at 120 and were signed at most the longest authorization window before that.
+    expect(outcome.record.submitted_after_ledger).toBe(120 - MAX_AUTH_WINDOW_LEDGERS - 1);
+
+    const other = sponsored(rpc, operation([entry({ callArgs: [xdr.ScVal.scvU32(2)] })])).report('success');
+    await expect(recoverSponsored(rpc.context(), endpoint(async () => other, async () => other), key, journal, 'r', { waitMs: 0 }))
+      .rejects.toThrow('other than the one this client signed');
+    await expect(recoverSponsored(rpc.context(), endpoint(async () => other, async () => ({ status: 'not-submitted' })), key,
+      journal, 'r', { waitMs: 0 })).rejects.toBeInstanceOf(SponsorRefused);
+    await expect(recoverSponsored(rpc.context(), endpoint(async () => other), key, journal, 'r', { waitMs: 0 }))
+      .rejects.toBeInstanceOf(SponsorOutcomeUnknown);
+    await expect(recoverSponsored(rpc.context(), found, 'short', journal, 'r')).rejects.toThrow('operation hash');
   });
 
   it('treats a sponsor that does not answer as an unknown outcome, and a refusal as a refusal', async () => {
@@ -307,6 +429,38 @@ describe('submitter HTTP adapter', () => {
     await expect(client.sponsor(operation([entry({ address: sponsorKey.publicKey() })])))
       .rejects.toThrow('sponsor does not authorize');
     expect(() => client.status('nothex')).toThrow('transaction hash');
+  });
+
+  it('answers what it did with an operation, in a way a client cannot mistake for a missing route', async () => {
+    let answer: Awaited<ReturnType<NonNullable<SponsorEndpoint['lookup']>>> = { status: 'not-submitted' };
+    const url = await start({ ...fake(async () => record('success')), lookup: async () => answer });
+    const client = httpSponsor(url, sponsorKey.publicKey());
+    const key = 'ab'.repeat(32);
+    expect(await client.lookup!(key)).toEqual({ status: 'not-submitted' });
+    answer = { status: 'in-progress' };
+    expect((await fetch(new URL(`v1/operations/${key}`, url))).status).toBe(202);
+    expect(await client.lookup!(key)).toEqual({ status: 'in-progress' });
+    answer = record('success');
+    expect(await client.lookup!(key)).toMatchObject({ status: 'success', hash: 'ef'.repeat(32) });
+    answer = record('pending');
+    expect((await fetch(new URL(`v1/operations/${key}`, url))).status).toBe(202);
+    await expect(client.lookup!('short')).rejects.toThrow('operation hash');
+
+    // An older submitter has no such route. Its 404 is "cannot say", never "nothing was submitted".
+    const old = createServer((_request, response) => {
+      response.writeHead(404, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ error: 'Not found' }));
+    });
+    old.listen(0, '127.0.0.1');
+    await once(old, 'listening');
+    try {
+      const address = old.address();
+      const legacy = httpSponsor(`http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}/`,
+        sponsorKey.publicKey());
+      await expect(legacy.lookup!(key)).rejects.toThrow('cannot look up operations');
+    } finally {
+      old.close();
+    }
   });
 
   it('enforces the body shape and size, the bearer token and the rate limit', async () => {

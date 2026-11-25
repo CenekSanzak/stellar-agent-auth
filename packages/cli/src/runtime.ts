@@ -329,8 +329,12 @@ export function classify(error: unknown): { code: number; message: string; resul
   }
   if (error instanceof SponsorOutcomeUnknown) {
     return {
-      code: EXIT.pending, message: error.message,
+      code: EXIT.pending,
+      message: error.operationHash
+        ? `${error.message} To ask the sponsor what it did, run "tx status --operation ${error.operationHash}" with the same sponsor.`
+        : error.message,
       result: { status: 'unknown', stage: 'sponsor', auth_expiration_ledger: error.expirationLedger,
+        ...(error.operationHash ? { operation: error.operationHash } : {}),
         detail: error.cause instanceof Error ? error.cause.message : String(error.cause) },
     };
   }

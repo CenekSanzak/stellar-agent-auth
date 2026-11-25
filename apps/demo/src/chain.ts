@@ -1,7 +1,7 @@
 import { rpc } from '@stellar/stellar-sdk';
 import {
   AgentRegistryError, SimulationRejected, SubmissionUnsettled, VerificationRegistryError, WalletError,
-  canonicalPolicy, isSettled, networkContext, ownerInvocation, pipelineLimits, policyExposure, policyHash, prepare,
+  canonicalPolicy, isSettled, networkContext, newestForOperation, ownerInvocation, pipelineLimits, policyExposure, policyHash, prepare,
   readActivePolicies, readAgent, readAuditHead, readIndexedHistory, readLatestResult, readPaused, readPolicy,
   readPolicyState, readProvider, readWalletBalance, readWalletOwner, settleScope, submit, toContractUnits,
   walletDeployment,
@@ -39,6 +39,10 @@ export class StorageJournal implements TransactionJournal {
   async unsettled(scope: string) {
     return this.all().filter((record) => record.scope === scope && !isSettled(record.status))
       .sort((a, b) => a.created_at.localeCompare(b.created_at));
+  }
+
+  async byOperation(scope: string, operationHash: string) {
+    return newestForOperation(this.all(), scope, operationHash);
   }
 
   async put(record: TransactionRecord) {

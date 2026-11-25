@@ -1,5 +1,5 @@
 import {
-  Account, Address, Operation, StrKey, TransactionBuilder, rpc, xdr, type Transaction,
+  Account, Address, Operation, StrKey, TransactionBuilder, hash, rpc, xdr, type Transaction,
 } from '@stellar/stellar-sdk';
 import { MAX_AUTH_WINDOW_LEDGERS } from './actions.js';
 import { contractErrorName } from './contract-call.js';
@@ -251,6 +251,13 @@ export interface TransactionRecord {
   ledger?: number;
   /** A contract error name, a result code or a reason the status is unknown. */
   error?: string;
+  /**
+   * `operationHash` of the envelope's operation, when it has exactly one. It ties an envelope to the signed
+   * operation it was built around, so a sponsor's transaction can be found from the operation alone.
+   */
+  operation_hash?: string;
+  /** The network the envelope was signed for, as the hex SHA-256 of its passphrase. */
+  network_id?: string;
   created_at: string;
   updated_at: string;
 }
@@ -259,7 +266,21 @@ export interface TransactionJournal {
   get(hash: string): Promise<TransactionRecord | undefined>;
   /** Records in `scope` that are not settled, oldest first. */
   unsettled(scope: string): Promise<TransactionRecord[]>;
+  /** The newest record in `scope` built around the operation with this hash, settled or not. */
+  byOperation(scope: string, operationHash: string): Promise<TransactionRecord | undefined>;
   put(record: TransactionRecord): Promise<void>;
+}
+
+/** The newest of `records` in `scope` for `operationHash`; shared by journal implementations. */
+export function newestForOperation(
+  records: Iterable<TransactionRecord>, scope: string, operationHash: string,
+): TransactionRecord | undefined {
+  let newest: TransactionRecord | undefined;
+  for (const record of records) {
+    if (record.scope !== scope || record.operation_hash !== operationHash) continue;
+    if (!newest || record.created_at > newest.created_at) newest = record;
+  }
+  return newest && { ...newest };
 }
 
 /** A journal for one process; use a durable journal wherever a restart must not lose a pending hash. */
@@ -272,6 +293,9 @@ export class MemoryJournal implements TransactionJournal {
   async unsettled(scope: string) {
     return [...this.records.values()].filter((record) => record.scope === scope && !isSettled(record.status))
       .sort((a, b) => a.created_at.localeCompare(b.created_at)).map((record) => ({ ...record }));
+  }
+  async byOperation(scope: string, operationHash: string) {
+    return newestForOperation(this.records.values(), scope, operationHash);
   }
   async put(record: TransactionRecord) {
     this.records.set(record.hash, { ...record });
@@ -291,6 +315,17 @@ export interface TransactionOutcome {
 
 const now = () => new Date().toISOString();
 const toHex = (bytes: Uint8Array) => Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+
+/**
+ * The hex SHA-256 of an operation's XDR, authorization entries included. Two operations share it only if they are
+ * the same call with the same signed entries.
+ */
+export function operationHash(operation: xdr.Operation): string {
+  return toHex(hash(operation.toXdr()));
+}
+
+/** The hex SHA-256 of a network passphrase. */
+export const networkIdOf = (networkPassphrase: string) => toHex(hash(new TextEncoder().encode(networkPassphrase)));
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function invokedContract(envelope: xdr.TransactionEnvelope): string | undefined {
@@ -428,9 +463,13 @@ export async function submit(
   await settleScope(context, journal, scope);
   const latest = await context.server.getLatestLedger();
   const created = now();
+  const envelope = signed.toEnvelope();
+  const operations = envelope.type === 'envelopeTypeTx' ? envelope.v1.tx.operations : [];
   const record: TransactionRecord = {
     scope, hash: toHex(signed.hash()), envelope: signed.toXDR(), source: signed.source,
     max_time: signed.timeBounds?.maxTime ?? '0', submitted_after_ledger: latest.sequence, status: 'pending',
+    network_id: networkIdOf(context.networkPassphrase),
+    ...(operations.length === 1 ? { operation_hash: operationHash(operations[0]!) } : {}),
     created_at: created, updated_at: created,
   };
   if (record.max_time === '0') throw new Error('Refusing to submit a transaction without a time bound');

@@ -2,7 +2,7 @@ import { chmod, mkdir, readFile, readdir, rename, stat, writeFile } from 'node:f
 import { isAbsolute, join, resolve } from 'node:path';
 import { Keypair, StrKey } from '@stellar/stellar-sdk';
 import { keypairSigner, type Signer } from './signers.js';
-import { isSettled, type TransactionJournal, type TransactionRecord } from './transactions.js';
+import { isSettled, newestForOperation, type TransactionJournal, type TransactionRecord } from './transactions.js';
 
 /**
  * Node-only helpers, exported as `@stellar-agent-auth/sdk/node` so the main entry stays browser-safe: a durable
@@ -32,7 +32,8 @@ export class FileJournal implements TransactionJournal {
     }
   }
 
-  async unsettled(scope: string): Promise<TransactionRecord[]> {
+  /** Every record in the directory. */
+  async all(): Promise<TransactionRecord[]> {
     let names: string[];
     try {
       names = await readdir(this.directory);
@@ -44,9 +45,17 @@ export class FileJournal implements TransactionJournal {
     for (const name of names) {
       if (!name.endsWith('.json') || !HASH.test(name.slice(0, -5))) continue;
       const record = await this.get(name.slice(0, -5));
-      if (record && record.scope === scope && !isSettled(record.status)) records.push(record);
+      if (record) records.push(record);
     }
     return records.sort((a, b) => a.created_at.localeCompare(b.created_at));
+  }
+
+  async unsettled(scope: string): Promise<TransactionRecord[]> {
+    return (await this.all()).filter((record) => record.scope === scope && !isSettled(record.status));
+  }
+
+  async byOperation(scope: string, operationHash: string): Promise<TransactionRecord | undefined> {
+    return newestForOperation(await this.all(), scope, operationHash);
   }
 
   async put(record: TransactionRecord): Promise<void> {
