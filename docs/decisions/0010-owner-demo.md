@@ -63,7 +63,7 @@ The views are functions from one state object to HTML text, and a section is rep
 
 - The demo shows the SOW's cases in a browser: one allowed payment, a payment over the limit, a payment to an unknown recipient, and a payment after revocation, plus the daily limit, a pause, and both account-path payments.
 - The refusals have no transactions. Evidence of a failed transaction on the ledger comes from a payment signed before a revocation and submitted after it, which the CLI example does and P8 records.
-- Signing through Freighter is not exercised by any test in the repository. It has to be tried by hand, and P8 does that on Testnet.
+- Signing through Freighter is not exercised by any test in the repository. It was tried by hand on the local network on 2026-11-26 and worked ([P7 validation](../P7_VALIDATION.md)); on Testnet it is tried in P8.
 - The server holds three keys in one process and serves one owner at a time. It is a demo server, not a pattern for running an agent.
 - The setup publishes a fixture result and runs on the local network only. The Testnet deployment, with the real verifier, is P8.
 - The browser test needs an installed Chrome. `playwright-core` drives it and downloads nothing.

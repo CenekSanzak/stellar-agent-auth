@@ -76,6 +76,24 @@ From the browser test and the server test, on the local network:
 | Any payment while paused | Refused, `Paused` |
 | Any payment after revocation | Refused, `Revoked`, on both payment paths |
 
+## Freighter, by hand
+
+On 2026-11-26 the owner ran the demo with the Freighter extension on the local network, started with Horizon (`npm run dev:horizon`), following the steps in the [demo README](../apps/demo/README.md). Every step did what the guide says: connecting, test XLM, creating the wallet, the faucet, approving the default policy, a payment and a refusal, pause, resume, and revocation. With Freighter switched to Testnet, connecting was refused with the network message.
+
+Afterwards the wallet was read from the network, not from the page:
+
+| What | Read back |
+| --- | --- |
+| Wallet owner | The Freighter account |
+| Audit history through the indexer, verified by the SDK | `verified`: 5 entries from the first match the stored head |
+| Entries | Policy approved, one 3 DEMO payment by the agent, paused, resumed, policy revoked |
+| Owner transactions | Four, each successful, each carrying one signature |
+| Refusals recorded as attempts | `PaymentLimitExceeded`, `Paused`, `Revoked`; none on the ledger |
+| Wallet state | Not paused, 97 DEMO, no active policy |
+| Demo server log | No errors |
+
+This is one run by one person, on a local network whose transactions are not kept. It shows that the Freighter path works end to end; it is not a regression test.
+
 ## States covered only by unit tests
 
 A live local network does not produce these in the time a test runs, so their wording is tested on the view functions directly (`tests/unit/demo.test.ts`):
@@ -98,7 +116,7 @@ The browser test does cover two failure states in the real page: the demo server
 
 ## Limits and open points
 
-- **Freighter is not tested.** No test in the repository signs through it: the browser test runs without the extension and uses the page's local demo key. Connecting, the network check and signing through Freighter have to be tried by hand, and must be before P8 relies on them.
+- **Freighter is tried by hand, not by a test.** No test in the repository signs through it: the browser test runs without the extension and uses the page's local demo key. The owner ran the flow with Freighter on 2026-11-26; see "Freighter, by hand" above. It has not been tried on Testnet.
 - **Local network only.** The setup refuses any other network, because it publishes a fixture result. The page labels that result as simulated.
 - **Refusals have no transactions.** The agent stops at simulation. A failed transaction on the ledger is produced by the CLI example's presigned payment, not by the page.
 - **The server holds three keys in one process** and follows one owner at a time. It is a demo server.

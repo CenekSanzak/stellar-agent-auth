@@ -68,8 +68,31 @@ The sponsor is the same code as `services/submitter` and the indexer the same as
 
 - **The result is simulated.** On the local network the provider is a fixture provider and the page says so wherever the result appears. A local network cannot reach a public metadata URL, which a real assessment needs.
 - **A refusal has no transaction.** The agent finds a refusal in simulation and submits nothing, as an agent should. The page shows the wallet's reason and no transaction link. A payment signed before a revocation and submitted after it, which fails on the ledger, is shown by `examples/payment-flow.ts`, not here.
-- **Freighter is not covered by the tests.** They run in a browser without the extension and use the local demo key. Signing through Freighter goes through the SDK's wallet adapter, which checks every signature it gets back.
+- **Freighter is not covered by the automated tests.** They run in a browser without the extension and use the local demo key. It was tried by hand on the local network; see below and [P7 validation](../../docs/P7_VALIDATION.md). Signing through Freighter goes through the SDK's wallet adapter, which checks every signature it gets back.
 - **One owner at a time.** A second owner connecting replaces the first one's session in the server.
+
+## Trying it with Freighter
+
+Freighter accepts a custom network only with a Horizon address, and the default local network runs the RPC alone. Start it with Horizon instead:
+
+```sh
+npm run local:down
+npm run dev:horizon
+npm run demo:setup
+npm run demo
+```
+
+In Freighter, add a custom network and select it:
+
+| Field | Value |
+| --- | --- |
+| Horizon URL | `http://localhost:8000` |
+| Soroban RPC URL | `http://localhost:8000/rpc` |
+| Passphrase | `Standalone Network ; February 2017` |
+| Friendbot URL | `http://localhost:8000/friendbot` |
+| Allow HTTP | on |
+
+Open `http://localhost:8790/` in the browser that has the extension and choose "Connect Freighter". Every owner action then opens Freighter's signing window. With Freighter switched to another network, connecting is refused with a message that names both networks.
 
 ## Tests
 
