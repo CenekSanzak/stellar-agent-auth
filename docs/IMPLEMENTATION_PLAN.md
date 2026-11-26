@@ -22,7 +22,7 @@ The repository is a coherent scaffold with a useful architectural specification.
 
 - `readme.md`: proposed four grant milestones and the 5-per-payment / 20-per-day example.
 - `ARCHITECTURE.md`: identity revisions, current provider results, policy enforcement, restricted execution, persistent security state, and chained audit history.
-- The four-page Instawards SOW dated 30 September 2026 (a private document, not kept in this repository): three deliverables within 30 calendar days, with a working checked-agent payment, rejection examples, revocation, developer kit, demo, tests, deployment, and guide. The sprint start date is blank, so this plan uses relative days.
+- The local four-page Instawards SOW dated 30 September 2026: three deliverables within 30 calendar days, with a working checked-agent payment, rejection examples, revocation, developer kit, demo, tests, deployment, and guide. The sprint start date is blank, so this plan uses relative days.
 - `docs/DEVELOPMENT.md` and component READMEs: explicit acknowledgement that current files are placeholders.
 
 The SOW excludes a security audit, full ERC implementations, a general consumer wallet, and unrestricted contract execution. Its requested budget is not a technical completion guarantee.
