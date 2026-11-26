@@ -25,7 +25,8 @@ export interface Deployment {
   provider: { address: string; mode: 'Live' | 'Fixture' };
   /** A service that pulls its price from the paying wallet in its own call. */
   service: { contract: string; service_id: string; price: string };
-  roles: { recipient: string; stranger: string; funder: string; sponsor: string };
+  /** `facilitator` pays the fees of x402 payments; like the sponsor it authorizes nothing. */
+  roles: { recipient: string; stranger: string; funder: string; sponsor: string; facilitator: string };
   key_directory: string;
   created_at: string;
 }
@@ -51,7 +52,7 @@ export function assertDeployment(value: unknown): asserts value is Deployment {
     && contract(record.service?.contract) && HEX32.test(record.service?.service_id)
     && typeof record.service?.price === 'string'
     && account(record.roles?.recipient) && account(record.roles?.stranger) && account(record.roles?.funder)
-    && account(record.roles?.sponsor) && typeof record.key_directory === 'string';
+    && account(record.roles?.sponsor) && account(record.roles?.facilitator) && typeof record.key_directory === 'string';
   if (!ok) throw new Error('The deployment record is incomplete or malformed; run the demo setup again');
 }
 

@@ -45,6 +45,7 @@ Contracts are planned in Rust with Soroban. The SDK, services, CLI, and demo use
 | `services/submitter` | Simulate transactions, submit them, and track their status. |
 | `services/indexer` | Read events and build a searchable audit history. |
 | `packages/sdk` | Provide reusable clients for these workflows. |
+| `packages/x402` | Pay x402-protected HTTP APIs from the wallet, settle such payments, and let a payee check the paying agent. |
 | `packages/cli` and `apps/demo` | Let developers and owners interact with the system. |
 
 Policy checks remain inside the wallet contract. This keeps permission checks, spending counters, and fund movements in the same transaction.
@@ -106,6 +107,8 @@ Revocation blocks subsequent execution once confirmed on-chain, including reques
 The wallet supports it as a custom account. When an asset contract requires the wallet's authorization, the host calls the wallet's `__check_auth`, and the same policy runs there: the agent key's signature, the asset, the recipient, the caps, the live identity and the current verification result. Both paths draw on the same budget. It authorizes two shapes only. One is a plain transfer of a policy asset out of the wallet, which anyone holding the signed entry can submit. The other is a call to the one service a policy permits together with the transfer inside it, so that the payment cannot be taken without the service running. Every other call is refused, so the wallet is not a general signer.
 
 Two things differ from `execute`. The agent signs as a key, so the signer account's own signers and thresholds are not applied. And there is no policy sequence or request deadline; the host's nonce prevents replay. A refusal on this path reaches the caller only as an authorization failure, so the wallet also offers `check_payment`, which says in advance whether a payment would pass and why not.
+
+An x402 payment is the plain-transfer case of this path, asked for by an HTTP API and submitted by a facilitator. `packages/x402` connects the wallet to x402's own client and resource server. The published facilitator refuses a payer that publishes events of its own, which the wallet does, so the package also carries facilitators that allow exactly that; a payee can add its own check on the paying agent before it takes the payment ([ADR 0012](docs/decisions/0012-x402-and-payee-gate.md)).
 
 The design is in [ADR 0007](docs/decisions/0007-account-payment-path.md) and the spike behind it in [ADR 0006](docs/decisions/0006-custom-account-spike.md). It is tested on a local network and on Testnet from a throwaway deployment; the kept Testnet deployment is P8.
 

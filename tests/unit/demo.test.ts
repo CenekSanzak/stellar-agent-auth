@@ -264,6 +264,9 @@ describe('progress and failure states', () => {
     expect(explainRefusal('Revoked')).toMatch(/^Revoked: /);
     expect(explainRefusal(null)).toBe('The network gave no reason.');
     expect(explainRefusal('SomethingNew')).toBe('SomethingNew');
+    // A paid API's own refusal is told apart from the wallet's.
+    expect(explainRefusal('payee_gate_CheckNotPassed')).toMatch(/^The API's own check refused the agent, and nothing was paid\. CheckNotPassed: /);
+    expect(explainRefusal('payee_gate_unknown_payer')).toContain('unknown payer');
   });
 
   it('refuses a wallet on another network', () => {
@@ -341,7 +344,7 @@ describe('deployment record', () => {
       network: 'local', rpc_url: 'http://localhost:8000/rpc', passphrase: 'x', epoch: 'demo-1', start_ledger: 5,
       agent_registry: contract(1), verification_registry: contract(2), asset, wallet_wasm_hash: 'ab'.repeat(32),
       wallet_salt: 'cd'.repeat(32), agent: config.agent, provider: config.provider, service: config.service,
-      roles: { ...config.roles, funder: account(13) }, key_directory: '/tmp/keys', created_at: 'now',
+      roles: { ...config.roles, funder: account(13), facilitator: account(14) }, key_directory: '/tmp/keys', created_at: 'now',
     };
     expect(() => assertDeployment(record)).not.toThrow();
     expect(() => assertDeployment({ ...record, agent_registry: 'C-not-an-address' })).toThrow('malformed');

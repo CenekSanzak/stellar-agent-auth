@@ -10,6 +10,7 @@ const workspace = {
   '@stellar-agent-auth/submitter': source('./services/submitter/src/index.ts'),
   '@stellar-agent-auth/cli': source('./packages/cli/src/index.ts'),
   '@stellar-agent-auth/indexer': source('./services/indexer/src/index.ts'),
+  '@stellar-agent-auth/x402': source('./packages/x402/src/index.ts'),
 };
 
 export default defineConfig({

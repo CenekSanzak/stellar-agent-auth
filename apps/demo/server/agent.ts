@@ -6,6 +6,7 @@ import {
   type AccountPayment, type Hash32, type Invocation, type NetworkContext, type Signer, type SponsorEndpoint,
   type TransactionJournal,
 } from '@stellar-agent-auth/sdk';
+import { fetchPaying, walletClient } from '@stellar-agent-auth/x402';
 import type { Deployment } from './deployment.js';
 import { hexToBytes } from './deployment.js';
 
@@ -40,11 +41,18 @@ export const SCENARIOS: readonly Scenario[] = [
     description: 'The wallet authorizes a plain asset transfer itself, signed by the agent key, under the same limits.' },
   { id: 'service', label: 'Pay the demo service', expected: 'paid',
     description: 'The service takes its price from the wallet inside its own call. Needs a policy that names the service.' },
+  { id: 'x402', label: 'Buy a report from a paid API (x402)', expected: 'paid',
+    description: 'The API answers 402, the wallet pays through an x402 facilitator, and the API checks the agent before it serves.' },
+  { id: 'x402-strict', label: 'Buy from an API that wants more', expected: 'payee_gate_CheckNotPassed',
+    description: 'This API requires a code check the agent\'s result does not have. The API refuses; the wallet is not charged.' },
 ];
 
 export interface Step {
-  /** `execute` is the wallet's own call; `account` and `service` are the account payment path. */
-  path: 'execute' | 'account' | 'service';
+  /**
+   * `execute` is the wallet's own call; `account` and `service` are the account payment path; `x402` is an account
+   * payment asked for by an HTTP API and submitted by an x402 facilitator.
+   */
+  path: 'execute' | 'account' | 'service' | 'x402';
   amount: string;
   recipient: string;
   /** `unsettled`: submitted or possibly submitted, and not yet known to be final. Never treat it as refused. */
@@ -68,6 +76,10 @@ export type AttemptReporter = (attempt: {
   kind: 'simulation' | 'transaction'; status: string; error: string | null; detail: string | null; tx_hash: string | null;
 }) => Promise<void>;
 
+/** The paid API's routes: one any verified agent may buy from, and one that asks for a check this agent lacks. */
+export const PAID_REPORT = '/x402/report';
+export const PAID_STRICT = '/x402/audited-agents-only';
+
 const UNIT_DECIMALS = 7;
 const MAX_DAILY_STEPS = 12;
 
@@ -79,6 +91,8 @@ export class DemoAgent {
     private readonly server: Pick<rpc.Server, 'simulateTransaction' | 'getLatestLedger'>,
     private readonly agent: Signer, private readonly sponsor: SponsorEndpoint,
     private readonly journal: TransactionJournal, private readonly report: AttemptReporter,
+    /** Where the paid API is served; known once the server listens. */
+    private readonly paidApi: () => string,
   ) {}
 
   private read(wallet: string) {
@@ -155,6 +169,42 @@ export class DemoAgent {
     return this.submit(accountPaymentInvocation(this.context, payment, this.agent), `account:${wallet}`, base);
   }
 
+  /**
+   * Ask a paid API for something and pay what it asks through x402. The wallet can refuse (its policy), and so can
+   * the API (its own check on the agent); either way nothing is paid.
+   */
+  private async x402(wallet: string, policyHash: Hash32, path: string): Promise<Step> {
+    const { asset, roles } = this.deployment;
+    const client = walletClient({ wallet, policyHash, agent: this.agent, context: this.context, server: this.server });
+    const base = { path: 'x402' as const, amount: '?', recipient: roles.recipient };
+    const refused = async (error: string | null, detail: string, known: Partial<Step> = {}): Promise<Step> => {
+      await this.report({ kind: 'simulation', status: 'refused', error, detail, tx_hash: null });
+      return { ...base, ...known, status: 'refused', error, detail, tx_hash: null };
+    };
+    let paid: Awaited<ReturnType<typeof fetchPaying>>;
+    try {
+      paid = await fetchPaying(client, new URL(path, this.paidApi()));
+    } catch (error) {
+      // The wallet said no before anything was signed for the API.
+      if (error instanceof WalletError) return refused(error.code, error.message);
+      throw error;
+    }
+    const asked = paid.required?.accepts.find((option) => option.asset === asset.contract) ?? paid.required?.accepts[0];
+    const known = asked ? { amount: fromContractUnits(BigInt(asked.amount), UNIT_DECIMALS), recipient: asked.payTo } : {};
+    if (paid.response.status === 402) {
+      const reason = paid.required?.error ?? null;
+      return refused(reason, `The API refused the payment${reason ? `: ${reason}` : ''}`, known);
+    }
+    if (!paid.response.ok || !paid.settlement?.success) {
+      // Paid or not is not known from here; the transaction hash, if there is one, says which.
+      return { ...base, ...known, status: 'unsettled', error: paid.settlement?.errorReason ?? null,
+        detail: `The API answered ${paid.response.status}`, tx_hash: paid.settlement?.transaction || null };
+    }
+    const answer = JSON.stringify(await paid.response.json().catch(() => null));
+    return { ...base, ...known, status: 'paid', error: null, detail: `The API answered ${answer.slice(0, 200)}`,
+      tx_hash: paid.settlement.transaction };
+  }
+
   /** Run one scenario against `wallet` under the policy `policyHash`. Amounts follow the policy as stored. */
   async run(scenarioId: string, wallet: string, policyHash: Hash32): Promise<ScenarioResult> {
     const scenario = SCENARIOS.find(({ id }) => id === scenarioId);
@@ -191,6 +241,12 @@ export class DemoAgent {
         break;
       case 'service':
         steps.push(await this.account(wallet, policyHash, this.units(this.deployment.service.price), true));
+        break;
+      case 'x402':
+        steps.push(await this.x402(wallet, policyHash, PAID_REPORT));
+        break;
+      case 'x402-strict':
+        steps.push(await this.x402(wallet, policyHash, PAID_STRICT));
         break;
       default:
         throw new UnknownScenario(`Unknown scenario ${scenarioId}`);

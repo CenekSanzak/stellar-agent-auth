@@ -85,8 +85,7 @@ The wallet was 27,858 bytes in P4. Both registries changed because the error lis
 
 ## Not covered here
 
-- A real x402 client or facilitator. The on-chain shape is tested; the `@x402/stellar` package was not used.
-- A payee-side verification gate. It was P9's stretch item and was not built.
+- A real x402 client or facilitator, and a payee-side verification gate, were not part of P9. Both were built afterwards: see [ADR 0012](decisions/0012-x402-and-payee-gate.md) and [x402 validation](X402_VALIDATION.md). Running x402's published code showed that the argument above was right about the payment's shape and incomplete about the rest: the published client and facilitator both refuse the wallet as they are.
 - Rollback of a failed transfer on a network, for the account path. It is covered by host tests.
 - The agent signing as an account. On the account path it signs as a key, and the signer account's own signers and thresholds are not applied. This is accepted and recorded in ADR 0007.
 - Archival and restoration of the new state on a live network.

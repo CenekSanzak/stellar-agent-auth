@@ -148,8 +148,15 @@ export function describeOutcome(outcome: AuditOutcome, asset: AssetInfo): { titl
 /** Why the wallet said no. An unknown reason is said to be unknown: the public RPC often gives none. */
 export function explainRefusal(error: string | null): string {
   if (error === null) return 'The network gave no reason.';
-  const help = (CONTRACT_ERROR_HELP as Record<string, string | undefined>)[error as ContractErrorName];
-  return help ? `${error}: ${help}` : error;
+  const help = (name: string) => (CONTRACT_ERROR_HELP as Record<string, string | undefined>)[name as ContractErrorName];
+  // A paid API's own check on the agent, made before it takes the payment.
+  const gate = /^payee_gate_(.+)$/.exec(error)?.[1];
+  if (gate) {
+    const reason = help(gate);
+    return `The API's own check refused the agent, and nothing was paid. ${reason ? `${gate}: ${reason}` : gate.replaceAll('_', ' ')}`;
+  }
+  const known = help(error);
+  return known ? `${error}: ${known}` : error;
 }
 
 /**

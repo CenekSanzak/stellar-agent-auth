@@ -5,13 +5,17 @@ import { extname, join, normalize, sep } from 'node:path';
 import { StrKey, rpc } from '@stellar/stellar-sdk';
 import { startIndexer, type RunningIndexer } from '@stellar-agent-auth/indexer';
 import {
-  MemoryJournal, deployedAddress, fromContractUnits, fundInvocation, httpSponsor, invoke, networkContext,
+  MemoryJournal, deployedAddress, fromContractUnits, fundInvocation, httpSponsor, invoke, keypairSigner, networkContext,
   pipelineLimits, readWalletBalance, readWalletOwner, readWalletRegistries, toContractUnits,
   type NetworkContext, type Signer,
 } from '@stellar-agent-auth/sdk';
-import { loadKey } from '@stellar-agent-auth/sdk/node';
+import { FileJournal, loadKey, loadKeypair } from '@stellar-agent-auth/sdk/node';
+import {
+  StellarExactFacilitator, createPaidService, inProcessFacilitator, payeeGate, tolerantUpstreamFacilitator, x402Network,
+  type PayeeTerms,
+} from '@stellar-agent-auth/x402';
 import { startSubmitter } from '@stellar-agent-auth/submitter';
-import { DemoAgent, SCENARIOS, UnknownScenario } from './agent.js';
+import { DemoAgent, PAID_REPORT, PAID_STRICT, SCENARIOS, UnknownScenario } from './agent.js';
 import { hexToBytes, type Deployment } from './deployment.js';
 
 /**
@@ -24,6 +28,9 @@ import { hexToBytes, type Deployment } from './deployment.js';
  * - `POST /v1/session { owner }`: which wallet belongs to this owner, and start following it once it exists;
  * - `POST /v1/fund`: the funder sends a fixed amount of the test asset to the session's wallet;
  * - `POST /v1/payments { scenario, policy_hash }`: the agent runs one named scenario.
+ *
+ * It also serves a paid API under `/x402/`, which stands for someone else's service: it answers 402, is paid
+ * through x402 by whoever asks, and checks the paying agent against its own requirement before it serves.
  *
  * The wallet address is derived here from the owner's address and the deployment's salt, and it is checked on the
  * network before anything is started for it. It listens on loopback only.
@@ -78,6 +85,43 @@ export async function createBackend(options: BackendOptions) {
     throw new Error('The keys in the key directory are not the ones this deployment names');
   }
   const journal = new MemoryJournal();
+
+  // A paid API, protected by x402. It is part of this server for convenience and stands for someone else's service:
+  // it knows nothing of the session, asks for payment like any x402 resource, and checks the paying agent itself.
+  const network = x402Network(deployment.passphrase);
+  const facilitatorKey = await loadKeypair('facilitator', keyEnv);
+  if (facilitatorKey.publicKey() !== deployment.roles.facilitator) {
+    throw new Error('The facilitator key is not the one this deployment names');
+  }
+  // The published x402 code knows Testnet and mainnet only, and refuses a payer that publishes its own events. On
+  // those networks it is used with that one allowance; on a local network this project's facilitator does the same job.
+  const facilitator = deployment.network === 'local'
+    ? new StellarExactFacilitator({
+      context, signer: keypairSigner(facilitatorKey),
+      journal: new FileJournal(join(options.directory, 'x402-facilitator', 'journal')),
+    })
+    : tolerantUpstreamFacilitator(facilitatorKey.secret(), network, { rpcUrl: deployment.rpc_url, maxTransactionFeeStroops: 2_000_000 });
+  const terms: PayeeTerms = {
+    server, networkPassphrase: deployment.passphrase, walletCode: [deployment.wallet_wasm_hash],
+    agentRegistry: deployment.agent_registry, verificationRegistry: deployment.verification_registry,
+    provider: deployment.provider.address,
+    requirement: { required_checks: ['Metadata', 'SignerAccount'], max_age: 30n * 86_400n, max_risk_score: 10 },
+  };
+  const price = { asset: deployment.asset.contract, amount: toContractUnits(deployment.service.price, deployment.asset.decimals).toString() };
+  const report = async (payer: string | undefined) => {
+    const ledger = await server.getLatestLedger();
+    return { report: `Ledger ${ledger.sequence} is the latest on ${deployment.network}`, ledger: ledger.sequence, paid_by: payer ?? null };
+  };
+  const paid = await createPaidService(network, inProcessFacilitator(network, facilitator), [
+    { path: PAID_REPORT, description: 'The latest ledger, for agents with a verified identity', price,
+      payTo: deployment.roles.recipient, gate: payeeGate(terms), handler: report },
+    // The same thing from a stricter seller: it wants a code check, which the limited verifier does not perform.
+    { path: PAID_STRICT, description: 'The latest ledger, for agents whose code was checked', price,
+      payTo: deployment.roles.recipient,
+      gate: payeeGate({ ...terms, requirement: { ...terms.requirement, required_checks: ['Code', 'Metadata', 'SignerAccount'] } }),
+      handler: report },
+  ]);
+  let paidApiUrl: string | undefined;
   const salt = hexToBytes(deployment.wallet_salt);
   let session: Session | undefined;
   /** Sessions and faucet payments are handled one at a time. */
@@ -147,7 +191,10 @@ export async function createBackend(options: BackendOptions) {
       }).catch((error: unknown) => console.error('demo: could not record an attempt:', error));
     };
     const agent = new DemoAgent(deployment, context, server, agentKey,
-      httpSponsor(submitter.url, submitter.sponsor), journal, report);
+      httpSponsor(submitter.url, submitter.sponsor), journal, report, () => {
+        if (!paidApiUrl) throw new Error('The demo server has not been told its own address');
+        return paidApiUrl;
+      });
     return { owner, wallet, indexer, submitter, agent };
   }
 
@@ -270,6 +317,11 @@ export async function createBackend(options: BackendOptions) {
   async function handler(request: IncomingMessage, response: ServerResponse) {
     try {
       const url = new URL(request.url ?? '/', 'http://demo.invalid');
+      // The paid API takes no session and no origin check: whoever pays, through x402, is served.
+      if (url.pathname.startsWith('/x402/')) {
+        if (await paid.handle(request, response)) return undefined;
+        return json(response, 404, { error: 'Not found' });
+      }
       if (url.pathname.startsWith('/v1/')) {
         checkOrigin(request);
         if (request.method === 'GET' && url.pathname === '/v1/config') return json(response, 200, config());
@@ -298,5 +350,11 @@ export async function createBackend(options: BackendOptions) {
     }
   }
 
-  return { handler, stop: () => serial(stopSession), walletOf };
+  return {
+    handler, stop: () => serial(stopSession), walletOf,
+    /** Tell the server where it is reachable, once it listens; the agent buys from the paid API at this address. */
+    listening(url: string) {
+      paidApiUrl = url;
+    },
+  };
 }

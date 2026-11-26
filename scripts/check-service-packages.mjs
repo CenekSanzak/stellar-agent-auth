@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * External consumer check for the CLI and the services: pack the SDK, the verifier, the CLI, the submitter and the
- * indexer exactly as npm would publish them, install the tarballs into an empty project outside the workspace, and
+ * External consumer check for the CLI and the services: pack the SDK, the verifier, the CLI, the submitter, the
+ * indexer and the x402 package exactly as npm would publish them, install the tarballs into an empty project outside the workspace, and
  * run each there. It shows that none of them depends on a file the package does not ship or on the workspace's own
  * layout. Run after `npm run build`.
  */
@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const PACKAGES = {
   sdk: 'packages/sdk', verifier: 'services/verifier', cli: 'packages/cli', submitter: 'services/submitter',
-  indexer: 'services/indexer',
+  indexer: 'services/indexer', x402: 'packages/x402',
 };
 const work = await mkdtemp(join(tmpdir(), 'saa-service-consumer-'));
 const consumer = join(work, 'consumer');
@@ -36,9 +36,13 @@ try {
     const unexpected = (await readdir(installed)).filter((file) => !['README.md', 'dist', 'package.json'].includes(file));
     if (unexpected.length) throw new Error(`Unexpected files in ${name}: ${unexpected.join(', ')}`);
   }
-  // The one third-party runtime dependency, resolved from the workspace install without network access.
+  // The third-party runtime dependencies, resolved from the workspace install without network access.
   await mkdir(join(consumer, 'node_modules/@stellar'), { recursive: true });
   await symlink(join(root, 'node_modules/@stellar/stellar-sdk'), join(consumer, 'node_modules/@stellar/stellar-sdk'), 'dir');
+  await mkdir(join(consumer, 'node_modules/@x402'), { recursive: true });
+  for (const name of ['core', 'stellar']) {
+    await symlink(join(root, 'node_modules/@x402', name), join(consumer, 'node_modules/@x402', name), 'dir');
+  }
   await writeFile(join(consumer, 'package.json'), JSON.stringify({ name: 'consumer', private: true, type: 'module' }));
 
   // The CLI runs from its packed entry point, with its state kept inside the consumer.
@@ -64,9 +68,11 @@ import { submitterConfig, startSubmitter } from '@stellar-agent-auth/submitter';
 import { indexerConfig, HistoryStore, startIndexer } from '@stellar-agent-auth/indexer';
 import { assess, safeFetch } from '@stellar-agent-auth/verifier';
 import { main } from '@stellar-agent-auth/cli';
+import { StellarExactFacilitator, WalletExactScheme, payeeGate, transferProblem, x402Network } from '@stellar-agent-auth/x402';
 import { StrKey } from '@stellar/stellar-sdk';
 const contract = StrKey.encodeContract(new Uint8Array(32).fill(7));
-for (const value of [startSubmitter, startIndexer, assess, safeFetch, main]) {
+if (x402Network('Test SDF Network ; September 2015') !== 'stellar:testnet') throw new Error('Unexpected x402 network');
+for (const value of [startSubmitter, startIndexer, assess, safeFetch, main, StellarExactFacilitator, WalletExactScheme, payeeGate, transferProblem]) {
   if (typeof value !== 'function') throw new Error('A public entry point is missing');
 }
 const submitter = submitterConfig({ STELLAR_NETWORK: 'local', SUBMITTER_SPONSOR_KEY: 'sponsor', SUBMITTER_CONTRACTS: contract });

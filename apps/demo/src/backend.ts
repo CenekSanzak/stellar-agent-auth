@@ -32,7 +32,7 @@ export interface Session {
 }
 
 export interface Step {
-  path: 'execute' | 'account' | 'service';
+  path: 'execute' | 'account' | 'service' | 'x402';
   amount: string;
   recipient: string;
   status: 'paid' | 'refused' | 'failed' | 'unsettled';
