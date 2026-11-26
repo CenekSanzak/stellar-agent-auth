@@ -1,3 +1,4 @@
+import { appendFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { Keypair, hash } from '@stellar/stellar-sdk';
@@ -30,7 +31,12 @@ import { UNIT, walletWorld, type WalletWorld } from '../integration/support/wall
 
 const enabled = process.env['RUN_TESTNET_X402'] === '1';
 const TIMEOUT = 900_000;
-const evidence = (what: string, fields: Record<string, unknown>) => console.info('X402', JSON.stringify({ what, ...fields }));
+const evidence = (what: string, fields: Record<string, unknown>) => {
+  const line = JSON.stringify({ what, ...fields });
+  console.info('X402', line);
+  // The reporter hides what passing tests print. Set X402_EVIDENCE to a file path to keep these lines.
+  if (process.env['X402_EVIDENCE']) appendFileSync(process.env['X402_EVIDENCE'], `${line}\n`);
+};
 
 describe.skipIf(!enabled)('x402 payments from the smart wallet on Testnet', () => {
   let w: WalletWorld;
@@ -82,7 +88,10 @@ describe.skipIf(!enabled)('x402 payments from the smart wallet on Testnet', () =
       context, signer: keypairSigner(keys.own), journal: new MemoryJournal(), limits: { pollIntervalMs: 1_000 },
     }));
     client = walletClient({ wallet: w.wallet, policyHash, agent: keypairSigner(w.roles.signer), context, server: w.net.server });
-    evidence('deployment', { wallet: w.wallet, asset: w.asset, policy: Buffer.from(policyHash).toString('hex') });
+    evidence('deployment', {
+      protocol: context.upgradedAuth ? '30 or later' : 'before 30', wallet: w.wallet, asset: w.asset,
+      policy: Buffer.from(policyHash).toString('hex'),
+    });
   }, TIMEOUT);
 
   afterAll(async () => {
