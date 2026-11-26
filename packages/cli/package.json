@@ -1,6 +1,7 @@
 {
   "name": "@stellar-agent-auth/cli",
   "version": "0.0.0",
+  "license": "Apache-2.0",
   "private": true,
   "type": "module",
   "description": "Command-line interface for agents, verification, wallets, policies and transfers.",

@@ -79,3 +79,6 @@ These are proposed delivery targets. The scaffold is the starting point, not a c
 
 The architecture defines the acceptance cases for these milestones. Test fixtures will be labelled separately from real provider assessments.
 
+## License
+
+Apache License 2.0; see [LICENSE](LICENSE).
