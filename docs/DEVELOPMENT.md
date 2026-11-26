@@ -67,9 +67,10 @@ Two suites in the same project do submit transactions. Each is skipped unless it
 ```sh
 RUN_TESTNET_TESTS=1 RUN_TESTNET_WALLET=1 npx vitest run --project testnet tests/testnet/account-path.test.ts
 RUN_TESTNET_TESTS=1 RUN_TESTNET_SPIKE=1 npx vitest run --project testnet tests/testnet/account-probe.test.ts
+RUN_TESTNET_TESTS=1 RUN_TESTNET_X402=1 npx vitest run --project testnet tests/testnet/x402.test.ts
 ```
 
-The first runs the smart wallet's account path ([ADR 0007](decisions/0007-account-payment-path.md)): both registries, an asset, the wallet and the demo service, then payments on both paths. The second runs the spike that preceded it ([ADR 0006](decisions/0006-custom-account-spike.md)). Both deploy from keys generated at runtime and funded by Friendbot, and keep none of them. They need `npm run build:contracts` first.
+The first runs the smart wallet's account path ([ADR 0007](decisions/0007-account-payment-path.md)): both registries, an asset, the wallet and the demo service, then payments on both paths. The second runs the spike that preceded it ([ADR 0006](decisions/0006-custom-account-spike.md)). The third pays an x402-protected service from the wallet through the published x402 facilitator and through this project's own ([ADR 0012](decisions/0012-x402-and-payee-gate.md)). All three deploy from keys generated at runtime and funded by Friendbot, and keep none of them. They need `npm run build:contracts` first.
 
 ## Test layout
 

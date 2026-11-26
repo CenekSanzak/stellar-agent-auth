@@ -119,6 +119,13 @@ The [Phase 7 validation record](P7_VALIDATION.md) covers the owner demo: its ser
 - A28: the browser smoke test is met on the local network. A real Chrome connects an owner, creates and funds the wallet, approves a policy, and sees one payment made and payments over the limit, to an unknown recipient, while paused and after revocation refused, then a verified history. With P5's clean-checkout import and CLI example, A28 is met locally.
 - Signing through Freighter is not covered by a test; the browser test uses the page's local demo key. It was tried by hand on the local network on 2026-11-26.
 
+## x402 evidence
+
+The [x402 validation record](X402_VALIDATION.md) covers paying x402-protected services from the wallet and a payee's check on the paying agent ([ADR 0012](decisions/0012-x402-and-payee-gate.md)). It is not one of the numbered acceptance cases: it was P9's stretch item and a claim ADR 0007 made without running x402's code.
+
+- A30 is extended: the plain-transfer case of the account path is paid through x402's own client and resource server on the local network and on Testnet.
+- The published x402 facilitator refuses the wallet as it is; this is shown on Testnet and recorded as a limit.
+
 ## P9 evidence
 
 The [Phase 9 validation record](P9_VALIDATION.md) covers the wallet's account payment path, service payments, the error codes and the total cap. Rules are in [ADR 0007](decisions/0007-account-payment-path.md) and [ADR 0008](decisions/0008-error-codes.md).

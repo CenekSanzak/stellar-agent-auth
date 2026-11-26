@@ -1,6 +1,6 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { Keypair, StrKey, hash } from '@stellar/stellar-sdk';
+import { Address, Keypair, StrKey, hash, xdr } from '@stellar/stellar-sdk';
 import { x402HTTPClient } from '@x402/core/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { WalletError } from '../../packages/sdk/src/policies.js';
@@ -9,7 +9,8 @@ import { MemoryJournal, networkContext, type NetworkContext } from '../../packag
 import type { CheckKind, Hash32 } from '../../packages/sdk/src/types.js';
 import { readAuditHead, readWalletBalance } from '../../packages/sdk/src/wallet.js';
 import {
-  STELLAR_LOCAL, StellarExactFacilitator, createPaidService, fetchPaying, inProcessFacilitator, payeeGate, walletClient,
+  STELLAR_LOCAL, StellarExactFacilitator, checkPayer, createPaidService, fetchPaying, inProcessFacilitator, payeeGate,
+  payerOf, walletClient,
   type PayeeTerms,
 } from '../../packages/x402/src/index.js';
 import { readWasm } from './support/local-network.js';
@@ -29,6 +30,7 @@ describe('x402 payments from the smart wallet on local Stellar', () => {
   let http: Server;
   let base: string;
   let client: ReturnType<typeof walletClient>;
+  let terms: PayeeTerms;
   const facilitatorKey = Keypair.random();
   const calls: string[] = [];
 
@@ -46,7 +48,7 @@ describe('x402 payments from the smart wallet on local Stellar', () => {
     const facilitator = inProcessFacilitator(STELLAR_LOCAL, new StellarExactFacilitator({
       context, signer: keypairSigner(facilitatorKey), journal: new MemoryJournal(), limits: { pollIntervalMs: 500 },
     }));
-    const terms: PayeeTerms = {
+    terms = {
       server: w.net.server, networkPassphrase: w.net.passphrase,
       walletCode: [Buffer.from(hash(readWasm('smart_wallet'))).toString('hex')], agentRegistry: w.agentRegistry,
       verificationRegistry: w.verificationRegistry, provider: provider.publicKey(),
@@ -133,6 +135,32 @@ describe('x402 payments from the smart wallet on local Stellar', () => {
     expect(required?.error).toContain('payee_gate_CheckNotPassed');
     expect(await balance()).toBe(before);
     expect(calls).not.toContain('/strict');
+  }, TIMEOUT);
+
+  it('does not believe a payer it cannot check: unknown code, other registries, or no policy named', async () => {
+    const response = await fetch(`${base}/report`);
+    const core = new x402HTTPClient(client);
+    const required = core.getPaymentRequiredResponse((name) => response.headers.get(name), await response.json().catch(() => undefined));
+    const found = payerOf(await core.createPaymentPayload(required), w.net.passphrase)!;
+    expect(found.payer).toBe(w.wallet);
+    const check = (overrides: Partial<PayeeTerms> = {}, payer = found.payer, entry = found.entry) =>
+      checkPayer(payer, entry, { ...terms, ...overrides });
+    expect(await check()).toEqual({ ok: true, payer: w.wallet, agentId: w.agent.agent_id });
+    expect(await check({ walletCode: ['00'.repeat(32)] })).toMatchObject({ ok: false, reason: 'payee_gate_unknown_payer' });
+    // The asset contract is a contract too, and it is not a wallet.
+    expect(await check({}, w.asset)).toMatchObject({ ok: false, reason: 'payee_gate_unknown_payer' });
+    expect(await check({ agentRegistry: w.verificationRegistry })).toMatchObject({ ok: false, reason: 'payee_gate_other_registries' });
+    expect(await check({ provider: w.roles.stranger.publicKey() })).toMatchObject({ ok: false });
+    // An entry signed the way a plain account signs names no policy.
+    const plain = xdr.SorobanAuthorizationEntry.fromXdr(found.entry.toXdr());
+    const unsigned = new xdr.SorobanAuthorizationEntry({
+      rootInvocation: plain.rootInvocation,
+      credentials: xdr.SorobanCredentials.sorobanCredentialsAddress(new xdr.SorobanAddressCredentials({
+        address: Address.fromString(w.wallet).toScAddress(), nonce: 1n, signatureExpirationLedger: 1,
+        signature: xdr.ScVal.scvVec([]),
+      })),
+    });
+    expect(await check({}, w.wallet, unsigned)).toMatchObject({ ok: false, reason: 'payee_gate_no_policy' });
   }, TIMEOUT);
 
   it('cannot be paid twice with one signed payment', async () => {

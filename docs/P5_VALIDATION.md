@@ -74,7 +74,7 @@ Narrowed:
 Still open:
 
 - A sponsor that is unreachable for good leaves a lost answer unknown until the operation expires.
-- The payee-side verification gate and a real x402 client, listed in [P9 validation](P9_VALIDATION.md).
+- A facilitator run by someone else on the published x402 code refuses the wallet as payer; see [x402 validation](X402_VALIDATION.md).
 
 ## Acceptance cases
 

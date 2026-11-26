@@ -26,7 +26,7 @@ While working on the page itself, run `npm run dev -w @stellar-agent-auth/demo` 
 2. **Create your wallet.** You sign the deployment; the wallet is yours and is bound to this deployment's registries.
 3. **Add test funds.** The faucet's funder pays in 100 DEMO. That is the funder's signature, not yours.
 4. **Approve a policy.** The form starts at 5 per payment, 20 per UTC day, seven days, to one recipient.
-5. **Ask the agent to pay.** Six buttons, each a fixed scenario: a payment within the limits, one above the per-payment limit, one to an unlisted recipient, payments up to the daily limit and one past it, a payment as an account, and a payment to the demo service.
+5. **Ask the agent to pay.** Eight buttons, each a fixed scenario: a payment within the limits, one above the per-payment limit, one to an unlisted recipient, payments up to the daily limit and one past it, a payment as an account, a payment to the demo service, a purchase from a paid API over x402, and a purchase from a stricter API that refuses the agent.
 6. **Pause, resume, revoke.** Then ask the agent again and watch it be refused.
 7. **Read the history.** Entries on the ledger are verified in the page against the wallet's stored head. Refusals are listed separately: they left nothing on the ledger.
 
@@ -38,6 +38,7 @@ While working on the page itself, run `npm run dev -w @stellar-agent-auth/demo` 
 | Agent | The demo server | Payment requests, for the named scenarios only |
 | Sponsor | The demo server, as the submitter | Transaction envelopes; it pays fees and authorizes nothing |
 | Funder | The demo server | Faucet payments into the wallet |
+| Facilitator | The demo server | Envelopes of x402 payments; it pays their fees and authorizes nothing |
 | Admin, provider, controller, issuer | Used by the setup only | Deployment, provider approval, registration, the result, the asset |
 
 The page reads balances, policies, the agent's identity and its verification result from the network itself, through the RPC. It takes only the deployment's addresses and the scenario list from the demo server.
@@ -52,6 +53,15 @@ The page reads balances, policies, the agent's identity and its verification res
 | `POST /v1/session { owner }` | Names the owner's wallet address. Once the wallet exists on the network, starts the sponsor and the indexer for it |
 | `POST /v1/fund` | The funder sends 100 DEMO to the session's wallet, unless it already holds 1,000 or more |
 | `POST /v1/payments { scenario, policy_hash }` | The agent runs one named scenario under that policy |
+
+It also serves a paid API, which stands for someone else's service and takes no part in the session:
+
+| Route | What it does |
+| --- | --- |
+| `GET /x402/report` | Answers 402 with a price of 1 DEMO. Paid through x402, it checks that the payer is a known wallet whose agent has a current result covering its metadata and signer account, then answers with the latest ledger |
+| `GET /x402/audited-agents-only` | The same, but it also requires a code check. The demo's agent has none, so it is refused and not charged |
+
+The agent buys from it with the wallet ([ADR 0012](../../docs/decisions/0012-x402-and-payee-gate.md)). On the local network the facilitator is this project's own; the published x402 code does not know a local network.
 
 A caller chooses a scenario and a policy and nothing else. Amounts and recipients are decided in the server from the policy as the wallet stores it, so the server cannot be used to sign an arbitrary payment. It accepts JSON bodies only and checks the request's origin, so another page open in the same browser cannot drive the agent.
 
@@ -70,6 +80,7 @@ The sponsor is the same code as `services/submitter` and the indexer the same as
 - **A refusal has no transaction.** The agent finds a refusal in simulation and submits nothing, as an agent should. The page shows the wallet's reason and no transaction link. A payment signed before a revocation and submitted after it, which fails on the ledger, is shown by `examples/payment-flow.ts`, not here.
 - **Freighter is not covered by the automated tests.** They run in a browser without the extension and use the local demo key. It was tried by hand on the local network; see below and [P7 validation](../../docs/P7_VALIDATION.md). Signing through Freighter goes through the SDK's wallet adapter, which checks every signature it gets back.
 - **One owner at a time.** A second owner connecting replaces the first one's session in the server.
+- **The paid API uses a facilitator that accepts the wallet.** A service whose facilitator runs the published x402 code as it is would refuse the wallet's payment.
 
 ## Trying it with Freighter
 

@@ -8,4 +8,6 @@ From the root, run `npm run build:contracts`, `npm run dev` and `npm run test:in
 
 `demo-backend.test.ts` runs the demo's server side as the browser drives it, with the owner as a key the server never sees: the setup, the session for a wallet the owner creates, the faucet, every agent scenario, pause and revocation, and the resulting history ([results](../../docs/P7_VALIDATION.md)). The page itself is tested in `tests/browser`.
 
+`x402.test.ts` pays a service that answers 402, with x402's own client and resource server, a facilitator and the smart wallet as payer: a payment, a refusal by the wallet, a refusal by the payee's own check, a replay and a pause ([results](../../docs/X402_VALIDATION.md)).
+
 Empty executable suites fail.

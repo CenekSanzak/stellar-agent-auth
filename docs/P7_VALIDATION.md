@@ -123,4 +123,4 @@ The browser test does cover two failure states in the real page: the demo server
 - **The sponsor and indexer run inside the demo server.** As separate processes they are tested by P5 and P6.
 - **Not reviewed by anyone else, and not usability-tested.** The wording was written and checked by the author.
 - **CI.** The browser test is added to the local-network job and uses the runner's Chrome. The pull request's first run failed before reaching it: Friendbot answered 500 while the suites funded their accounts in parallel. Funding is now retried.
-- Open from earlier phases and unchanged: the payee-side verification gate and a real x402 client.
+- The payee-side verification gate and a real x402 client were open when this was written. They were built afterwards and added to the demo as two more scenarios; see [x402 validation](X402_VALIDATION.md).
