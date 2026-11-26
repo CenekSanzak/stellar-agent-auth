@@ -1,6 +1,6 @@
-import { Address, Contract, StrKey, TransactionBuilder, scValToNative, type rpc, type xdr } from '@stellar/stellar-sdk';
+import { Address, StrKey, TransactionBuilder, scValToNative, type rpc, type xdr } from '@stellar/stellar-sdk';
 import {
-  VerificationRegistryError, checkVerification, readPolicy, readWalletRegistries, signingAddress,
+  VerificationRegistryError, checkVerification, contractCodeHash, readPolicy, readWalletRegistries, signingAddress,
   type Hash32, type VerificationRequirement,
 } from '@stellar-agent-auth/sdk';
 import type { PaymentPayload } from '@x402/core/types';
@@ -50,16 +50,7 @@ export function policyHashOf(entry: xdr.SorobanAuthorizationEntry): Hash32 | und
   return field?.type === 'scvBytes' && field.bytes.value.length === 32 ? Uint8Array.from(field.bytes.value) : undefined;
 }
 
-/** The hex hash of the code a contract runs; `undefined` if it is not a WASM contract or does not exist. */
-export async function contractCodeHash(
-  server: Pick<rpc.Server, 'getLedgerEntries'>, contractId: string,
-): Promise<string | undefined> {
-  const { entries } = await server.getLedgerEntries(new Contract(contractId).getFootprint());
-  const data = entries[0]?.val;
-  if (data?.type !== 'contractData' || data.contractData.val.type !== 'scvContractInstance') return undefined;
-  const { executable } = data.contractData.val.instance;
-  return executable.type === 'contractExecutableWasm' ? executable.wasmHash.toXdr('hex') : undefined;
-}
+export { contractCodeHash };
 
 /** Decide whether the payer of `entry`, a wallet at `payer`, meets `terms`. */
 export async function checkPayer(payer: string, entry: xdr.SorobanAuthorizationEntry, terms: PayeeTerms): Promise<GateAnswer> {

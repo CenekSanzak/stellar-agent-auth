@@ -31,6 +31,11 @@ export interface ApiOptions {
   streamId: string;
   network: string;
   wallets: readonly string[];
+  /**
+   * Set when wallets are followed by the code they run. Any contract address is then answered for: one that was
+   * never seen has an empty history, and recording an attempt always needs the token.
+   */
+  walletCode?: readonly string[];
   state: IndexerState;
   /** Bearer token for recording attempts; when absent, only a loopback client may record. */
   token?: string | undefined;
@@ -104,8 +109,12 @@ export function createHandler(options: ApiOptions) {
   const { store, streamId, state } = options;
   const wallets = new Set(options.wallets);
 
+  const byCode = (options.walletCode?.length ?? 0) > 0;
+
   function wallet(id: string) {
-    if (!wallets.has(id)) throw new Rejected(404, 'This indexer does not follow that wallet');
+    if (!wallets.has(id) && !(byCode && StrKey.isValidContract(id))) {
+      throw new Rejected(404, 'This indexer does not follow that wallet');
+    }
     return id;
   }
 
@@ -132,6 +141,7 @@ export function createHandler(options: ApiOptions) {
                 : 'ok';
         return json(response, 200, {
           status, network: options.network, stream: streamId, wallets: [...wallets],
+          ...(byCode ? { wallet_code: options.walletCode } : {}),
           ingested_ledger: stream?.ingested_ledger ?? null, latest_ledger: latest,
           lag_ledgers: stream && latest !== null ? Math.max(0, latest - stream.ingested_ledger) : null,
           retention_gap: stream && stream.gap_from_ledger !== null
@@ -161,7 +171,10 @@ export function createHandler(options: ApiOptions) {
           });
         }
         if (walletRoute[2] === 'attempts' && request.method === 'POST') {
-          if (!mayWrite(request, options.token)) return json(response, 401, { error: 'Unauthorized' });
+          // With wallets followed by code anyone's wallet can be named, so being local is not enough to write.
+          if (!mayWrite(request, options.token) || (byCode && !options.token)) {
+            return json(response, 401, { error: 'Unauthorized' });
+          }
           const body = await readBody(request);
           if (typeof body !== 'object' || body === null || Array.isArray(body)) throw new Rejected(400, 'Expected an object');
           const fields = body as Record<string, unknown>;
