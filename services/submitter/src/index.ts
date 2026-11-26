@@ -1,13 +1,12 @@
 #!/usr/bin/env node
 import { createServer, type Server } from 'node:http';
-import { readFile, stat } from 'node:fs/promises';
-import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import { StrKey, rpc } from '@stellar/stellar-sdk';
 import {
   Sponsor, loadConfig, networkContext, sponsorPolicy, type Environment,
 } from '@stellar-agent-auth/sdk';
-import { FileJournal, loadKey } from '@stellar-agent-auth/sdk/node';
+import { FileJournal, isMainModule, loadKey } from '@stellar-agent-auth/sdk/node';
 import { RateLimiter } from './simulation.js';
 import { createHandler } from './submission.js';
 
@@ -32,6 +31,8 @@ export interface SubmitterConfig {
   contracts: string[];
   methods: string[];
   maxFee: bigint;
+  /** Fees the sponsor commits over any 24 hours at most; `undefined` for no such limit. */
+  dailyBudget: bigint | undefined;
   timeoutSeconds: number;
   rateLimit: number;
   stateDirectory: string;
@@ -61,10 +62,16 @@ export function submitterConfig(env: Environment): SubmitterConfig {
   }
   const maxFee = BigInt(env['SUBMITTER_MAX_FEE_STROOPS'] || '5000000');
   if (maxFee <= 0n || maxFee > 100_000_000n) throw new Error('SUBMITTER_MAX_FEE_STROOPS must be 1-100000000');
+  const budgetText = env['SUBMITTER_DAILY_BUDGET_STROOPS'] ?? '1000000000';
+  if (!/^\d{1,15}$/.test(budgetText)) throw new Error('SUBMITTER_DAILY_BUDGET_STROOPS must be a number of stroops, or 0 for no budget');
+  const dailyBudget = BigInt(budgetText) === 0n ? undefined : BigInt(budgetText);
+  if (dailyBudget !== undefined && dailyBudget < maxFee) {
+    throw new Error('SUBMITTER_DAILY_BUDGET_STROOPS is below the fee ceiling of one transaction');
+  }
   return {
     network: config.network, rpcUrl: config.rpcUrl, passphrase: config.passphrase,
     host: env['SUBMITTER_HOST'] || '127.0.0.1', port: integer('SUBMITTER_PORT', 8787, 0, 65_535),
-    sponsorKey, contracts, methods, maxFee, timeoutSeconds: integer('SUBMITTER_TIMEOUT_SECONDS', 60, 5, 600),
+    sponsorKey, contracts, methods, maxFee, dailyBudget, timeoutSeconds: integer('SUBMITTER_TIMEOUT_SECONDS', 60, 5, 600),
     rateLimit: integer('SUBMITTER_RATE_LIMIT', 30, 1, 10_000),
     stateDirectory: resolve(env['SUBMITTER_STATE_DIR'] || '.local/submitter'),
     tokenFile: env['SUBMITTER_TOKEN_FILE'] || undefined,
@@ -79,6 +86,47 @@ async function readToken(path: string) {
   return token;
 }
 
+/**
+ * One submitter per sponsor key and state directory. A sponsor orders its transactions inside one process; a second
+ * process on the same key would take the same sequence numbers, and one of each pair would fail. The lock is a file
+ * naming the process that holds it. A lock left by a process that no longer runs is taken over.
+ *
+ * This cannot see a submitter that uses the same key with another state directory. Do not run one.
+ */
+export async function acquireSponsorLock(stateDirectory: string, sponsor: string): Promise<() => Promise<void>> {
+  await mkdir(stateDirectory, { recursive: true, mode: 0o700 });
+  const path = join(stateDirectory, `sponsor-${sponsor}.lock`);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await writeFile(path, `${process.pid}\n`, { flag: 'wx', mode: 0o600 });
+      return async () => {
+        // Only the holder removes it: a later process may have taken a stale lock over.
+        if ((await readFile(path, 'utf8').catch(() => '')).trim() === String(process.pid)) await rm(path, { force: true });
+      };
+    } catch (error) {
+      if ((error as { code?: unknown }).code !== 'EEXIST') throw error;
+    }
+    // A lock naming this very process is from an earlier run that had the same process ID, as a container's first
+    // process always does. It is stale too.
+    const holder = Number((await readFile(path, 'utf8').catch(() => '')).trim());
+    const alive = Number.isInteger(holder) && holder > 0 && holder !== process.pid && (() => {
+      try {
+        process.kill(holder, 0);
+        return true;
+      } catch (error) {
+        // No such process means the lock is stale; any other answer means a process is there.
+        return (error as { code?: unknown }).code !== 'ESRCH';
+      }
+    })();
+    if (alive) {
+      throw new Error(`Another submitter (process ${holder}) is using this sponsor key and state directory. `
+        + `Stop it first; if it is not a submitter, remove ${path}.`);
+    }
+    await rm(path, { force: true });
+  }
+  throw new Error(`Could not take the sponsor lock at ${path}`);
+}
+
 /** Start the submitter; resolves once it is listening, after settling anything a previous run left in flight. */
 export async function startSubmitter(env: Environment): Promise<{ server: Server; url: string; sponsor: string }> {
   const config = submitterConfig(env);
@@ -91,24 +139,33 @@ export async function startSubmitter(env: Environment): Promise<{ server: Server
   const context = await networkContext(server, config.passphrase);
   const policy = sponsorPolicy(config.contracts, {
     methods: config.methods, limits: { maxFee: config.maxFee, timeoutSeconds: config.timeoutSeconds },
+    ...(config.dailyBudget !== undefined ? { dailyBudget: config.dailyBudget } : {}),
   });
-  const sponsor = new Sponsor(context, signer, policy, new FileJournal(resolve(config.stateDirectory, 'journal')));
-  await sponsor.recover();
-  const http = createServer(createHandler({
-    sponsor, policy, network: config.network, token, rateLimit: new RateLimiter(config.rateLimit),
-  }));
-  http.requestTimeout = (config.timeoutSeconds + 30) * 1_000;
-  await new Promise<void>((resolveListen, reject) => {
-    http.once('error', reject);
-    http.listen(config.port, config.host, () => resolveListen());
-  });
+  const release = await acquireSponsorLock(config.stateDirectory, signer.address);
+  let http: Server;
+  try {
+    const sponsor = new Sponsor(context, signer, policy, new FileJournal(resolve(config.stateDirectory, 'journal')));
+    await sponsor.recover();
+    http = createServer(createHandler({
+      sponsor, policy, network: config.network, token, rateLimit: new RateLimiter(config.rateLimit),
+    }));
+    http.requestTimeout = (config.timeoutSeconds + 30) * 1_000;
+    await new Promise<void>((resolveListen, reject) => {
+      http.once('error', reject);
+      http.listen(config.port, config.host, () => resolveListen());
+    });
+  } catch (error) {
+    await release();
+    throw error;
+  }
+  http.once('close', () => { void release(); });
   const address = http.address();
   const port = typeof address === 'object' && address ? address.port : config.port;
   const host = config.host.includes(':') ? `[${config.host}]` : config.host;
   return { server: http, url: `http://${host}:${port}/`, sponsor: signer.address };
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMainModule(import.meta.url)) {
   startSubmitter(process.env).then(({ url, sponsor }) => {
     console.log(JSON.stringify({ status: 'listening', url, sponsor }));
   }, (error: unknown) => {

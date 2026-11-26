@@ -101,9 +101,9 @@ The [Phase 4 validation record](P4_VALIDATION.md) covers 30 smart wallet host te
 
 The [Phase 5 validation record](P5_VALIDATION.md) covers the P5 test runs, the review findings fixed before it was recorded, and what is still open.
 
-- A24: sponsor tampering is shown with real signatures on the local network, and the client rejects a sponsor report it cannot tie to its own operation. Sequence collision across processes and recovery from a lost sponsor response are not shown.
+- A24: sponsor tampering is shown with real signatures on the local network, and the client rejects a sponsor report it cannot tie to its own operation. Recovery from a lost sponsor response is shown in unit tests: the sponsor submits an operation once, the client asks what became of it, and the answer is checked like any other ([ADR 0011](decisions/0011-sponsor-recovery-and-journal.md)). A second submitter on the same key and state directory is refused; a collision between two with different state directories is not shown.
 - A28: the SDK imports from outside the workspace, and the CLI example completes the flow on the local network with a separate key per role. The browser smoke test belongs to P7.
-- F07 does not hold for the payment flow test, which fetches metadata from a public host.
+- F07 holds since 2026-11-25: the payment flow test runs the real verifier over a transport that serves the metadata from the repository. The run against the public host is opt-in.
 
 ## P6 evidence
 
@@ -111,6 +111,13 @@ The [Phase 6 validation record](P6_VALIDATION.md) covers the indexer, its audit 
 
 - A26: restart, repeated delivery, a failure between pages and a failure inside a page are shown in unit tests against a store on disk and an RPC stand-in, and restart and repeated passes again on the local network against a real RPC.
 - A27: altered, substituted, duplicated, relabelled and missing entries, a contradicting head and a retention gap each produce `mismatch` or `incomplete` in unit tests; a deleted and an altered row are shown on the local network. A retention gap is not reproduced on a network.
+
+## P7 evidence
+
+The [Phase 7 validation record](P7_VALIDATION.md) covers the owner demo: its server, its page and its browser test. Decisions are in [ADR 0010](decisions/0010-owner-demo.md).
+
+- A28: the browser smoke test is met on the local network. A real Chrome connects an owner, creates and funds the wallet, approves a policy, and sees one payment made and payments over the limit, to an unknown recipient, while paused and after revocation refused, then a verified history. With P5's clean-checkout import and CLI example, A28 is met locally.
+- Signing through Freighter is not covered by a test; the browser test uses the page's local demo key.
 
 ## P9 evidence
 

@@ -2,21 +2,24 @@
 import { readFile, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { pathToFileURL } from 'node:url';
 import { BASE_FEE, Keypair, TransactionBuilder, rpc } from '@stellar/stellar-sdk';
 import {
   contractErrorName, decodeVerification, loadConfig, readAgent, readCurrent, readLatestResult,
   verificationOperation, VerificationRegistryError,
   type AgentIdentity, type Environment, type RegistryRead, type VerificationResult,
 } from '@stellar-agent-auth/sdk';
+import { isMainModule } from '@stellar-agent-auth/sdk/node';
 import {
-  PublicationPending, ReportStore, prepareAssessment, publishResult, readAccountSnapshot, settlePending,
-  nextResultSequence, type Assessment, type Published, type PublishTarget,
+  PublicationPending, ReportStore, assertFeeWithin, prepareAssessment, publishResult, readAccountSnapshot,
+  settlePending, nextResultSequence, type Assessment, type Published, type PublishTarget,
 } from './attestations.js';
 import { runChecks, type CheckFinding, type NetworkOptions } from './checks.js';
 
-export { ReportStore, readAccountSnapshot, settlePending, PublicationPending } from './attestations.js';
-export { safeFetch } from './net.js';
+export {
+  ReportStore, readAccountSnapshot, settlePending, PublicationPending, DEFAULT_MAX_FEE_STROOPS, assertFeeWithin,
+} from './attestations.js';
+export { readCapped, safeFetch, type Resolver, type Transport } from './net.js';
+export type { NetworkOptions } from './checks.js';
 
 /**
  * Verifier process: an explicit job that assesses one agent revision, stores the report and, only with `--publish`,
@@ -34,6 +37,8 @@ export interface VerifierContext {
   reports: ReportStore;
   stateDirectory: string;
   network?: NetworkOptions;
+  /** Highest total fee in stroops the provider accepts for a publication or a revocation. */
+  maxFee?: bigint | undefined;
 }
 
 export interface AssessOptions {
@@ -63,7 +68,7 @@ function publishTarget(context: VerifierContext, publisher: Keypair): PublishTar
   if (publisher.publicKey() !== context.provider) throw new Error('Signing key does not match VERIFIER_PUBLIC_ADDRESS');
   return {
     server: context.server, contractId: context.verificationRegistry, networkPassphrase: context.networkPassphrase,
-    provider: publisher, stateDirectory: context.stateDirectory,
+    provider: publisher, stateDirectory: context.stateDirectory, maxFee: context.maxFee,
   };
 }
 
@@ -114,6 +119,7 @@ export async function revoke(
     throw new Error(`Revocation simulation failed: ${simulation.error}`);
   }
   const prepared = rpc.assembleTransaction(tx, simulation).build();
+  assertFeeWithin(prepared.fee, context.maxFee, 'Revocation');
   prepared.sign(publisher);
   const sent = await context.server.sendTransaction(prepared);
   if (sent.status === 'ERROR') throw new Error('Revocation rejected before inclusion');
@@ -139,7 +145,12 @@ function contextFromEnvironment(env: Environment): VerifierContext {
     throw new Error('Set AGENT_REGISTRY_ID, VERIFICATION_REGISTRY_ID and VERIFIER_PUBLIC_ADDRESS');
   }
   const state = resolve(env['VERIFIER_STATE_DIR'] ?? '.local/verifier');
+  const maxFeeText = env['VERIFIER_MAX_FEE_STROOPS'];
+  if (maxFeeText !== undefined && maxFeeText !== '' && !/^[1-9]\d{0,14}$/.test(maxFeeText)) {
+    throw new Error('VERIFIER_MAX_FEE_STROOPS must be a positive number of stroops');
+  }
   return {
+    ...(maxFeeText ? { maxFee: BigInt(maxFeeText) } : {}),
     server: new rpc.Server(config.rpcUrl, { allowHttp: config.network === 'local' }),
     networkPassphrase: config.passphrase, agentRegistry, verificationRegistry, provider: config.provider,
     reports: new ReportStore(resolve(state, 'reports')), stateDirectory: resolve(state, 'pending'),
@@ -158,7 +169,8 @@ const USAGE = `Usage:
   verifier revoke --agent <id> --revision <n> --sequence <n>
 
 Environment: STELLAR_NETWORK, STELLAR_RPC_URL, AGENT_REGISTRY_ID, VERIFICATION_REGISTRY_ID,
-VERIFIER_PUBLIC_ADDRESS, VERIFIER_SECRET_KEY_FILE (assess --publish and revoke), VERIFIER_STATE_DIR.
+VERIFIER_PUBLIC_ADDRESS, VERIFIER_SECRET_KEY_FILE (assess --publish and revoke), VERIFIER_STATE_DIR,
+VERIFIER_MAX_FEE_STROOPS (highest fee for a publication or revocation; default 50000000).
 assess without --publish is a dry run: it stores the report and prints the result without signing.`;
 
 export async function main(argv: string[], env: Environment): Promise<number> {
@@ -220,7 +232,7 @@ export async function main(argv: string[], env: Environment): Promise<number> {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMainModule(import.meta.url)) {
   main(process.argv.slice(2), process.env).then((code) => { process.exitCode = code; }, (error: unknown) => {
     if (error instanceof PublicationPending) {
       console.error(`${error.message}\nThe report is stored; rerun the same command to settle the publication.`);

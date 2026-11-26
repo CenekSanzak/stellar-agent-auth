@@ -1,9 +1,9 @@
-import { Asset, Contract, Operation, authorizeEntry, nativeToScVal, xdr } from '@stellar/stellar-sdk';
+import { authorizeEntry, nativeToScVal, xdr } from '@stellar/stellar-sdk';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { encodeAction, encodePolicy } from '../../packages/sdk/src/encoding.js';
 import type { ActionRequest, Hash32 } from '../../packages/sdk/src/types.js';
 import { readPolicyState, readWalletBalance } from '../../packages/sdk/src/wallet.js';
-import { successfulSimulation } from '../integration/support/local-network.js';
+import { ensureNativeAssetContract, successfulSimulation } from '../integration/support/local-network.js';
 import {
   DAY, UNIT, expectContractError, unsignedEntry, walletWorld, type WalletWorld,
 } from '../integration/support/wallet-world.js';
@@ -69,10 +69,8 @@ describe('smart wallet limits and races', () => {
 
   it('fails closed for unapproved assets, blocked recipients and an empty allowlist', async () => {
     const { roles: { stranger, recipient }, net } = w;
-    const native = Asset.native();
-    const nativeAsset = native.contractId(net.passphrase);
-    const existing = await net.server.getLedgerEntries(new Contract(nativeAsset).getFootprint());
-    if (!existing.entries.length) await net.invoke(w.roles.sponsor, Operation.createStellarAssetContract({ asset: native }));
+    const nativeAsset = await ensureNativeAssetContract(net.server, net.passphrase,
+      (operation) => net.invoke(w.roles.sponsor, operation));
 
     const policyHash = await w.approve(await w.policy(3, {
       allowed_recipients: [recipient.publicKey(), stranger.publicKey()], blocked_recipients: [stranger.publicKey()],

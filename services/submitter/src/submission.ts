@@ -10,6 +10,8 @@ import { MAX_BODY_BYTES, RateLimiter, RequestRejected, admit } from './simulatio
  * HTTP routes over one SDK `Sponsor`:
  * - `POST /v1/transactions` with `{ "operation": "<base64 XDR>" }` sponsors one signed operation;
  * - `GET /v1/transactions/<hash>` settles a hash this sponsor submitted;
+ * - `GET /v1/operations/<operation hash>` says what this sponsor did with a signed operation, for a client whose
+ *   answer was lost: its transaction, `in-progress`, or `not-submitted`;
  * - `GET /v1/health` reports the sponsor address and policy.
  *
  * A settled result is HTTP 200 whatever its status, a pending or unknown one 202. A simulation rejection is 422 with
@@ -61,6 +63,7 @@ export function createHandler(options: SubmitterOptions) {
         return json(response, 200, {
           status: 'ok', network: options.network, sponsor: sponsor.address, contracts: policy.contracts,
           methods: policy.methods ?? null, max_fee: policy.limits.maxFee.toString(),
+          daily_budget: policy.dailyBudget?.toString() ?? null, committed_24h: (await sponsor.committed()).toString(),
         });
       }
       if (!authorized(request, options.token)) return json(response, 401, { error: 'Unauthorized' });
@@ -76,6 +79,13 @@ export function createHandler(options: SubmitterOptions) {
       if (request.method === 'GET' && match) {
         const result = await sponsor.status(match[1]!);
         return json(response, isSettled(result.status) ? 200 : 202, result);
+      }
+      const lookup = /^\/v1\/operations\/([0-9a-f]{64})$/.exec(url.pathname);
+      if (request.method === 'GET' && lookup) {
+        // Always 200 or 202 with a status in the body: a client must be able to tell "nothing was submitted for
+        // this operation" from a server that has no such route.
+        const result = await sponsor.lookup(lookup[1]!);
+        return json(response, result.status === 'in-progress' || ('record' in result && !isSettled(result.status)) ? 202 : 200, result);
       }
       return json(response, 404, { error: 'Not found' });
     } catch (error) {

@@ -1,5 +1,5 @@
 import {
-  Account, Address, Operation, StrKey, TransactionBuilder, rpc, xdr, type Transaction,
+  Account, Address, Operation, StrKey, TransactionBuilder, hash, rpc, xdr, type Transaction,
 } from '@stellar/stellar-sdk';
 import { MAX_AUTH_WINDOW_LEDGERS } from './actions.js';
 import { contractErrorName } from './contract-call.js';
@@ -235,6 +235,9 @@ export function assemble(tx: Transaction, simulation: Simulated, limits: Pipelin
 export type TransactionStatus = 'pending' | 'success' | 'failed' | 'expired' | 'rejected' | 'unknown';
 const FINAL: ReadonlySet<TransactionStatus> = new Set(['success', 'failed', 'expired', 'rejected']);
 export const isSettled = (status: TransactionStatus) => FINAL.has(status);
+/** Whether a record still holds its scope: not settled, and not acknowledged as unknowable. */
+export const holdsScope = (record: Pick<TransactionRecord, 'status' | 'acknowledged_at'>) =>
+  !isSettled(record.status) && !record.acknowledged_at;
 
 /** What is persisted for every signed envelope. It contains no key material. */
 export interface TransactionRecord {
@@ -251,6 +254,20 @@ export interface TransactionRecord {
   ledger?: number;
   /** A contract error name, a result code or a reason the status is unknown. */
   error?: string;
+  /**
+   * `operationHash` of the envelope's operation, when it has exactly one. It ties an envelope to the signed
+   * operation it was built around, so a sponsor's transaction can be found from the operation alone.
+   */
+  operation_hash?: string;
+  /** The network the envelope was signed for, as the hex SHA-256 of its passphrase. */
+  network_id?: string;
+  /** The envelope's fee in stroops: the most its source can be charged for it. */
+  fee?: string;
+  /**
+   * Set when an operator accepted that this record's outcome will never be known. The status stays `unknown`,
+   * which is the truth; the record just stops holding its scope.
+   */
+  acknowledged_at?: string;
   created_at: string;
   updated_at: string;
 }
@@ -259,7 +276,23 @@ export interface TransactionJournal {
   get(hash: string): Promise<TransactionRecord | undefined>;
   /** Records in `scope` that are not settled, oldest first. */
   unsettled(scope: string): Promise<TransactionRecord[]>;
+  /** The newest record in `scope` built around the operation with this hash, settled or not. */
+  byOperation(scope: string, operationHash: string): Promise<TransactionRecord | undefined>;
+  /** Every record in `scope`, settled or not, oldest first. */
+  inScope(scope: string): Promise<TransactionRecord[]>;
   put(record: TransactionRecord): Promise<void>;
+}
+
+/** The newest of `records` in `scope` for `operationHash`; shared by journal implementations. */
+export function newestForOperation(
+  records: Iterable<TransactionRecord>, scope: string, operationHash: string,
+): TransactionRecord | undefined {
+  let newest: TransactionRecord | undefined;
+  for (const record of records) {
+    if (record.scope !== scope || record.operation_hash !== operationHash) continue;
+    if (!newest || record.created_at > newest.created_at) newest = record;
+  }
+  return newest && { ...newest };
 }
 
 /** A journal for one process; use a durable journal wherever a restart must not lose a pending hash. */
@@ -270,7 +303,14 @@ export class MemoryJournal implements TransactionJournal {
     return record && { ...record };
   }
   async unsettled(scope: string) {
-    return [...this.records.values()].filter((record) => record.scope === scope && !isSettled(record.status))
+    return [...this.records.values()].filter((record) => record.scope === scope && holdsScope(record))
+      .sort((a, b) => a.created_at.localeCompare(b.created_at)).map((record) => ({ ...record }));
+  }
+  async byOperation(scope: string, operationHash: string) {
+    return newestForOperation(this.records.values(), scope, operationHash);
+  }
+  async inScope(scope: string) {
+    return [...this.records.values()].filter((record) => record.scope === scope)
       .sort((a, b) => a.created_at.localeCompare(b.created_at)).map((record) => ({ ...record }));
   }
   async put(record: TransactionRecord) {
@@ -291,6 +331,17 @@ export interface TransactionOutcome {
 
 const now = () => new Date().toISOString();
 const toHex = (bytes: Uint8Array) => Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+
+/**
+ * The hex SHA-256 of an operation's XDR, authorization entries included. Two operations share it only if they are
+ * the same call with the same signed entries.
+ */
+export function operationHash(operation: xdr.Operation): string {
+  return toHex(hash(operation.toXdr()));
+}
+
+/** The hex SHA-256 of a network passphrase. */
+export const networkIdOf = (networkPassphrase: string) => toHex(hash(new TextEncoder().encode(networkPassphrase)));
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function invokedContract(envelope: xdr.TransactionEnvelope): string | undefined {
@@ -357,6 +408,10 @@ function fromResponse(
  */
 export async function settle(context: NetworkContext, record: TransactionRecord): Promise<TransactionOutcome> {
   if (isSettled(record.status)) return { status: record.status, hash: record.hash, record };
+  // Asked on another network, the hash would not be found and would in time look expired.
+  if (record.network_id && record.network_id !== networkIdOf(context.networkPassphrase)) {
+    throw new Error(`Transaction ${record.hash} was signed for another network and cannot be settled on this one`);
+  }
   const response = await context.server.getTransaction(record.hash);
   const final = fromResponse(record, response);
   if (final) return final;
@@ -428,9 +483,13 @@ export async function submit(
   await settleScope(context, journal, scope);
   const latest = await context.server.getLatestLedger();
   const created = now();
+  const envelope = signed.toEnvelope();
+  const operations = envelope.type === 'envelopeTypeTx' ? envelope.v1.tx.operations : [];
   const record: TransactionRecord = {
     scope, hash: toHex(signed.hash()), envelope: signed.toXDR(), source: signed.source,
     max_time: signed.timeBounds?.maxTime ?? '0', submitted_after_ledger: latest.sequence, status: 'pending',
+    network_id: networkIdOf(context.networkPassphrase), fee: signed.fee,
+    ...(operations.length === 1 ? { operation_hash: operationHash(operations[0]!) } : {}),
     created_at: created, updated_at: created,
   };
   if (record.max_time === '0') throw new Error('Refusing to submit a transaction without a time bound');

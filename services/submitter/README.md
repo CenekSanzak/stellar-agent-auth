@@ -27,6 +27,7 @@ node services/submitter/dist/index.js
 | `SUBMITTER_CONTRACTS` | required | Contracts whose calls are sponsored |
 | `SUBMITTER_METHODS` | `execute,fund` | Function names that are sponsored |
 | `SUBMITTER_MAX_FEE_STROOPS` | `5000000` | Highest total fee per transaction |
+| `SUBMITTER_DAILY_BUDGET_STROOPS` | `1000000000` | Fees committed over any 24 hours at most; `0` for no budget |
 | `SUBMITTER_TIMEOUT_SECONDS` | `60` | Transaction validity |
 | `SUBMITTER_RATE_LIMIT` | `30` | Requests per minute per client address |
 | `SUBMITTER_HOST`, `SUBMITTER_PORT` | `127.0.0.1`, `8787` | Listen address |
@@ -42,8 +43,21 @@ Network settings come from the same variables as the SDK (`STELLAR_NETWORK`, `ST
 | `GET /v1/health` | Sponsor address, network, contracts, methods and fee ceiling |
 | `POST /v1/transactions` with `{ "operation": "<base64 XDR>" }` | Sponsors one signed operation |
 | `GET /v1/transactions/<hash>` | Settles a hash this sponsor submitted |
+| `GET /v1/operations/<operation hash>` | What this sponsor did with a signed operation: its transaction, `in-progress` or `not-submitted` |
 
 A settled result is 200 whatever its status, and a pending or unknown one is 202. Every 4xx means nothing was submitted for the request: 400 and 413 for the body, 401 for the token, 403 for a refused call, 409 while an earlier transaction is still settling, 422 for a simulation rejection, 429 for the rate limit. A 5xx can follow a submission, so a client must treat it as an unknown outcome.
+
+## Sending the same operation again
+
+It is safe. The submitter builds one transaction for a signed operation: a repeat while the first is being handled waits for the same answer, and a repeat afterwards gets the transaction already built. A new one is built only if the earlier one can never be included.
+
+A client whose answer was lost asks `GET /v1/operations/<hash>`, where the hash is the SHA-256 of the operation's XDR. The route always answers 200 or 202 with a `status` in the body, so that "nothing was submitted" cannot be confused with a server that lacks the route.
+
+## One process per key
+
+The submitter takes a lock in its state directory for its sponsor key and refuses to start while another running process holds it. A lock left by a process that has exited is taken over. Do not run two submitters on one key with different state directories: the lock cannot see that, and their sequence numbers will collide.
+
+`GET /v1/health` also reports the daily budget and the fees committed in the last 24 hours.
 
 ## Sponsoring account payments
 

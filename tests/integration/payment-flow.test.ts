@@ -5,18 +5,21 @@ import { runPaymentFlow, type FlowConfig } from '../../examples/payment-flow.js'
 
 /**
  * The P5 and P9 gates: the CLI example runs the whole flow against the local network with real signatures and a
- * separate key per role, a real verification published by an approved Live provider, a sponsored agent payment
- * through `execute`, a service that pulls its price and a plain transfer on the wallet's account path, owner
- * revocation, and refusal on both paths afterwards. The CLI and submitter run as separate
- * processes from their built entry points, as a user would run them.
+ * separate key per role, a verification published by an approved Live provider, a sponsored agent payment through
+ * `execute`, a service that pulls its price and a plain transfer on the wallet's account path, owner revocation, and
+ * refusal on both paths afterwards. The CLI and submitter run as separate processes from their built entry points,
+ * as a user would run them.
+ *
+ * The required run contacts no public host: the real verifier runs over a transport that serves the metadata from
+ * the repository. The same flow with the verifier fetching the public URL through the CLI is opt-in, because a
+ * required check must not depend on someone else's server.
  */
 describe('CLI payment flow example', () => {
-  it('completes registration, verification, funding, policy, payment, revocation and rejection', async () => {
+  const run = async (file: string) => {
     for (const entry of ['packages/cli/dist/index.js', 'services/submitter/dist/index.js']) {
       expect(existsSync(new URL(`../../${entry}`, import.meta.url)), `${entry}: run npm run build`).toBe(true);
     }
-    const config = JSON.parse(await readFile(new URL('../../examples/payment-flow.local.json', import.meta.url), 'utf8'),
-    ) as FlowConfig;
+    const config = JSON.parse(await readFile(new URL(`../../examples/${file}`, import.meta.url), 'utf8')) as FlowConfig;
     const lines: string[] = [];
     const summary = await runPaymentFlow(config, (line) => lines.push(line));
 
@@ -45,5 +48,16 @@ describe('CLI payment flow example', () => {
     expect(summary.history).toMatchObject({ status: 'verified', entries: 5 });
     // The transcript names keys by reference only.
     expect(lines.join('\n')).not.toMatch(/\bS[A-Z2-7]{55}\b/);
+    return lines;
+  };
+
+  it('completes registration, verification, funding, policy, payment, revocation and rejection', async () => {
+    const lines = await run('payment-flow.offline.json');
+    expect(lines.join('\n')).toContain('offline: the real verifier');
   }, 300_000);
+
+  it.skipIf(process.env['RUN_ONLINE_TESTS'] !== '1')(
+    'does the same with the verifier fetching the public metadata (RUN_ONLINE_TESTS=1)', async () => {
+      await run('payment-flow.local.json');
+    }, 300_000);
 });

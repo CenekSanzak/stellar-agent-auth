@@ -65,6 +65,8 @@ jobs:
       - run: npm run build
       - run: npm run dev
       - run: npm run test:integration
+      # The owner demo in the runner's own Chrome; nothing is downloaded.
+      - run: npm run test:browser
       - if: failure()
         run: docker compose logs --tail=100
       - if: always()

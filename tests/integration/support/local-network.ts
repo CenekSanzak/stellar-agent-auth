@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import {
-  Address, BASE_FEE, Networks, Operation, TransactionBuilder, hash, rpc, xdr,
+  Address, Asset, BASE_FEE, Contract, Networks, Operation, TransactionBuilder, hash, rpc, xdr,
   type Keypair, type Transaction,
 } from '@stellar/stellar-sdk';
 import { expect } from 'vitest';
@@ -42,6 +42,42 @@ export function returnValue(result: Confirmed) {
 
 export const contractEvents = (result: Confirmed) => result.events.contractEventsXdr.flat();
 
+/**
+ * Ask Friendbot to fund `address`, trying again when it fails. Suites run in parallel and Friendbot answers 500
+ * when too many requests reach it at once. Asking again is safe: for an account that already exists it does nothing.
+ */
+export async function airdrop(server: rpc.Server, address: string, attempts = 6) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await server.requestAirdrop(address);
+      return;
+    } catch (error) {
+      if (attempt >= attempts) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+    }
+  }
+}
+
+/**
+ * Make sure the native asset's contract exists, and return its address. Suites run in parallel, and on a fresh
+ * network more than one may find it missing and try to create it. Only one creation can succeed, so a failed one is
+ * fine exactly when the contract exists afterwards.
+ */
+export async function ensureNativeAssetContract(
+  server: rpc.Server, passphrase: string, create: (operation: xdr.Operation) => Promise<unknown>,
+): Promise<string> {
+  const native = Asset.native();
+  const id = native.contractId(passphrase);
+  const exists = async () => (await server.getLedgerEntries(new Contract(id).getFootprint())).entries.length > 0;
+  if (await exists()) return id;
+  try {
+    await create(Operation.createStellarAssetContract({ asset: native }));
+  } catch (error) {
+    if (!(await exists())) throw error;
+  }
+  return id;
+}
+
 /** WASM built by `npm run build:contracts`, or downloaded from the CI foundation job. */
 export const readWasm = (name: string) =>
   readFileSync(new URL(`../../../target/wasm32v1-none/release/stellar_agent_auth_${name}.wasm`, import.meta.url));
@@ -76,7 +112,7 @@ async function connect(server: rpc.Server, passphrase: string, upgradedAuth: boo
 
   /** Friendbot-funds keypairs generated at test runtime; no key material is stored. */
   async function fund(...roles: Keypair[]) {
-    for (const role of roles) await server.requestAirdrop(role.publicKey());
+    for (const role of roles) await airdrop(server, role.publicKey());
   }
 
   async function build(source: Keypair, operation: xdr.Operation): Promise<Transaction> {

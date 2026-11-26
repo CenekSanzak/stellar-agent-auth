@@ -46,6 +46,13 @@ export default defineConfig({
       },
       {
         test: {
+          name: 'browser',
+          include: ['tests/browser/**/*.test.ts'],
+          testTimeout: 60_000,
+        },
+      },
+      {
+        test: {
           name: 'testnet',
           include: ['tests/testnet/**/*.test.ts'],
           testTimeout: 30_000,

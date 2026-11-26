@@ -6,4 +6,6 @@ From the root, run `npm run build:contracts`, `npm run dev` and `npm run test:in
 
 `indexer.test.ts` runs the indexer in-process against the local RPC: it follows a fresh deployment from its first ledger, reconstructs the audit chain and matches the stored head, survives a restart with payments published while it was down, serves the CLI's `history --indexer`, and reports a database that lost or changed an entry ([results](../../docs/P6_VALIDATION.md)). A local network cannot produce a retention gap; the unit suite covers those.
 
+`demo-backend.test.ts` runs the demo's server side as the browser drives it, with the owner as a key the server never sees: the setup, the session for a wallet the owner creates, the faucet, every agent scenario, pause and revocation, and the resulting history ([results](../../docs/P7_VALIDATION.md)). The page itself is tested in `tests/browser`.
+
 Empty executable suites fail.

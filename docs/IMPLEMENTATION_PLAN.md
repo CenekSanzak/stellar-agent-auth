@@ -8,7 +8,7 @@ Reviewed: 3 November 2026. Baseline: `c12bd39`. Revised: 25 November 2026.
 - The wallet gains a second payment path as a custom account (`__check_auth`), decided in [ADR 0006](decisions/0006-custom-account-spike.md). This replaces the restricted service adapter as P9.
 - P9 now also carries the other contract changes that must land before the interface freezes: finer error codes and a lifetime cap.
 - P9 moves ahead of P6. The indexer, demo and final deployment are then built once, on the final contract interface.
-- P9 and P6 were both finished on 25 November, ahead of the revised schedule below; see their validation records. The days gained go to P7 and P8, not to new scope.
+- P9, P6 and P7 were finished on 25 November, ahead of the revised schedule below; see their validation records. The days gained go to P8 and the buffer, not to new scope.
 
 This is a proposed implementation plan, not an implementation or deployment report. The review changed no application code, made no commits, and performed no deployment. The existing untracked statement-of-work PDF was read without modification.
 
@@ -236,6 +236,8 @@ Dependencies: `P0 -> P1 -> P2/P3 -> P4 -> P5 -> P9 -> P6/P7 -> P8` (revised 25 N
 - Add a browser smoke test for connection, read state, policy approval, allowed/rejected outcomes and revocation. Cover loading, network mismatch, expired verification and unknown transaction state.
 
 **Gate:** a developer follows the guide to run the demo; the owner approves one policy and stops agent access; the UI accurately reports confirmed and rejected outcomes without exposing signing secrets.
+
+*Built on 25 November 2026; see [ADR 0010](decisions/0010-owner-demo.md) and [P7 validation](P7_VALIDATION.md).* Four things differ from the text above. The owner creates the wallet in the page, since its constructor needs the owner's signature. The owner connects through Freighter directly, or on the local network through a key generated in the tab; a multi-wallet adapter was not added. The sponsor and the indexer run inside the demo server, because the wallet they serve does not exist until the owner creates it. And the verifier is not a demo process: the local setup publishes a labelled fixture result, and the real verifier runs for the Testnet deployment in P8.
 
 ### P8. Final Testnet release and evidence (days 24-27; days 28-30 reserved)
 

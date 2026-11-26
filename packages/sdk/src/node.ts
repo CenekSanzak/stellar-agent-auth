@@ -1,8 +1,10 @@
-import { chmod, mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, open, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Keypair, StrKey } from '@stellar/stellar-sdk';
 import { keypairSigner, type Signer } from './signers.js';
-import { isSettled, type TransactionJournal, type TransactionRecord } from './transactions.js';
+import { holdsScope, newestForOperation, type TransactionJournal, type TransactionRecord } from './transactions.js';
 
 /**
  * Node-only helpers, exported as `@stellar-agent-auth/sdk/node` so the main entry stays browser-safe: a durable
@@ -12,8 +14,9 @@ import { isSettled, type TransactionJournal, type TransactionRecord } from './tr
 const HASH = /^[0-9a-f]{64}$/;
 
 /**
- * One owner-only JSON file per signed envelope. Writes are atomic, so a crash leaves either the old or the new
- * record and the hash is never lost. Records hold public envelopes and status only, never keys.
+ * One owner-only JSON file per signed envelope. Writes are atomic and flushed to disk, so a crash leaves either the
+ * old or the new record and the hash is never lost. Records hold public envelopes and status only, never keys.
+ * Keep one directory per network: a hash asked for on another network is not found there.
  */
 export class FileJournal implements TransactionJournal {
   constructor(readonly directory: string) {}
@@ -32,7 +35,8 @@ export class FileJournal implements TransactionJournal {
     }
   }
 
-  async unsettled(scope: string): Promise<TransactionRecord[]> {
+  /** Every record in the directory. */
+  async all(): Promise<TransactionRecord[]> {
     let names: string[];
     try {
       names = await readdir(this.directory);
@@ -44,17 +48,40 @@ export class FileJournal implements TransactionJournal {
     for (const name of names) {
       if (!name.endsWith('.json') || !HASH.test(name.slice(0, -5))) continue;
       const record = await this.get(name.slice(0, -5));
-      if (record && record.scope === scope && !isSettled(record.status)) records.push(record);
+      if (record) records.push(record);
     }
     return records.sort((a, b) => a.created_at.localeCompare(b.created_at));
+  }
+
+  async unsettled(scope: string): Promise<TransactionRecord[]> {
+    return (await this.all()).filter((record) => record.scope === scope && holdsScope(record));
+  }
+
+  async byOperation(scope: string, operationHash: string): Promise<TransactionRecord | undefined> {
+    return newestForOperation(await this.all(), scope, operationHash);
+  }
+
+  async inScope(scope: string): Promise<TransactionRecord[]> {
+    return (await this.all()).filter((record) => record.scope === scope);
   }
 
   async put(record: TransactionRecord): Promise<void> {
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
     const path = this.path(record.hash);
     const temporary = `${path}.${process.pid}.tmp`;
-    await writeFile(temporary, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
+    // The record must be on disk before the envelope is sent: flush the file, then the directory entry.
+    const file = await open(temporary, 'w', 0o600);
+    try {
+      await file.writeFile(`${JSON.stringify(record, null, 2)}\n`);
+      await file.sync();
+    } finally {
+      await file.close();
+    }
     await rename(temporary, path);
+    const directory = await open(this.directory, 'r').catch(() => undefined);
+    // Not every platform can flush a directory; where it cannot, the rename is still atomic.
+    await directory?.sync().catch(() => undefined);
+    await directory?.close();
   }
 }
 
@@ -121,3 +148,18 @@ export async function createNamedKey(name: string, env: Record<string, string | 
 
 /** Resolve a path against `base` unless it is already absolute. */
 export const resolvePath = (base: string, path: string) => (isAbsolute(path) ? path : resolve(base, path));
+
+/**
+ * Whether the module at `moduleUrl` (its `import.meta.url`) is the script Node was started with. The script path
+ * may be a symbolic link to the module, as it is for a command installed in `node_modules/.bin`, so both are
+ * resolved before they are compared. Comparing them as given makes an installed command do nothing at all.
+ */
+export function isMainModule(moduleUrl: string): boolean {
+  const script = process.argv[1];
+  if (!script) return false;
+  try {
+    return realpathSync(fileURLToPath(moduleUrl)) === realpathSync(script);
+  } catch {
+    return false;
+  }
+}

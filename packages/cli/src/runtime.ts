@@ -1,5 +1,6 @@
 import { mkdir } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { Keypair, StrKey, rpc, type xdr } from '@stellar/stellar-sdk';
 import {
   AgentRegistryError, FeeCeilingExceeded, SimulationRejected, SponsorOutcomeUnknown, SponsorRefused,
@@ -57,6 +58,10 @@ export interface GlobalOptions {
   rpcUrl?: string | undefined;
   source?: string | undefined;
   sponsorUrl?: string | undefined;
+  /** Use no sponsor even if one is configured. */
+  direct?: boolean | undefined;
+  /** Whether `SUBMITTER_URL` applies to the command being run; `--sponsor-url` always does. */
+  envSponsor?: boolean | undefined;
   stateDir?: string | undefined;
   maxFee?: string | undefined;
 }
@@ -101,6 +106,16 @@ export function contractAddress(value: string | undefined, label: string): strin
   return text;
 }
 
+/**
+ * Where the journal lives when nothing says otherwise: the user's state directory, not the working directory. A
+ * journal that depended on where a command was run from would not be found by the same command run from elsewhere,
+ * and an unsettled transaction it holds would then not stop a second one.
+ */
+export function defaultStateDirectory(env: Environment): string {
+  const base = env['XDG_STATE_HOME'] || join(env['HOME'] || homedir(), '.local', 'state');
+  return join(base, 'stellar-agent-auth');
+}
+
 /** Shared state for one CLI invocation: configuration, network, keys, journal and submission. */
 export class Runtime {
   readonly config: ReturnType<typeof loadConfig>;
@@ -123,8 +138,9 @@ export class Runtime {
     const maxFee = options.maxFee ?? env['STELLAR_AGENT_AUTH_MAX_FEE'];
     this.limits = pipelineLimits(maxFee ? { maxFee: integer(maxFee, 'max-fee') } : {});
     this.deployLimits = pipelineLimits({ maxFee: maxFee ? integer(maxFee, 'max-fee') : 100_000_000n });
-    this.stateDirectory = resolve(options.stateDir ?? env['STELLAR_AGENT_AUTH_STATE_DIR'] ?? '.local/cli');
-    this.journal = new FileJournal(resolve(this.stateDirectory, 'journal'));
+    this.stateDirectory = resolve(options.stateDir ?? env['STELLAR_AGENT_AUTH_STATE_DIR'] ?? defaultStateDirectory(env));
+    // One journal per network: a pending Testnet transaction must not hold, or be settled against, a local one.
+    this.journal = new FileJournal(resolve(this.stateDirectory, 'journal', this.config.network));
   }
 
   context(): Promise<NetworkContext> {
@@ -182,9 +198,14 @@ export class Runtime {
     return fromContractUnits(units, await this.decimals(asset));
   }
 
-  /** The submitter configured by `--sponsor-url` or `SUBMITTER_URL`, if any. */
+  /**
+   * The submitter for this command, if any: `--sponsor-url`, or `SUBMITTER_URL` for a command a sponsor is meant
+   * to pay for. An owner's or a provider's command is never sent to a sponsor because of an environment variable:
+   * a sponsor is configured for an agent's calls and would refuse it.
+   */
   sponsor(): Promise<SponsorEndpoint> | undefined {
-    const url = this.options.sponsorUrl ?? this.env['SUBMITTER_URL'];
+    if (this.options.direct) return undefined;
+    const url = this.options.sponsorUrl ?? (this.options.envSponsor ? this.env['SUBMITTER_URL'] : undefined);
     if (!url) return undefined;
     this.sponsorEndpoint ??= (async () => {
       const response = await fetch(new URL('v1/health', url));
@@ -329,8 +350,12 @@ export function classify(error: unknown): { code: number; message: string; resul
   }
   if (error instanceof SponsorOutcomeUnknown) {
     return {
-      code: EXIT.pending, message: error.message,
+      code: EXIT.pending,
+      message: error.operationHash
+        ? `${error.message} To ask the sponsor what it did, run "tx status --operation ${error.operationHash}" with the same sponsor.`
+        : error.message,
       result: { status: 'unknown', stage: 'sponsor', auth_expiration_ledger: error.expirationLedger,
+        ...(error.operationHash ? { operation: error.operationHash } : {}),
         detail: error.cause instanceof Error ? error.cause.message : String(error.cause) },
     };
   }

@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import {
-  Address, Asset, BASE_FEE, Contract, Keypair, Networks, Operation, TransactionBuilder,
+  Address, BASE_FEE, Contract, Keypair, Networks, Operation, TransactionBuilder,
   authorizeEntry, hash, nativeToScVal, rpc, scValToNative, xdr, type Transaction,
 } from '@stellar/stellar-sdk';
 import { expect, it } from 'vitest';
@@ -15,6 +15,7 @@ import {
   type ActionRequest, type AgentIdentity, type AuditEntry, type Policy, type Transfer, type VerificationResult,
 } from '../../packages/sdk/src/types.js';
 import { account, bytes, contract } from '../fixtures/abi-v1.js';
+import { airdrop, ensureNativeAssetContract } from '../integration/support/local-network.js';
 import { assertResourceFit, resourceLimits } from './phase1-resources.js';
 
 function successfulSimulation(response: rpc.Api.SimulateTransactionResponse) {
@@ -61,7 +62,7 @@ it('confirms native agent authorization and a sponsor-paid token transfer on loc
   const recipient = Keypair.random();
   const passphrase = config.passphrase;
   for (const role of [owner, agent, sponsor, recipient]) {
-    await server.requestAirdrop(role.publicKey());
+    await airdrop(server, role.publicKey());
   }
 
   async function build(source: Keypair, operation: xdr.Operation): Promise<Transaction> {
@@ -104,11 +105,8 @@ it('confirms native agent authorization and a sponsor-paid token transfer on loc
 
   const wasmHash = hash(wasm);
   await invoke(sponsor, Operation.uploadContractWasm({ wasm }));
-  const native = Asset.native();
-  const asset = native.contractId(passphrase);
+  const asset = await ensureNativeAssetContract(server, passphrase, (operation) => invoke(sponsor, operation));
   const sac = new Contract(asset);
-  const assetEntry = await server.getLedgerEntries(sac.getFootprint());
-  if (!assetEntry.entries.length) await invoke(sponsor, Operation.createStellarAssetContract({ asset: native }));
 
   const addr = (value: string) => Address.fromString(value).toScVal();
   const deployment = (deployer: Keypair) => Operation.createCustomContract({

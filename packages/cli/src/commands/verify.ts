@@ -20,6 +20,8 @@ async function verifier(runtime: Runtime, provider: string, values: Record<strin
     verificationRegistry: runtime.contract(values['verification-registry'], 'VERIFICATION_REGISTRY_ID',
       'verification-registry'),
     provider, reports: new ReportStore(resolve(state, 'reports')), stateDirectory: resolve(state, 'pending'),
+    // The same ceiling as every other command: `--max-fee`, else the default.
+    maxFee: runtime.limits.maxFee,
   };
   return context;
 }

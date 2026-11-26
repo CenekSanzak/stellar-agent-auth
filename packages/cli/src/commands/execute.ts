@@ -97,6 +97,7 @@ const actionResult = (runtime: Runtime, request: ActionRequest) => (value: xdr.S
 
 export const executeCommands: Record<string, Command> = {
   transfer: {
+    sponsored: true,
     summary: 'Pay as the agent: --agent-key <key> --policy <hash> --to <address> --asset <C...> --amount <decimal>',
     options: transferOptions,
     async run(runtime, values) {
@@ -107,6 +108,7 @@ export const executeCommands: Record<string, Command> = {
     },
   },
   pay: {
+    sponsored: true,
     summary: 'Pay on the account path: --agent-key <key> --policy <hash> --to <address> --asset <C...> '
       + '--amount <decimal> [--service <C...> --service-id <hex>]',
     options: {
@@ -153,6 +155,7 @@ export const executeCommands: Record<string, Command> = {
     },
   },
   sign: {
+    sponsored: true,
     summary: 'Sign a transfer without submitting it: same options as transfer, plus --out <file>',
     options: { ...transferOptions, out: 'string' },
     dryRun: false,
@@ -171,6 +174,7 @@ export const executeCommands: Record<string, Command> = {
     },
   },
   submit: {
+    sponsored: true,
     summary: 'Submit a transfer signed earlier with "execute sign": --file <file>',
     options: { file: 'string' },
     async run(runtime, values) {

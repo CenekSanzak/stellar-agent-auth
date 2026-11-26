@@ -20,4 +20,6 @@ VERIFIER_SECRET_KEY_FILE=~/.config/verifier.key \
 - `checks.ts` runs the metadata, endpoint, signer-account and signer-history checks and reports code, media, token and threat-feed as unsupported.
 - `attestations.ts` writes the canonical report to `$VERIFIER_STATE_DIR/reports/<sha256>.json` before publishing, then publishes as the provider. An interrupted publication is settled from `$VERIFIER_STATE_DIR/pending` before any new transaction; exit code 75 means the outcome is still pending, so rerun later.
 
+`VERIFIER_MAX_FEE_STROOPS` (default `50000000`) is the highest fee the provider accepts for one publication or revocation; above it nothing is signed.
+
 The key file must be readable by its owner only (`chmod 600`). Results are valid for 24 hours by default (`--validity <seconds>`).

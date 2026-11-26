@@ -1,6 +1,6 @@
 # Development
 
-P0 supplies the build and test environment. P1 adds the v1 contract ABI, hash vectors and a local fixture that verifies native authorization and a sponsor-paid transfer. P2 adds the agent registry, its SDK helpers and a signed local registry flow. P3 adds the verification registry, the limited verifier CLI (`services/verifier`), the SDK verification client and a signed local verification flow. P4 adds the smart wallet, the SDK wallet and policy clients, and signed local wallet and adversarial suites; see [ADR 0005](decisions/0005-smart-wallet.md) for its storage maintenance notes. P5 adds the SDK transaction pipeline, the fee sponsor (`services/submitter`), the CLI (`packages/cli`) and `examples/payment-flow.ts`; see [P5 validation](P5_VALIDATION.md). P9 adds the wallet's account payment path, service payments, one error code per cause and a total cap; see [P9 validation](P9_VALIDATION.md). P6 adds the indexer (`services/indexer`), which keeps event history in SQLite and verifies audit chains, and `history --indexer` in the CLI; see [ADR 0009](decisions/0009-durable-history.md) and [P6 validation](P6_VALIDATION.md). The demo (P7) and final Testnet deployment (P8) are not built yet.
+P0 supplies the build and test environment. P1 adds the v1 contract ABI, hash vectors and a local fixture that verifies native authorization and a sponsor-paid transfer. P2 adds the agent registry, its SDK helpers and a signed local registry flow. P3 adds the verification registry, the limited verifier CLI (`services/verifier`), the SDK verification client and a signed local verification flow. P4 adds the smart wallet, the SDK wallet and policy clients, and signed local wallet and adversarial suites; see [ADR 0005](decisions/0005-smart-wallet.md) for its storage maintenance notes. P5 adds the SDK transaction pipeline, the fee sponsor (`services/submitter`), the CLI (`packages/cli`) and `examples/payment-flow.ts`; see [P5 validation](P5_VALIDATION.md). P9 adds the wallet's account payment path, service payments, one error code per cause and a total cap; see [P9 validation](P9_VALIDATION.md). P6 adds the indexer (`services/indexer`), which keeps event history in SQLite and verifies audit chains, and `history --indexer` in the CLI; see [ADR 0009](decisions/0009-durable-history.md) and [P6 validation](P6_VALIDATION.md). P7 adds the owner demo (`apps/demo`): `npm run demo:setup` and `npm run demo` after `npm run dev`, and `npm run test:browser` for its browser test, which needs an installed Chrome; see the [demo README](../apps/demo/README.md), [ADR 0010](decisions/0010-owner-demo.md) and [P7 validation](P7_VALIDATION.md). The final Testnet deployment (P8) is not made yet.
 
 ## Pinned environment
 
@@ -33,7 +33,7 @@ npm run check
 
 Alternatively install the matching Stellar CLI release binary for your OS/architecture. `npm run build:contracts` rejects a different CLI version. Contract compilation uses `stellar contract build`, which applies the SDK's required WASM processing. The build creates the four application WASM files plus two local-only test contracts, the auth probe and the custom account spike ([ADR 0006](decisions/0006-custom-account-spike.md)), under `target/wasm32v1-none/release`. The shared types remain a library.
 
-`npm run check` typechecks source, deployments and tests; builds all TS workspaces; runs fast TS tests; runs Rust check, format, clippy and non-empty tests; and builds WASM. Fast checks need no network credentials. Rust and Node dependencies must be downloaded once.
+`npm run check` typechecks source, deployments and tests; builds all TS workspaces; packs the SDK, CLI and services and runs them outside the workspace; runs fast TS tests; runs Rust check, format, clippy and non-empty tests; and builds WASM. Fast checks need no network credentials. Rust and Node dependencies must be downloaded once.
 
 ## Local network
 
@@ -75,6 +75,8 @@ The first runs the smart wallet's account path ([ADR 0007](decisions/0007-accoun
 
 - `tests/unit`: deterministic configuration and ABI tests; SDK/service colocated tests also belong to the unit project.
 - `tests/local`, `tests/integration`, `tests/adversarial`: local-network suites, with explicit execution.
+- `tests/integration/payment-flow.test.ts` contacts no public host. Its variant that lets the verifier fetch the public metadata URL runs only with `RUN_ONLINE_TESTS=1`.
+- `tests/browser`: the owner demo in an installed Chrome against the local network; run with `npm run test:browser` after `npm run build`.
 - `tests/testnet`: opt-in public Testnet preflight.
 - Rust contract tests: native Soroban host dispatch; the wrapper rejects zero discovered tests.
 - `tests/fixtures`: public fixtures only; generate private test keys at runtime.

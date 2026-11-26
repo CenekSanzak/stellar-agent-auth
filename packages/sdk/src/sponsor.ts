@@ -1,9 +1,10 @@
 import { Account, Address, FeeBumpTransaction, StrKey, TransactionBuilder, xdr } from '@stellar/stellar-sdk';
+import { MAX_AUTH_WINDOW_LEDGERS } from './actions.js';
 import { signingAddress } from './credentials.js';
 import type { Signer } from './signers.js';
 import {
   SimulationRejected, SubmissionUnsettled, assemble, authWindow, authorizeEntries, buildTransaction, isSettled,
-  loadSource, pipelineLimits, settle, settleScope, simulate, submit, withAuth,
+  loadSource, networkIdOf, operationHash, pipelineLimits, settle, settleScope, simulate, submit, withAuth,
   type Invocation, type NetworkContext, type PipelineLimits, type TransactionJournal, type TransactionOutcome,
   type TransactionRecord, type TransactionStatus,
 } from './transactions.js';
@@ -27,6 +28,11 @@ export interface SponsorPolicy {
   methods?: readonly string[];
   maxAuthEntries: number;
   limits: PipelineLimits;
+  /**
+   * The most the sponsor commits in fees over any 24 hours, in stroops; no such limit when omitted. The per-transaction
+   * ceiling bounds one transaction, and this bounds how many of them a client can have paid for.
+   */
+  dailyBudget?: bigint;
 }
 
 export class SponsorRefused extends Error {
@@ -106,11 +112,21 @@ const toResult = (outcome: TransactionOutcome): SponsorshipResult => ({
   ...(outcome.code ? { code: outcome.code } : {}),
 });
 
+/**
+ * What a sponsor knows about an operation, asked by `operationHash`:
+ * - a `SponsorshipResult`: it built a transaction around the operation, and this is that transaction;
+ * - `in-progress`: it is handling the operation now and has not built a transaction yet;
+ * - `not-submitted`: it has no transaction for the operation and is not handling it.
+ */
+export type SponsorLookup = SponsorshipResult | { status: 'in-progress' | 'not-submitted' };
+
 /** Anything that sponsors a signed operation: the in-process `Sponsor`, or `httpSponsor` for the submitter. */
 export interface SponsorEndpoint {
   readonly address: string;
   sponsor(operationXdr: string): Promise<SponsorshipResult>;
   status(hash: string): Promise<SponsorshipResult>;
+  /** Absent on a sponsor that cannot answer it; a client then has no way to recover a lost answer. */
+  lookup?(operationHash: string): Promise<SponsorLookup>;
 }
 
 /**
@@ -122,6 +138,8 @@ export class Sponsor implements SponsorEndpoint {
   readonly address: string;
   private tail: Promise<unknown> = Promise.resolve();
   private readonly scope: string;
+  /** Operations being handled now, by operation hash. A repeat of one joins it instead of starting another. */
+  private readonly inFlight = new Map<string, Promise<SponsorshipResult>>();
 
   constructor(
     private readonly context: NetworkContext, private readonly signer: Signer,
@@ -135,25 +153,61 @@ export class Sponsor implements SponsorEndpoint {
     if (!Number.isInteger(policy.maxAuthEntries) || policy.maxAuthEntries < 1) throw new Error('Invalid entry limit');
   }
 
-  /** Validate, enforce and submit one signed operation. Simulation failures throw `SimulationRejected`. */
+  /**
+   * Validate, enforce and submit one signed operation. Simulation failures throw `SimulationRejected`.
+   *
+   * Sending the same operation again is safe. While the first is being handled, the repeat waits for the same
+   * answer. Afterwards it gets the transaction already built for it, unless that transaction can never be included,
+   * in which case a new one is built.
+   */
   async sponsor(operationXdr: string): Promise<SponsorshipResult> {
     inspectSponsoredOperation(operationXdr, this.address, this.policy);
-    const run = this.tail.then(() => this.run(operationXdr));
+    const key = operationHash(xdr.Operation.fromXdr(operationXdr, 'base64'));
+    const current = this.inFlight.get(key);
+    if (current) return current;
+    const run = this.tail.then(() => this.run(operationXdr, key));
     this.tail = run.catch(() => undefined);
+    this.inFlight.set(key, run);
+    const done = () => { this.inFlight.delete(key); };
+    run.then(done, done);
     return run;
   }
 
-  private async run(operationXdr: string): Promise<SponsorshipResult> {
+  private async run(operationXdr: string, key: string): Promise<SponsorshipResult> {
     const { limits } = this.policy;
     await settleScope(this.context, this.journal, this.scope);
+    const earlier = await this.journal.byOperation(this.scope, key);
+    // Applied, or possibly still to be: answer with that transaction. Only a dead envelope allows a new one.
+    if (earlier && earlier.status !== 'expired' && earlier.status !== 'rejected') return this.status(earlier.hash);
     const operation = xdr.Operation.fromXdr(operationXdr, 'base64');
     const account = await loadSource(this.context, this.address);
     const tx = buildTransaction(this.context, account, operation, limits);
     const enforced = await simulate(this.context, tx, 'enforce');
     assertSuppliedAuth(operation, enforced.result.auth);
     const prepared = assemble(tx, enforced, limits);
+    if (this.policy.dailyBudget !== undefined) {
+      const committed = await this.committed();
+      if (committed + BigInt(prepared.fee) > this.policy.dailyBudget) {
+        throw new SponsorRefused(`The sponsor's fee budget for 24 hours is used up (${committed} of ${this.policy.dailyBudget} stroops)`);
+      }
+    }
     const signed = await this.signer.signTransaction(prepared, this.context.networkPassphrase);
     return toResult(await submit(this.context, signed, this.journal, this.scope, limits));
+  }
+
+  /**
+   * Fees committed in the last 24 hours, in stroops: the fee of every envelope this sponsor signed in that time,
+   * except those that can never be included. It counts what could be charged, which is at least what was.
+   */
+  async committed(now = Date.now()): Promise<bigint> {
+    const since = new Date(now - 86_400_000).toISOString();
+    let total = 0n;
+    for (const record of await this.journal.inScope(this.scope)) {
+      if (record.created_at < since || record.status === 'rejected' || record.status === 'expired') continue;
+      // A record from before fees were journaled is read from its envelope.
+      total += BigInt(record.fee ?? TransactionBuilder.fromXDR(record.envelope, this.context.networkPassphrase).fee);
+    }
+    return total;
   }
 
   /** Settle a hash this sponsor submitted. */
@@ -163,6 +217,14 @@ export class Sponsor implements SponsorEndpoint {
     const outcome = await settle(this.context, record);
     await this.journal.put(outcome.record);
     return toResult(outcome);
+  }
+
+  /** What this sponsor did with the operation that has `key` as its `operationHash`. */
+  async lookup(key: string): Promise<SponsorLookup> {
+    if (!/^[0-9a-f]{64}$/.test(key)) throw new SponsorRefused('Expected an operation hash');
+    if (this.inFlight.has(key)) return { status: 'in-progress' };
+    const record = await this.journal.byOperation(this.scope, key);
+    return record ? this.status(record.hash) : { status: 'not-submitted' };
   }
 
   /** Settle anything left unsettled by an earlier run; throws `SubmissionUnsettled` while one is still open. */
@@ -184,11 +246,13 @@ export function assertSuppliedAuth(operation: xdr.Operation, used: readonly xdr.
 /** A sponsor policy with validated limits. */
 export function sponsorPolicy(
   contracts: readonly string[], options: { methods?: readonly string[]; maxAuthEntries?: number;
-    limits?: Partial<PipelineLimits> } = {},
+    limits?: Partial<PipelineLimits>; dailyBudget?: bigint } = {},
 ): SponsorPolicy {
+  if (options.dailyBudget !== undefined && options.dailyBudget <= 0n) throw new Error('A fee budget must be positive');
   return {
     contracts: [...contracts], maxAuthEntries: options.maxAuthEntries ?? 4, limits: pipelineLimits(options.limits),
     ...(options.methods ? { methods: [...options.methods] } : {}),
+    ...(options.dailyBudget !== undefined ? { dailyBudget: options.dailyBudget } : {}),
   };
 }
 
@@ -214,7 +278,11 @@ export async function signForSponsor(
  */
 export class SponsorOutcomeUnknown extends Error {
   override readonly name = 'SponsorOutcomeUnknown';
-  constructor(readonly expirationLedger: number, readonly cause: unknown) {
+  constructor(
+    readonly expirationLedger: number, readonly cause: unknown,
+    /** `operationHash` of the signed operation; a sponsor that supports `lookup` can be asked about it later. */
+    readonly operationHash?: string,
+  ) {
     super('The sponsor did not answer, so this operation may or may not have been submitted. It can be applied '
       + `until ledger ${expirationLedger}. Sign nothing new for this action before then; afterwards read the `
       + 'on-chain state to see whether it was applied.');
@@ -235,11 +303,14 @@ export function authExpiration(operation: xdr.Operation): number {
  * transaction from the sponsor that carries exactly the one operation the client signed, and the reported hash must
  * be that envelope's hash on this network. The time bound comes from the envelope and the earliest possible ledger
  * from the client's own view, never from the sponsor's report.
+ *
+ * `operation` is the signed operation, or its `operationHash` when only that was kept.
  */
 export function verifiedSponsorRecord(
-  context: Pick<NetworkContext, 'networkPassphrase'>, sponsor: string, operation: xdr.Operation,
+  context: Pick<NetworkContext, 'networkPassphrase'>, sponsor: string, operation: xdr.Operation | string,
   reported: TransactionRecord, scope: string, submittedAfterLedger: number,
 ): TransactionRecord {
+  const expected = typeof operation === 'string' ? operation : operationHash(operation);
   let tx: ReturnType<typeof TransactionBuilder.fromXDR>;
   try {
     tx = TransactionBuilder.fromXDR(String(reported?.envelope), context.networkPassphrase);
@@ -250,7 +321,7 @@ export function verifiedSponsorRecord(
   const operations = envelope.type === 'envelopeTypeTx' ? envelope.v1.tx.operations : [];
   const maxTime = 'timeBounds' in tx ? tx.timeBounds?.maxTime : undefined;
   if (tx instanceof FeeBumpTransaction || operations.length !== 1 || tx.source !== sponsor
-    || operations[0]!.toXdr('base64') !== operation.toXdr('base64')
+    || operationHash(operations[0]!) !== expected
     || Array.from(tx.hash(), (byte) => byte.toString(16).padStart(2, '0')).join('') !== reported.hash
     || !maxTime || maxTime === '0') {
     throw new Error('Sponsor reported a transaction other than the one this client signed');
@@ -258,8 +329,63 @@ export function verifiedSponsorRecord(
   const created = new Date().toISOString();
   return {
     scope, hash: reported.hash, envelope: reported.envelope, source: sponsor, max_time: maxTime,
-    submitted_after_ledger: submittedAfterLedger, status: 'pending', created_at: created, updated_at: created,
+    submitted_after_ledger: submittedAfterLedger, status: 'pending', operation_hash: expected,
+    network_id: networkIdOf(context.networkPassphrase), created_at: created, updated_at: created,
   };
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Ask the sponsor what it did with an operation whose answer was lost. Returns its transaction for the operation,
+ * or `undefined` when the sponsor cannot say. Throws `SponsorRefused` when the sponsor states that it submitted
+ * nothing for it: that is the same assurance as any other refusal.
+ */
+async function lookupLost(
+  endpoint: SponsorEndpoint, key: string, attempts: number, waitMs: number,
+): Promise<SponsorshipResult | undefined> {
+  if (!endpoint.lookup) return undefined;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    if (attempt) await sleep(waitMs);
+    let found: SponsorLookup;
+    try {
+      found = await endpoint.lookup(key);
+    } catch {
+      continue;
+    }
+    if ('record' in found) return found;
+    if (found.status === 'not-submitted') {
+      throw new SponsorRefused('The sponsor reports that it submitted nothing for this operation');
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Settle an operation a sponsor may have submitted, from its `operationHash` alone, and journal it under `scope`.
+ * For use after `SponsorOutcomeUnknown`, including from another process. The sponsor's transaction is accepted only
+ * if it carries exactly that operation, and its outcome is read from the network. Throws `SponsorRefused` if the
+ * sponsor submitted nothing, and `SponsorOutcomeUnknown` if it still cannot say.
+ */
+export async function recoverSponsored(
+  context: NetworkContext, endpoint: SponsorEndpoint, key: string, journal: TransactionJournal, scope: string,
+  options: { attempts?: number; waitMs?: number } = {},
+): Promise<TransactionOutcome> {
+  if (!/^[0-9a-f]{64}$/.test(key)) throw new Error('Expected an operation hash');
+  const found = await lookupLost(endpoint, key, options.attempts ?? 3, options.waitMs ?? 1_000);
+  if (!found) throw new SponsorOutcomeUnknown(0, new Error('The sponsor could not say what it did with the operation'), key);
+  const verified = verifiedSponsorRecord(context, endpoint.address, key, found.record, scope, 0);
+  // When the envelope was sent is not known here, and the sponsor's word for it is not taken. The operation itself
+  // gives a bound: its entries were signed at most the longest authorization window before they expire, and the
+  // envelope cannot be older than they are.
+  const envelope = (TransactionBuilder.fromXDR(verified.envelope, context.networkPassphrase)).toEnvelope();
+  const [operation] = envelope.type === 'envelopeTypeTx' ? envelope.v1.tx.operations : [];
+  const expiration = operation ? authExpiration(operation) : 0;
+  const record = { ...verified, submitted_after_ledger: Math.max(0, expiration - MAX_AUTH_WINDOW_LEDGERS - 1) };
+  await journal.put(record);
+  const outcome = await settle(context, record);
+  await journal.put(outcome.record);
+  return outcome;
 }
 
 /**
@@ -274,23 +400,27 @@ export function verifiedSponsorRecord(
  */
 export async function sponsoredInvoke(
   context: NetworkContext, endpoint: SponsorEndpoint, operation: xdr.Operation, journal: TransactionJournal,
-  scope: string,
+  scope: string, options: { lookupAttempts?: number; lookupWaitMs?: number } = {},
 ): Promise<TransactionOutcome> {
   await settleScope(context, journal, scope);
   const before = await context.server.getLatestLedger();
+  const key = operationHash(operation);
   let result: SponsorshipResult;
   try {
     result = await endpoint.sponsor(operation.toXdr('base64'));
   } catch (error) {
     // A refusal is an answer: nothing was submitted. Anything else may have been lost after submission.
     if (error instanceof SponsorRefused || error instanceof SimulationRejected) throw error;
-    throw new SponsorOutcomeUnknown(authExpiration(operation), error);
+    // The answer was lost, not necessarily the request. Ask the sponsor what it did with this operation.
+    const found = await lookupLost(endpoint, key, options.lookupAttempts ?? 3, options.lookupWaitMs ?? 1_000);
+    if (!found) throw new SponsorOutcomeUnknown(authExpiration(operation), error, key);
+    result = found;
   }
   let record: TransactionRecord;
   try {
     record = verifiedSponsorRecord(context, endpoint.address, operation, result?.record, scope, before.sequence);
   } catch (error) {
-    throw new SponsorOutcomeUnknown(authExpiration(operation), error);
+    throw new SponsorOutcomeUnknown(authExpiration(operation), error, key);
   }
   await journal.put(record);
   const outcome = await settle(context, record);
@@ -324,6 +454,16 @@ export function httpSponsor(
     status: (hash) => {
       if (!/^[0-9a-f]{64}$/.test(hash)) throw new Error('Expected a transaction hash');
       return call(`v1/transactions/${hash}`, { method: 'GET' });
+    },
+    async lookup(key) {
+      if (!/^[0-9a-f]{64}$/.test(key)) throw new Error('Expected an operation hash');
+      // Read apart from `call`: a submitter without this route answers 404, and that must not be taken to mean
+      // "nothing was submitted". Only an answer that says so in its body counts.
+      const response = await request(new URL(`v1/operations/${key}`, url), { method: 'GET', headers });
+      const body = await response.json().catch(() => undefined) as SponsorLookup | undefined;
+      const status = (body as { status?: unknown } | undefined)?.status;
+      if (!response.ok || typeof status !== 'string') throw new Error(`Submitter cannot look up operations (HTTP ${response.status})`);
+      return body!;
     },
   };
 }

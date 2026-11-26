@@ -1,5 +1,5 @@
-import { hash, type rpc, type xdr } from '@stellar/stellar-sdk';
-import { cursorLedger, decodeAuditEvent } from '@stellar-agent-auth/sdk';
+import type { rpc, xdr } from '@stellar/stellar-sdk';
+import { cursorLedger, decodeAuditEvent, networkIdOf } from '@stellar-agent-auth/sdk';
 import type { HistoryStore, PageCounts, Quarantined, StoredAuditEntry, StoredEvent, Stream } from './storage.js';
 
 /**
@@ -41,7 +41,7 @@ export interface IngestReport extends PageCounts {
   gap?: { from: number; to: number };
 }
 
-export const networkIdOf = (passphrase: string) => Buffer.from(hash(Buffer.from(passphrase))).toString('hex');
+export { networkIdOf };
 
 function symbolOf(topic: xdr.ScVal | undefined): string {
   return topic?.type === 'scvSymbol' ? topic.sym.toString() : '';

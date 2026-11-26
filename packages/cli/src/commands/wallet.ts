@@ -92,6 +92,7 @@ export const walletCommands: Record<string, Command> = {
     },
   },
   fund: {
+    sponsored: true,
     summary: 'Fund the wallet: --from <key> --asset <C...> --amount <decimal>; grants no authority',
     options: { ...walletOption, from: 'string', asset: 'string', amount: 'string' },
     async run(runtime, values) {

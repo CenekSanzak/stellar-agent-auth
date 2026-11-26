@@ -162,6 +162,17 @@ export interface PublishTarget {
   /** Transaction validity window in seconds. */
   timeoutSeconds?: number;
   pollAttempts?: number;
+  /** Highest total fee in stroops the provider accepts for one publication; `DEFAULT_MAX_FEE_STROOPS` if absent. */
+  maxFee?: bigint | undefined;
+}
+
+/** The same default ceiling as the SDK's pipeline: enough for a first call on freshly installed code. */
+export const DEFAULT_MAX_FEE_STROOPS = 50_000_000n;
+
+/** The assembled fee is what the provider can be charged. Refuse before signing if it is above the ceiling. */
+export function assertFeeWithin(fee: string, maxFee: bigint | undefined, what: string) {
+  const ceiling = maxFee ?? DEFAULT_MAX_FEE_STROOPS;
+  if (BigInt(fee) > ceiling) throw new Error(`${what} would cost up to ${fee} stroops, above the ceiling of ${ceiling}; nothing was signed`);
 }
 
 export interface Published {
@@ -260,6 +271,7 @@ export async function publishResult(target: PublishTarget, result: VerificationR
     throw new Error(`Publication simulation failed: ${simulation.error}`);
   }
   const prepared = rpc.assembleTransaction(tx, simulation).build() as Transaction;
+  assertFeeWithin(prepared.fee, target.maxFee, 'Publication');
   prepared.sign(target.provider);
   const hash = Buffer.from(prepared.hash()).toString('hex');
   const path = journalPath(target, result);
