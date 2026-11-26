@@ -2,7 +2,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { x402HTTPResourceServer, x402ResourceServer, type FacilitatorClient } from '@x402/core/server';
 import type { Network } from '@x402/core/types';
 import { ExactStellarScheme as ExactServerScheme } from '@x402/stellar/exact/server';
-import type { payeeGate } from './gate.js';
+import { payerOf, type payeeGate } from './gate.js';
+import { passphraseOf } from './networks.js';
 
 /**
  * A resource that costs something, served over plain `node:http` by x402's own resource server: it answers 402
@@ -40,6 +41,7 @@ const write = (response: ServerResponse, status: number, headers: Record<string,
 export async function createPaidService(
   network: Network, facilitator: FacilitatorClient, routes: readonly PaidRoute[],
 ): Promise<PaidService> {
+  const passphrase = passphraseOf(network);
   // One resource server per route, because a gate belongs to a route and the server's hooks are its own.
   const servers = new Map<string, { route: PaidRoute; http: x402HTTPResourceServer }>();
   for (const route of routes) {
@@ -81,7 +83,7 @@ export async function createPaidService(
         write(response, result.response.status, result.response.headers, result.response.body);
         return true;
       }
-      const payer = (result.paymentPayload.payload as { payer?: string }).payer;
+      const payer = payerOf(result.paymentPayload, passphrase)?.payer;
       const body = JSON.stringify(await route.handler(payer));
       const settled = await http.processSettlement(result.paymentPayload, result.paymentRequirements,
         result.declaredExtensions, { request: context, responseBody: Buffer.from(body) });

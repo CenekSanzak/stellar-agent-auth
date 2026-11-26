@@ -72,6 +72,7 @@ describe('demo backend on local Stellar', () => {
     http = createServer((request, response) => { void backend.handler(request, response); });
     await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve));
     base = `http://127.0.0.1:${(http.address() as AddressInfo).port}/`;
+    backend.listening(base);
     await airdrop(server, owner.publicKey());
   }, TIMEOUT);
 
@@ -88,7 +89,8 @@ describe('demo backend on local Stellar', () => {
       provider: { mode: 'Fixture' }, agent: { agent_id: deployment.agent.agent_id },
     });
     expect(config['scenarios'].map((item: { id: string }) => item.id))
-      .toEqual(['allowed', 'over-limit', 'unknown-recipient', 'daily-limit', 'account-transfer', 'service']);
+      .toEqual(['allowed', 'over-limit', 'unknown-recipient', 'daily-limit', 'account-transfer', 'service', 'x402',
+        'x402-strict']);
     expect(JSON.stringify(config)).not.toMatch(/S[A-Z2-7]{55}/);
     expect(JSON.stringify(config)).not.toContain(deployment.key_directory);
   }, TIMEOUT);
@@ -162,11 +164,25 @@ describe('demo backend on local Stellar', () => {
     ]);
     expect((await scenario('account-transfer')).steps).toMatchObject([{ path: 'account', status: 'paid', amount: '1' }]);
     expect((await scenario('service')).steps).toMatchObject([{ path: 'service', status: 'paid', amount: '1' }]);
-    // 3 + 1 + 1 spent of 20: three more payments of 5 fit, and the fourth would pass the daily limit.
+
+    // A paid API: it answers 402, the wallet pays through the facilitator, and the API serves.
+    const unpaid = await fetch(new URL('x402/report', base));
+    expect(unpaid.status).toBe(402);
+    const bought = await scenario('x402');
+    expect(bought.steps).toMatchObject([{ path: 'x402', status: 'paid', amount: '1', recipient: deployment.roles.recipient }]);
+    expect(bought.steps[0]!.tx_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(bought.steps[0]!.detail).toContain(`"paid_by":"${wallet}"`);
+    // A stricter API refuses this agent on its own terms; the wallet would have paid, and is not charged.
+    expect((await scenario('x402-strict')).steps).toMatchObject([
+      { path: 'x402', status: 'refused', error: 'payee_gate_CheckNotPassed', tx_hash: null },
+    ]);
+    expect(await readWalletBalance(read(), deployment.asset.contract)).toBe(94n * UNIT);
+
+    // 3 + 1 + 1 + 1 spent of 20: two more payments of 5 fit, and the third would pass the daily limit.
     const daily = await scenario('daily-limit');
-    expect(daily.steps.map((step) => step.status)).toEqual(['paid', 'paid', 'paid', 'refused']);
+    expect(daily.steps.map((step) => step.status)).toEqual(['paid', 'paid', 'refused']);
     expect(daily.steps.at(-1)).toMatchObject({ error: 'DailyLimitExceeded', tx_hash: null });
-    expect(await readWalletBalance(read(), deployment.asset.contract)).toBe(80n * UNIT);
+    expect(await readWalletBalance(read(), deployment.asset.contract)).toBe(84n * UNIT);
   }, TIMEOUT);
 
   it('stops paying when the owner pauses, and for good when the owner revokes', async () => {
@@ -176,21 +192,24 @@ describe('demo backend on local Stellar', () => {
     await ownerCall('revoke_policy', { policy_hash: policy });
     expect((await scenario('allowed')).steps).toMatchObject([{ status: 'refused', error: 'Revoked' }]);
     expect((await scenario('service')).steps).toMatchObject([{ status: 'refused', error: 'Revoked' }]);
-    expect(await readWalletBalance(read(), deployment.asset.contract)).toBe(80n * UNIT);
+    // The wallet refuses before anything is signed for the API.
+    expect((await scenario('x402')).steps).toMatchObject([{ path: 'x402', status: 'refused', error: 'Revoked' }]);
+    expect(await readWalletBalance(read(), deployment.asset.contract)).toBe(84n * UNIT);
   }, TIMEOUT);
 
   it('leaves a history that verifies, with refusals kept apart as attempts', async () => {
     const history = await readIndexedHistory(read(), indexerUrl);
     expect(history.status).toBe('verified');
-    // One policy, six payments (3, 1, 1, 5, 5, 5), pause, resume, revocation.
+    // One policy, six payments (3, 1, 1, 1 through x402, 5, 5), pause, resume, revocation.
     expect(history.entries.map((record) => record.entry.outcome.kind)).toEqual([
-      'PolicyCreated', 'Executed', 'AccountPayment', 'AccountPayment', 'Executed', 'Executed', 'Executed',
+      'PolicyCreated', 'Executed', 'AccountPayment', 'AccountPayment', 'AccountPayment', 'Executed', 'Executed',
       'PauseChanged', 'PauseChanged', 'PolicyRevoked',
     ]);
     const attempts = await (await fetch(new URL(`v1/wallets/${wallet}/attempts`, indexerUrl))).json() as
       { attempts: { error: string | null; kind: string }[] };
     expect(attempts.attempts.map((attempt) => attempt.error)).toEqual([
-      'PaymentLimitExceeded', 'RecipientNotAllowed', 'DailyLimitExceeded', 'Paused', 'Revoked', 'Revoked',
+      'PaymentLimitExceeded', 'RecipientNotAllowed', 'payee_gate_CheckNotPassed', 'DailyLimitExceeded', 'Paused',
+      'Revoked', 'Revoked', 'Revoked',
     ]);
     expect(attempts.attempts.every((attempt) => attempt.kind === 'simulation')).toBe(true);
   }, TIMEOUT);

@@ -42,6 +42,7 @@ export async function startDemo(
   });
   const address = server.address();
   const bound = typeof address === 'object' && address ? address.port : port;
+  backend.listening(`http://127.0.0.1:${bound}/`);
   return {
     server, url: `http://127.0.0.1:${bound}/`,
     async stop() {

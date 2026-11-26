@@ -53,6 +53,7 @@ describe('owner demo in a browser', () => {
     http = createServer((request, response) => { void backend.handler(request, response); });
     await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve));
     base = `http://127.0.0.1:${(http.address() as AddressInfo).port}/`;
+    backend.listening(base);
     browser = await chromium.launch({ channel: process.env['DEMO_BROWSER_CHANNEL'] ?? 'chrome', headless: true });
     page = await browser.newPage();
     page.on('console', (message) => {
@@ -138,6 +139,16 @@ describe('owner demo in a browser', () => {
     const service = await scenario('service', 'confirmed');
     expect(await service.locator('.steps li').getAttribute('data-status')).toBe('paid');
     await expect.poll(() => text('wallet-balance'), { timeout: 30_000 }).toBe('96');
+
+    // A paid API over x402: paid through the wallet, then an API with a stricter requirement refuses the agent.
+    const bought = await scenario('x402', 'confirmed');
+    expect(await bought.locator('.steps li').getAttribute('data-status')).toBe('paid');
+    expect(await bought.innerText()).toContain('The API answered');
+    await expect.poll(() => text('wallet-balance'), { timeout: 30_000 }).toBe('95');
+    const strict = await scenario('x402-strict', 'refused');
+    expect(await strict.locator('.steps li').getAttribute('data-error')).toBe('payee_gate_CheckNotPassed');
+    expect(await strict.innerText()).toContain('The API\'s own check refused the agent');
+    expect(await text('wallet-balance')).toBe('95');
   }, TIMEOUT);
 
   it('lets the owner pause, resume and revoke, and the agent is refused accordingly', async () => {
@@ -157,7 +168,7 @@ describe('owner demo in a browser', () => {
     expect(await page.locator('[data-action="revoke"]').count()).toBe(0);
     const revoked = await scenario('allowed', 'refused');
     expect(await revoked.locator('.steps li').getAttribute('data-error')).toBe('Revoked');
-    expect(await text('wallet-balance')).toBe('96');
+    expect(await text('wallet-balance')).toBe('95');
     await expect.poll(() => text('exposure'), { timeout: 30_000 }).toContain('No active policy');
   }, TIMEOUT);
 
@@ -165,19 +176,20 @@ describe('owner demo in a browser', () => {
     await expect.poll(() => text('history-status'), { timeout: 30_000 }).toBe('Complete and verified');
     const kinds = () => page.locator('[data-testid="entries"] tbody tr').evaluateAll((rows) =>
       rows.map((row) => row.getAttribute('data-kind')));
-    // Newest first: revoked, resumed, paused, service payment, payment, policy.
+    // Newest first: revoked, resumed, paused, x402 payment, service payment, payment, policy.
     await expect.poll(kinds, { timeout: 30_000 }).toEqual([
-      'PolicyRevoked', 'PauseChanged', 'PauseChanged', 'AccountPayment', 'Executed', 'PolicyCreated',
+      'PolicyRevoked', 'PauseChanged', 'PauseChanged', 'AccountPayment', 'AccountPayment', 'Executed', 'PolicyCreated',
     ]);
     const errors = () => page.locator('[data-testid="attempts"] tbody tr').evaluateAll((rows) =>
       rows.map((row) => row.getAttribute('data-error')));
-    await expect.poll(errors, { timeout: 30_000 }).toEqual(['Revoked', 'Paused', 'RecipientNotAllowed', 'PaymentLimitExceeded']);
+    await expect.poll(errors, { timeout: 30_000 }).toEqual(['Revoked', 'Paused', 'payee_gate_CheckNotPassed', 'RecipientNotAllowed',
+      'PaymentLimitExceeded']);
   }, TIMEOUT);
 
   it('comes back to the same wallet after a reload, read from the network', async () => {
     await page.reload();
     await click('connect-local');
-    await expect.poll(() => text('wallet-balance'), { timeout: 60_000 }).toBe('96');
+    await expect.poll(() => text('wallet-balance'), { timeout: 60_000 }).toBe('95');
     await expect.poll(() => text('policy-status'), { timeout: 30_000 }).toBe('Revoked');
     await expect.poll(() => text('history-status'), { timeout: 30_000 }).toBe('Complete and verified');
     // Through the whole run the page logged no error and no request of its own failed.

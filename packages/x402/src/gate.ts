@@ -1,4 +1,4 @@
-import { Address, Contract, TransactionBuilder, scValToNative, type rpc, type xdr } from '@stellar/stellar-sdk';
+import { Address, Contract, StrKey, TransactionBuilder, scValToNative, type rpc, type xdr } from '@stellar/stellar-sdk';
 import {
   VerificationRegistryError, checkVerification, readPolicy, readWalletRegistries, signingAddress,
   type Hash32, type VerificationRequirement,
@@ -63,7 +63,8 @@ export async function contractCodeHash(
 
 /** Decide whether the payer of `entry`, a wallet at `payer`, meets `terms`. */
 export async function checkPayer(payer: string, entry: xdr.SorobanAuthorizationEntry, terms: PayeeTerms): Promise<GateAnswer> {
-  const code = await contractCodeHash(terms.server, payer);
+  // A plain account is not a wallet: it has no policy and no agent to check.
+  const code = StrKey.isValidContract(payer) ? await contractCodeHash(terms.server, payer) : undefined;
   if (!code || !terms.walletCode.includes(code)) {
     return refuse('payee_gate_unknown_payer', 'The payer is not a wallet this service knows', payer);
   }

@@ -21,3 +21,9 @@ export function x402Network(networkPassphrase: string): StellarNetwork {
   if (!network) throw new Error('No x402 network identifier for this network passphrase');
   return network;
 }
+
+/** The network passphrase for an x402 network identifier this package knows. */
+export function passphraseOf(network: string): string {
+  for (const [passphrase, name] of BY_PASSPHRASE) if (name === network) return passphrase;
+  throw new Error(`Unknown x402 Stellar network ${network}`);
+}

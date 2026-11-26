@@ -39,7 +39,9 @@ function wasmDirectory() {
     directory = parent;
   }
 }
-const ROLES = ['admin', 'provider', 'controller', 'agent', 'funder', 'issuer', 'sponsor', 'recipient', 'stranger'] as const;
+const ROLES = [
+  'admin', 'provider', 'controller', 'agent', 'funder', 'issuer', 'sponsor', 'facilitator', 'recipient', 'stranger',
+] as const;
 type Role = (typeof ROLES)[number];
 
 export const FIXTURE_LABEL = 'SIMULATED fixture - not a real assessment';
@@ -215,7 +217,7 @@ export async function setupDeployment(options: SetupOptions): Promise<Deployment
     service: { contract: service, service_id: bytesToHex(serviceId), price },
     roles: {
       recipient: keys.recipient.address, stranger: keys.stranger.address, funder: keys.funder.address,
-      sponsor: keys.sponsor.address,
+      sponsor: keys.sponsor.address, facilitator: keys.facilitator.address,
     },
     key_directory: keyDirectory, created_at: new Date().toISOString(),
   };

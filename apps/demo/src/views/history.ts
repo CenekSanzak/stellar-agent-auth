@@ -89,7 +89,8 @@ export function renderActivity(state: State): string {
         ${item.steps ? `<ul class="steps">${item.steps.map((step) => `<li data-status="${esc(step.status)}" data-error="${esc(step.error ?? '')}">
           <span class="badge ${step.status === 'paid' ? 'good' : step.status === 'unsettled' ? 'warn' : 'bad'}">${esc(step.status)}</span>
           ${esc(step.amount)} ${esc(state.config!.asset.code)} to ${addr(step.recipient)}
-          ${step.status === 'paid' ? '' : `<br /><span class="small">${esc(step.status === 'unsettled' ? step.detail ?? '' : explainRefusal(step.error))}</span>`}
+          ${step.status === 'paid' ? (step.detail ? `<br /><span class="small wrap">${esc(step.detail)}</span>` : '')
+    : `<br /><span class="small">${esc(step.status === 'unsettled' ? step.detail ?? '' : explainRefusal(step.error))}</span>`}
           ${step.tx_hash ? `<br />${txLink(explorer, step.tx_hash)}` : ''}</li>`).join('')}</ul>
           <p class="muted small">Expected: ${esc(item.expected === 'paid' ? 'paid' : `refused with ${item.expected}`)}.</p>`
     : `<p class="small">${esc(item.detail || verdict.detail)}</p>`}
