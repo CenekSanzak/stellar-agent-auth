@@ -81,6 +81,19 @@ export function walletClient(payer: WalletPayer): x402Client {
     .register(x402Network(payer.context.networkPassphrase), new WalletExactScheme(payer));
 }
 
+/**
+ * Ask what `url` costs without paying: the payment terms of its 402 answer, or `undefined` when it asks for none.
+ * Nothing is signed. An agent can compare sellers this way before it decides where to buy.
+ */
+export async function quote(
+  client: x402Client, url: string | URL, init: RequestInit = {}, fetcher: typeof fetch = fetch,
+): Promise<PaymentRequired | undefined> {
+  const response = await fetcher(url, init);
+  if (response.status !== 402) return undefined;
+  return new x402HTTPClient(client).getPaymentRequiredResponse((name) => response.headers.get(name),
+    await response.clone().json().catch(() => undefined));
+}
+
 export interface PaidResponse {
   response: Response;
   /** What the service asked for, when it asked for payment. */

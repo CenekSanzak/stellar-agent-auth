@@ -1,11 +1,12 @@
+import { randomBytes } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
-import type { IncomingMessage, Server, ServerResponse } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { extname, join, normalize, sep } from 'node:path';
 import { StrKey, rpc } from '@stellar/stellar-sdk';
-import { startIndexer, type RunningIndexer } from '@stellar-agent-auth/indexer';
+import { startIndexer } from '@stellar-agent-auth/indexer';
 import {
-  MemoryJournal, deployedAddress, fromContractUnits, fundInvocation, httpSponsor, invoke, keypairSigner, networkContext,
+  MemoryJournal, deployedAddress, fromContractUnits, fundInvocation, invoke, keypairSigner, networkContext,
   pipelineLimits, readWalletBalance, readWalletOwner, readWalletRegistries, toContractUnits,
   type NetworkContext, type Signer,
 } from '@stellar-agent-auth/sdk';
@@ -14,39 +15,53 @@ import {
   StellarExactFacilitator, createPaidService, inProcessFacilitator, payeeGate, tolerantUpstreamFacilitator, x402Network,
   type PayeeTerms,
 } from '@stellar-agent-auth/x402';
-import { startSubmitter } from '@stellar-agent-auth/submitter';
-import { DemoAgent, PAID_REPORT, PAID_STRICT, SCENARIOS, UnknownScenario } from './agent.js';
+import { ScoutAgent, TASKS, UnknownTask } from './agent.js';
+import { PRODUCTS, VENDORS, produce, vendorOf } from './catalogue.js';
 import { hexToBytes, type Deployment } from './deployment.js';
 
 /**
- * The demo's server side. It plays the parts the owner does not: the agent, the fee sponsor, the funder that hands
- * out the test asset, and the indexer. Each has its own key. The owner's key never comes here; the owner signs in
- * the browser.
+ * The demo's server side. It plays every part the owner does not: Scout the agent, the faucet that hands out the
+ * test asset, the sellers and their x402 facilitator, and the indexer. Each has its own key. An owner's key never
+ * comes here; owners sign in their browser.
+ *
+ * It serves many visitors at once. Each visitor has their own wallet, at an address derived from their account and
+ * the deployment's salt, and is told apart by nothing else: there are no accounts and no sessions to keep.
  *
  * What a browser can ask of it is deliberately small:
- * - `GET /v1/config`: the deployment's public addresses and the scenarios the agent can run;
- * - `POST /v1/session { owner }`: which wallet belongs to this owner, and start following it once it exists;
- * - `POST /v1/fund`: the funder sends a fixed amount of the test asset to the session's wallet;
- * - `POST /v1/payments { scenario, policy_hash }`: the agent runs one named scenario.
+ * - `GET /v1/config`: the deployment's public addresses, the sellers, and the tasks Scout can run;
+ * - `POST /v1/session { owner }`: which wallet belongs to this owner, and whether it exists yet;
+ * - `POST /v1/fund { owner }`: the faucet sends a fixed amount of the test asset to that owner's wallet;
+ * - `POST /v1/tasks { owner, task, policy_hash }`: Scout runs one named task for that owner's wallet;
+ * - `GET /indexer/v1/...`: the indexer's read routes, passed through.
  *
- * It also serves a paid API under `/x402/`, which stands for someone else's service: it answers 402, is paid
- * through x402 by whoever asks, and checks the paying agent against its own requirement before it serves.
+ * Under `/x402/` it serves the sellers. They are ordinary x402 resources: they answer 402, are paid by whoever
+ * asks, and check the paying agent against their own requirement before they sell.
  *
- * The wallet address is derived here from the owner's address and the deployment's salt, and it is checked on the
- * network before anything is started for it. It listens on loopback only.
+ * Since anyone may name any owner, anyone can make Scout run a task for someone else's wallet. That spends only
+ * what that wallet's owner allowed Scout to spend, on what the owner allowed, and it is test money; it is the price
+ * of a demo with no sign-up. Everything that costs this server something is rate limited.
  */
 
-const FAUCET_AMOUNT = '100';
-const FAUCET_CEILING = '1000';
-const MAX_BODY_BYTES = 4_096;
-
-interface Session {
-  owner: string;
-  wallet: string;
-  indexer: RunningIndexer;
-  submitter: { server: Server; url: string };
-  agent: DemoAgent;
+export interface Limits {
+  /** Whole units the faucet sends at a time, and the wallet balance at which it stops. */
+  faucetAmount: string;
+  faucetCeiling: string;
+  /** Faucet payments one client address may ask for in an hour, and all clients together in a day. */
+  faucetPerClientPerHour: number;
+  faucetPerDay: number;
+  /** Tasks one client address may start in a minute, and tasks running at the same moment. */
+  tasksPerClientPerMinute: number;
+  tasksAtOnce: number;
+  /** Requests to the sellers one client address may make in a minute. */
+  marketPerClientPerMinute: number;
+  /** Every other request, per client address and minute. */
+  requestsPerClientPerMinute: number;
 }
+
+export const DEFAULT_LIMITS: Limits = {
+  faucetAmount: '100', faucetCeiling: '200', faucetPerClientPerHour: 6, faucetPerDay: 400,
+  tasksPerClientPerMinute: 12, tasksAtOnce: 6, marketPerClientPerMinute: 60, requestsPerClientPerMinute: 600,
+};
 
 class Rejected extends Error {
   constructor(readonly status: number, message: string) {
@@ -56,45 +71,71 @@ class Rejected extends Error {
 
 export interface BackendOptions {
   deployment: Deployment;
-  /** Where per-wallet state goes: the indexer's database and the sponsor's journal. */
+  /** Where state goes: the indexer's database and the facilitator's journal. */
   directory: string;
   /** The built web app, served at `/` when present. */
   webRoot?: string;
   /** Origins a browser may call from, besides this server's own: the Vite dev server. */
   allowedOrigins?: readonly string[];
+  /**
+   * The address visitors use, such as `https://scout.example`, when the server is reached through a proxy. Requests
+   * for that host are then accepted, and the client's address is read from the proxy's headers.
+   */
+  publicUrl?: string;
+  limits?: Partial<Limits>;
   env: Record<string, string | undefined>;
 }
 
 const CONTENT_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml', '.json': 'application/json', '.map': 'application/json', '.ico': 'image/x-icon',
+  '.png': 'image/png', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8',
 };
+const MAX_BODY_BYTES = 4_096;
+const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+
+/** Counts events per key in a fixed window. Memory is bounded: a full table is cleared, which only loosens it. */
+export function rateLimiter(max: number, windowMs: number, now: () => number = Date.now) {
+  const seen = new Map<string, { start: number; count: number }>();
+  return (key: string): boolean => {
+    const at = now();
+    const entry = seen.get(key);
+    if (!entry || at - entry.start >= windowMs) {
+      if (seen.size >= 50_000) seen.clear();
+      seen.set(key, { start: at, count: 1 });
+      return true;
+    }
+    entry.count += 1;
+    return entry.count <= max;
+  };
+}
 
 export async function createBackend(options: BackendOptions) {
   const { deployment } = options;
+  const limits: Limits = { ...DEFAULT_LIMITS, ...options.limits };
   const server = new rpc.Server(deployment.rpc_url, { allowHttp: deployment.network === 'local', timeout: 30_000 });
   const context: NetworkContext = await networkContext(server, deployment.passphrase);
+  const keyDirectory = deployment.key_directory ?? options.env['STELLAR_AGENT_AUTH_KEY_DIR'];
   const keyEnv = {
     ...options.env, STELLAR_NETWORK: deployment.network, STELLAR_RPC_URL: deployment.rpc_url,
     STELLAR_NETWORK_PASSPHRASE: undefined, STELLAR_NETWORK_ID: undefined,
-    STELLAR_AGENT_AUTH_KEY_DIR: deployment.key_directory,
+    ...(keyDirectory ? { STELLAR_AGENT_AUTH_KEY_DIR: keyDirectory } : {}),
   };
-  const agentKey: Signer = await loadKey('agent', keyEnv);
-  const funder: Signer = await loadKey('funder', keyEnv);
-  if (agentKey.address !== deployment.agent.signer || funder.address !== deployment.roles.funder) {
-    throw new Error('The keys in the key directory are not the ones this deployment names');
+  // Key references, not keys: a name in the key directory, or `env:NAME` where secrets are given as environment.
+  const reference = (role: string) => options.env[`DEMO_${role.toUpperCase()}_KEY`] || role;
+  const agentKey: Signer = await loadKey(reference('agent'), keyEnv);
+  const funder: Signer = await loadKey(reference('funder'), keyEnv);
+  const facilitatorKey = await loadKeypair(reference('facilitator'), keyEnv);
+  if (agentKey.address !== deployment.agent.signer || funder.address !== deployment.roles.funder
+    || facilitatorKey.publicKey() !== deployment.roles.facilitator) {
+    throw new Error('The agent, funder or facilitator key is not the one this deployment names');
   }
   const journal = new MemoryJournal();
 
-  // A paid API, protected by x402. It is part of this server for convenience and stands for someone else's service:
-  // it knows nothing of the session, asks for payment like any x402 resource, and checks the paying agent itself.
+  // The sellers. The published x402 code knows Testnet and mainnet only, and refuses a payer that publishes its own
+  // events. On those networks it is used with that one allowance; on a local network this project's facilitator
+  // does the same job.
   const network = x402Network(deployment.passphrase);
-  const facilitatorKey = await loadKeypair('facilitator', keyEnv);
-  if (facilitatorKey.publicKey() !== deployment.roles.facilitator) {
-    throw new Error('The facilitator key is not the one this deployment names');
-  }
-  // The published x402 code knows Testnet and mainnet only, and refuses a payer that publishes its own events. On
-  // those networks it is used with that one allowance; on a local network this project's facilitator does the same job.
   const facilitator = deployment.network === 'local'
     ? new StellarExactFacilitator({
       context, signer: keypairSigner(facilitatorKey),
@@ -105,40 +146,49 @@ export async function createBackend(options: BackendOptions) {
     server, networkPassphrase: deployment.passphrase, walletCode: [deployment.wallet_wasm_hash],
     agentRegistry: deployment.agent_registry, verificationRegistry: deployment.verification_registry,
     provider: deployment.provider.address,
-    requirement: { required_checks: ['Metadata', 'SignerAccount'], max_age: 30n * 86_400n, max_risk_score: 10 },
+    requirement: { required_checks: [], max_age: 30n * 86_400n, max_risk_score: 10 },
   };
-  const price = { asset: deployment.asset.contract, amount: toContractUnits(deployment.service.price, deployment.asset.decimals).toString() };
-  const report = async (payer: string | undefined) => {
-    const ledger = await server.getLatestLedger();
-    return { report: `Ledger ${ledger.sequence} is the latest on ${deployment.network}`, ledger: ledger.sequence, paid_by: payer ?? null };
-  };
-  const paid = await createPaidService(network, inProcessFacilitator(network, facilitator), [
-    { path: PAID_REPORT, description: 'The latest ledger, for agents with a verified identity', price,
-      payTo: deployment.roles.recipient, gate: payeeGate(terms), handler: report },
-    // The same thing from a stricter seller: it wants a code check, which the limited verifier does not perform.
-    { path: PAID_STRICT, description: 'The latest ledger, for agents whose code was checked', price,
-      payTo: deployment.roles.recipient,
-      gate: payeeGate({ ...terms, requirement: { ...terms.requirement, required_checks: ['Code', 'Metadata', 'SignerAccount'] } }),
-      handler: report },
-  ]);
-  let paidApiUrl: string | undefined;
-  const salt = hexToBytes(deployment.wallet_salt);
-  let session: Session | undefined;
-  /** Sessions and faucet payments are handled one at a time. */
-  let queue: Promise<unknown> = Promise.resolve();
-  const serial = <T>(work: () => Promise<T>): Promise<T> => {
-    const next = queue.then(work, work);
-    queue = next.catch(() => undefined);
-    return next;
-  };
+  const networkName = deployment.network === 'testnet' ? 'Stellar Testnet' : 'local Stellar';
+  const market = await createPaidService(network, inProcessFacilitator(network, facilitator), PRODUCTS.map((product) => {
+    const vendor = vendorOf(product.vendor);
+    return {
+      path: product.path, description: `${product.title}, from ${vendor.name}`,
+      price: { asset: deployment.asset.contract, amount: toContractUnits(product.price, deployment.asset.decimals).toString() },
+      payTo: deployment.vendors[product.vendor],
+      gate: payeeGate({ ...terms, requirement: { ...terms.requirement, required_checks: [...vendor.requires] } }),
+      handler: () => produce(product, server, networkName),
+    };
+  }));
 
+  // One indexer for every wallet that runs this deployment's wallet code.
+  const indexerToken = randomBytes(32).toString('hex');
+  const indexer = await startIndexer({
+    ...keyEnv, WALLET_ID: undefined, INDEXER_WALLETS: undefined, INDEXER_WALLET_CODE: deployment.wallet_wasm_hash,
+    AGENT_REGISTRY_ID: deployment.agent_registry, VERIFICATION_REGISTRY_ID: deployment.verification_registry,
+    INDEXER_CONTRACTS: undefined, INDEXER_START_LEDGER: String(deployment.start_ledger),
+    INDEXER_DATABASE_PATH: join(options.directory, 'history.sqlite'), INDEXER_HOST: '127.0.0.1', INDEXER_PORT: '0',
+    INDEXER_POLL_SECONDS: options.env['DEMO_INDEXER_POLL_SECONDS'] || '5', INDEXER_TOKEN_FILE: undefined,
+    DEPLOYMENT_EPOCH: deployment.epoch,
+  }, { token: indexerToken });
+
+  let marketUrl: string | undefined;
+  const agent = new ScoutAgent(deployment, context, server, agentKey, () => {
+    if (!marketUrl) throw new Error('The demo server has not been told its own address');
+    return marketUrl;
+  });
+
+  const salt = hexToBytes(deployment.wallet_salt);
   const walletOf = (owner: string) => deployedAddress(deployment.passphrase, owner, salt);
   const read = (wallet: string) => ({
     server, contractId: wallet, source: agentKey.address, networkPassphrase: deployment.passphrase,
   });
 
+  /** Owners whose wallet is known to exist and to be bound to this deployment. A wallet cannot stop being either. */
+  const confirmed = new Map<string, string>();
+
   /** True once the owner's wallet exists and is bound to this deployment's registries. */
   async function deployed(owner: string, wallet: string) {
+    if (confirmed.get(owner) === wallet) return true;
     let actualOwner: string;
     try {
       actualOwner = await readWalletOwner(read(wallet));
@@ -150,99 +200,76 @@ export async function createBackend(options: BackendOptions) {
       || registries.verification_registry !== deployment.verification_registry) {
       throw new Rejected(409, 'The contract at the wallet address is not this owner\'s wallet for this deployment');
     }
+    if (confirmed.size >= 20_000) confirmed.clear();
+    confirmed.set(owner, wallet);
     return true;
   }
 
-  async function stopSession() {
-    const current = session;
-    session = undefined;
-    if (!current) return;
-    await current.indexer.stop();
-    await new Promise<void>((resolve) => current.submitter.server.close(() => resolve()));
-  }
-
-  async function startSession(owner: string, wallet: string): Promise<Session> {
-    const state = join(options.directory, wallet);
-    const submitter = await startSubmitter({
-      ...keyEnv, SUBMITTER_SPONSOR_KEY: 'sponsor',
-      SUBMITTER_CONTRACTS: [wallet, deployment.asset.contract, deployment.service.contract].join(','),
-      SUBMITTER_METHODS: 'execute,transfer,pay_for_service', SUBMITTER_HOST: '127.0.0.1', SUBMITTER_PORT: '0',
-      SUBMITTER_STATE_DIR: join(state, 'submitter'), SUBMITTER_TOKEN_FILE: undefined,
-    });
-    let indexer: RunningIndexer;
-    try {
-      if (submitter.sponsor !== deployment.roles.sponsor) throw new Error('The sponsor key is not the deployment\'s sponsor');
-      indexer = await startIndexer({
-        ...keyEnv, WALLET_ID: wallet, INDEXER_WALLETS: undefined, AGENT_REGISTRY_ID: deployment.agent_registry,
-        VERIFICATION_REGISTRY_ID: deployment.verification_registry, INDEXER_CONTRACTS: deployment.service.contract,
-        INDEXER_START_LEDGER: String(deployment.start_ledger), INDEXER_DATABASE_PATH: join(state, 'history.sqlite'),
-        INDEXER_HOST: '127.0.0.1', INDEXER_PORT: '0', INDEXER_POLL_SECONDS: '2', INDEXER_TOKEN_FILE: undefined,
-        DEPLOYMENT_EPOCH: `${deployment.epoch}-${wallet.slice(0, 8)}`,
-      });
-    } catch (error) {
-      // Do not leave a sponsor listening for a session that never started.
-      await new Promise<void>((resolve) => submitter.server.close(() => resolve()));
-      throw error;
+  async function walletFor(owner: unknown): Promise<string> {
+    if (typeof owner !== 'string' || !StrKey.isValidEd25519PublicKey(owner)) {
+      throw new Rejected(400, 'Expected { owner } with a G... account address');
     }
-    const report = async (attempt: Record<string, unknown>) => {
-      // An attempt is a note for the history view. Failing to record one must not turn a refusal into an error.
-      await fetch(new URL(`v1/wallets/${wallet}/attempts`, indexer.url), {
-        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(attempt),
-      }).catch((error: unknown) => console.error('demo: could not record an attempt:', error));
-    };
-    const agent = new DemoAgent(deployment, context, server, agentKey,
-      httpSponsor(submitter.url, submitter.sponsor), journal, report, () => {
-        if (!paidApiUrl) throw new Error('The demo server has not been told its own address');
-        return paidApiUrl;
-      });
-    return { owner, wallet, indexer, submitter, agent };
-  }
-
-  /** The session for `owner`, started if its wallet exists. A different owner replaces the previous session. */
-  const openSession = (owner: string) => serial(async () => {
     const wallet = walletOf(owner);
-    if (session?.owner === owner) return { wallet, deployed: true, indexer_url: session.indexer.url };
-    if (!(await deployed(owner, wallet))) return { wallet, deployed: false, indexer_url: null };
-    await stopSession();
-    session = await startSession(owner, wallet);
-    return { wallet, deployed: true, indexer_url: session.indexer.url };
-  });
-
-  function current(): Session {
-    if (!session) throw new Rejected(409, 'No wallet is being followed yet; connect an owner and create the wallet first');
-    return session;
+    if (!(await deployed(owner, wallet))) throw new Rejected(409, 'This owner has no wallet yet; create it first');
+    return wallet;
   }
 
-  const fund = () => serial(async () => {
-    const { wallet, indexer } = current();
-    const balance = await readWalletBalance(read(wallet), deployment.asset.contract);
-    if (balance >= toContractUnits(FAUCET_CEILING, deployment.asset.decimals)) {
-      throw new Rejected(409, `The wallet already holds ${fromContractUnits(balance, deployment.asset.decimals)} ${deployment.asset.code}`);
-    }
-    const args = {
-      from: funder.address, asset: deployment.asset.contract, amount: toContractUnits(FAUCET_AMOUNT, deployment.asset.decimals),
+  // The funder is one account: its payments are made one at a time.
+  let faucetQueue: Promise<unknown> = Promise.resolve();
+  const faucetToday = rateLimiter(limits.faucetPerDay, 86_400_000);
+  const fund = (wallet: string) => {
+    const work = async () => {
+      const balance = await readWalletBalance(read(wallet), deployment.asset.contract);
+      if (balance >= toContractUnits(limits.faucetCeiling, deployment.asset.decimals)) {
+        throw new Rejected(409, `The wallet already holds ${fromContractUnits(balance, deployment.asset.decimals)} ${deployment.asset.code}`);
+      }
+      if (!faucetToday('all')) throw new Rejected(429, 'The faucet has given out all it gives in a day; try again tomorrow');
+      const args = {
+        from: funder.address, asset: deployment.asset.contract,
+        amount: toContractUnits(limits.faucetAmount, deployment.asset.decimals),
+      };
+      const outcome = await invoke(context, funder, fundInvocation(context, wallet, args, funder), journal,
+        { limits: pipelineLimits({ maxFee: 10_000_000n }) });
+      await indexer.cycle().catch(() => undefined);
+      return { status: outcome.status, tx_hash: outcome.hash, amount: limits.faucetAmount, asset: deployment.asset.code };
     };
-    const outcome = await invoke(context, funder, fundInvocation(context, wallet, args, funder), journal,
-      { limits: pipelineLimits({ maxFee: 10_000_000n }) });
-    await indexer.cycle().catch(() => undefined);
-    return { status: outcome.status, tx_hash: outcome.hash, amount: FAUCET_AMOUNT, asset: deployment.asset.code };
-  });
+    const next = faucetQueue.then(work, work);
+    faucetQueue = next.catch(() => undefined);
+    return next;
+  };
 
-  async function pay(body: Record<string, unknown>) {
-    const { wallet, agent, indexer } = current();
-    const scenario = body['scenario'];
+  /** Wallets Scout is working for right now. One task per wallet at a time: its payments are ordered. */
+  const working = new Set<string>();
+
+  async function runTask(wallet: string, body: Record<string, unknown>) {
+    const task = body['task'];
     const policy = body['policy_hash'];
-    if (typeof scenario !== 'string' || typeof policy !== 'string' || !/^[0-9a-f]{64}$/.test(policy)) {
-      throw new Rejected(400, 'Expected { scenario, policy_hash } with a 64-character hex policy hash');
+    if (typeof task !== 'string' || typeof policy !== 'string' || !/^[0-9a-f]{64}$/.test(policy)) {
+      throw new Rejected(400, 'Expected { owner, task, policy_hash } with a 64-character hex policy hash');
     }
+    if (!TASKS.some(({ id }) => id === task)) throw new Rejected(400, `Unknown task ${task}`);
+    if (working.has(wallet)) throw new Rejected(409, 'Scout is still on an earlier task for this wallet');
+    if (working.size >= limits.tasksAtOnce) throw new Rejected(503, 'Scout is busy with other visitors; try again in a moment');
+    working.add(wallet);
     try {
-      const result = await agent.run(scenario, wallet, hexToBytes(policy));
+      const report: Parameters<ScoutAgent['run']>[3] = async (attempt) => {
+        // An attempt is a note for the activity list. Failing to record one must not turn a refusal into an error.
+        await fetch(new URL(`v1/wallets/${wallet}/attempts`, indexer.url), {
+          method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${indexerToken}` },
+          body: JSON.stringify({ ...attempt, tx_hash: null }),
+        }).then((response) => {
+          if (!response.ok) console.error(`demo: the indexer answered ${response.status} to an attempt`);
+        }, (error: unknown) => console.error('demo: could not record an attempt:', error));
+      };
+      const result = await agent.run(task, wallet, hexToBytes(policy), report);
       // Bring the history up to date before answering, so the page that asked sees what just happened.
       await indexer.cycle().catch(() => undefined);
       return result;
     } catch (error) {
-      if (error instanceof UnknownScenario) throw new Rejected(400, error.message);
+      if (error instanceof UnknownTask) throw new Rejected(400, error.message);
       throw error;
+    } finally {
+      working.delete(wallet);
     }
   }
 
@@ -250,14 +277,33 @@ export async function createBackend(options: BackendOptions) {
     network: deployment.network, rpc_url: deployment.rpc_url, passphrase: deployment.passphrase,
     agent_registry: deployment.agent_registry, verification_registry: deployment.verification_registry,
     asset: deployment.asset, wallet_wasm_hash: deployment.wallet_wasm_hash, wallet_salt: deployment.wallet_salt,
-    agent: deployment.agent, provider: deployment.provider, service: deployment.service,
-    roles: { recipient: deployment.roles.recipient, stranger: deployment.roles.stranger, sponsor: deployment.roles.sponsor },
-    scenarios: SCENARIOS, faucet_amount: FAUCET_AMOUNT,
+    agent: deployment.agent, provider: deployment.provider,
+    vendors: VENDORS.map((vendor) => ({ ...vendor, address: deployment.vendors[vendor.id] })),
+    products: PRODUCTS.map(({ id, vendor, kind, title, price }) => ({ id, vendor, kind, title, price })),
+    tasks: TASKS, faucet_amount: limits.faucetAmount, indexer_path: '/indexer/',
+    // Reads are simulations and need the name of an account that exists; this one always does.
+    read_source: deployment.roles.facilitator,
     explorer: deployment.network === 'testnet' ? 'https://stellar.expert/explorer/testnet' : null,
   });
 
+  // ---- HTTP ----
+
+  const publicUrl = options.publicUrl ? new URL(options.publicUrl) : undefined;
+  const rpcOrigin = new URL(deployment.rpc_url).origin;
+  const SECURITY_HEADERS = {
+    'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'x-frame-options': 'DENY',
+    ...(publicUrl?.protocol === 'https:' ? { 'strict-transport-security': 'max-age=31536000' } : {}),
+  };
+  // The page runs only its own scripts. It talks to this server, to the network's RPC and Friendbot, and to
+  // whatever a browser wallet needs; wallets that sign in a window of their own are framed or opened by address.
+  const CONTENT_POLICY = [
+    'default-src \'self\'', 'script-src \'self\'', 'style-src \'self\' \'unsafe-inline\'', 'img-src \'self\' data: https:',
+    'font-src \'self\' data:', `connect-src 'self' ${rpcOrigin} https: wss:`, 'frame-src https:', 'object-src \'none\'',
+    'base-uri \'self\'', 'form-action \'self\'', 'frame-ancestors \'none\'',
+  ].join('; ');
+
   const json = (response: ServerResponse, status: number, body: unknown) => {
-    response.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    response.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store', ...SECURITY_HEADERS });
     response.end(JSON.stringify(body));
   };
 
@@ -283,14 +329,34 @@ export async function createBackend(options: BackendOptions) {
     return body as Record<string, unknown>;
   }
 
+  const header = (request: IncomingMessage, name: string) => {
+    const value = request.headers[name];
+    return Array.isArray(value) ? value[0] : value;
+  };
+
+  /**
+   * Who is asking, for rate limits. Behind a proxy that is what the proxy says; the proxy's own address would make
+   * every visitor one client. Proxy headers are believed only when a public address is configured.
+   */
+  function clientOf(request: IncomingMessage): string {
+    const socket = request.socket.remoteAddress ?? 'unknown';
+    if (!publicUrl) return socket;
+    return header(request, 'fly-client-ip') ?? header(request, 'x-forwarded-for')?.split(',')[0]?.trim() ?? socket;
+  }
+
+  /** The server's own calls to its sellers arrive from loopback with no proxy header; they are Scout's, not a visitor's. */
+  const internal = (request: IncomingMessage) => LOOPBACK.has(request.socket.remoteAddress ?? '')
+    && header(request, 'fly-client-ip') === undefined && header(request, 'x-forwarded-for') === undefined;
+
   function checkOrigin(request: IncomingMessage) {
-    // The server is reached by a loopback name only. A page that points its own domain at 127.0.0.1 arrives with
-    // that domain as the host, and is refused here.
-    const host = request.headers['host'] ?? '';
-    if (!/^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/.test(host)) throw new Rejected(403, 'Host not allowed');
-    const origin = request.headers['origin'];
+    // The server is reached by a loopback name or by its public name. A page that points its own domain at this
+    // server arrives with that domain as the host, and is refused here.
+    const host = header(request, 'host') ?? '';
+    const loopback = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/.test(host);
+    if (!loopback && host !== publicUrl?.host) throw new Rejected(403, 'Host not allowed');
+    const origin = header(request, 'origin');
     if (origin === undefined) return;
-    const own = `http://${host}`;
+    const own = loopback ? `http://${host}` : publicUrl!.origin;
     if (origin !== own && !(options.allowedOrigins ?? []).includes(origin)) throw new Rejected(403, 'Origin not allowed');
   }
 
@@ -307,37 +373,75 @@ export async function createBackend(options: BackendOptions) {
     if (file !== options.webRoot && !file.startsWith(options.webRoot + sep)) return false;
     const info = await stat(file).catch(() => undefined);
     if (!info?.isFile()) return false;
+    const html = extname(file) === '.html';
     response.writeHead(200, {
-      'content-type': CONTENT_TYPES[extname(file)] ?? 'application/octet-stream', 'cache-control': 'no-store',
+      'content-type': CONTENT_TYPES[extname(file)] ?? 'application/octet-stream',
+      // Built assets carry a hash of their content in their name; the page itself is always fetched fresh.
+      'cache-control': relative.startsWith(`assets${sep}`) ? 'public, max-age=31536000, immutable' : 'no-store',
+      ...SECURITY_HEADERS, ...(html ? { 'content-security-policy': CONTENT_POLICY } : {}),
     });
     createReadStream(file).pipe(response);
     return true;
   }
 
+  /** The indexer's read routes, passed through. It has no keys and no authority; the page checks what it returns. */
+  async function passToIndexer(url: URL, response: ServerResponse) {
+    const path = url.pathname.slice('/indexer'.length);
+    if (path !== '/v1/health' && !/^\/v1\/wallets\/[A-Z0-9]{56}\/(history|attempts)$/.test(path)) return false;
+    const answer = await fetch(new URL(`${path.slice(1)}${url.search}`, indexer.url));
+    response.writeHead(answer.status, { 'content-type': 'application/json', 'cache-control': 'no-store', ...SECURITY_HEADERS });
+    response.end(await answer.text());
+    return true;
+  }
+
+  const allow = {
+    any: rateLimiter(limits.requestsPerClientPerMinute, 60_000),
+    market: rateLimiter(limits.marketPerClientPerMinute, 60_000),
+    tasks: rateLimiter(limits.tasksPerClientPerMinute, 60_000),
+    faucet: rateLimiter(limits.faucetPerClientPerHour, 3_600_000),
+  };
+  const limited = (bucket: keyof typeof allow, client: string) => {
+    if (!allow[bucket](client)) throw new Rejected(429, 'Too many requests; wait a little and try again');
+  };
+
   async function handler(request: IncomingMessage, response: ServerResponse) {
     try {
       const url = new URL(request.url ?? '/', 'http://demo.invalid');
-      // The paid API takes no session and no origin check: whoever pays, through x402, is served.
+      const client = clientOf(request);
+      // For the host's health check, which does not come by the public name.
+      if (request.method === 'GET' && url.pathname === '/healthz') {
+        return json(response, 200, { status: indexer.state.ingestionError ? 'degraded' : 'ok' });
+      }
+      // The sellers take no owner and no origin check: whoever pays, through x402, is served.
       if (url.pathname.startsWith('/x402/')) {
-        if (await paid.handle(request, response)) return undefined;
+        if (!internal(request)) limited('market', client);
+        if (await market.handle(request, response)) return undefined;
         return json(response, 404, { error: 'Not found' });
       }
-      if (url.pathname.startsWith('/v1/')) {
+      limited('any', client);
+      if (url.pathname.startsWith('/v1/') || url.pathname.startsWith('/indexer/')) {
         checkOrigin(request);
+        if (request.method === 'GET' && url.pathname.startsWith('/indexer/') && await passToIndexer(url, response)) return undefined;
         if (request.method === 'GET' && url.pathname === '/v1/config') return json(response, 200, config());
         if (request.method === 'POST' && url.pathname === '/v1/session') {
           const { owner } = await readBody(request);
           if (typeof owner !== 'string' || !StrKey.isValidEd25519PublicKey(owner)) {
             throw new Rejected(400, 'Expected { owner } with a G... account address');
           }
-          return json(response, 200, await openSession(owner));
+          const wallet = walletOf(owner);
+          return json(response, 200, { wallet, deployed: await deployed(owner, wallet) });
         }
         if (request.method === 'POST' && url.pathname === '/v1/fund') {
-          await readBody(request);
-          return json(response, 200, await fund());
+          const body = await readBody(request);
+          const wallet = await walletFor(body['owner']);
+          limited('faucet', client);
+          return json(response, 200, await fund(wallet));
         }
-        if (request.method === 'POST' && url.pathname === '/v1/payments') {
-          return json(response, 200, await pay(await readBody(request)));
+        if (request.method === 'POST' && url.pathname === '/v1/tasks') {
+          const body = await readBody(request);
+          const wallet = await walletFor(body['owner']);
+          limited('tasks', client);
+          return json(response, 200, await runTask(wallet, body));
         }
         return json(response, 404, { error: 'Not found' });
       }
@@ -346,15 +450,17 @@ export async function createBackend(options: BackendOptions) {
     } catch (error) {
       if (error instanceof Rejected) return json(response, error.status, { error: error.message });
       console.error('demo:', error);
-      return json(response, 500, { error: error instanceof Error ? error.message : 'Internal error' });
+      // What went wrong inside is for the log, not for whoever asked.
+      return json(response, 500, { error: publicUrl ? 'Something went wrong on the demo server' : error instanceof Error ? error.message : 'Internal error' });
     }
   }
 
   return {
-    handler, stop: () => serial(stopSession), walletOf,
-    /** Tell the server where it is reachable, once it listens; the agent buys from the paid API at this address. */
+    handler, walletOf, indexer,
+    stop: () => indexer.stop(),
+    /** Tell the server where it is reachable, once it listens; Scout buys from the sellers at this address. */
     listening(url: string) {
-      paidApiUrl = url;
+      marketUrl = url;
     },
   };
 }

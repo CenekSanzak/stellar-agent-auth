@@ -138,7 +138,7 @@ export interface RunningIndexer {
   url: string;
   store: HistoryStore;
   state: IndexerState;
-  /** Run one ingestion and verification pass now. */
+  /** Run one ingestion and verification pass now, after any pass already under way. */
   cycle(): Promise<Cycle>;
   stop(): Promise<void>;
 }
@@ -179,9 +179,15 @@ export async function startIndexer(
     store.close();
     throw error;
   }
+  // Passes run one at a time, whoever asks for them: the timer, or a caller that wants the store current now.
   let running: Promise<unknown> = Promise.resolve();
+  const next = () => {
+    const pass = running.then(cycle);
+    running = pass.catch(() => undefined);
+    return pass;
+  };
   const timer = options.poll === false ? undefined : setInterval(() => {
-    running = running.then(() => cycle()).catch((error: unknown) => console.error('indexer: pass failed:', error));
+    next().catch((error: unknown) => console.error('indexer: pass failed:', error));
   }, config.pollSeconds * 1_000);
   timer?.unref();
 
@@ -189,7 +195,7 @@ export async function startIndexer(
   const port = typeof address === 'object' && address ? address.port : config.port;
   const host = config.host.includes(':') ? `[${config.host}]` : config.host;
   return {
-    server: http, url: `http://${host}:${port}/`, store, state, cycle,
+    server: http, url: `http://${host}:${port}/`, store, state, cycle: next,
     async stop() {
       if (timer) clearInterval(timer);
       await running;
