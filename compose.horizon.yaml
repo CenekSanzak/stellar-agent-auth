@@ -1,0 +1,7 @@
+# Adds Horizon to the local network: docker compose -f compose.yaml -f compose.horizon.yaml up -d
+#
+# The tests need only the RPC. A browser wallet such as Freighter also needs a Horizon address before it accepts a
+# custom network, so use this when trying the demo with one. It starts more slowly than the default.
+services:
+  stellar:
+    command: ["--local", "--protocol-version", "29", "--limits", "testnet", "--enable", "core,horizon,rpc"]

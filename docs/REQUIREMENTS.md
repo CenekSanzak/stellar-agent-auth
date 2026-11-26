@@ -117,7 +117,7 @@ The [Phase 6 validation record](P6_VALIDATION.md) covers the indexer, its audit 
 The [Phase 7 validation record](P7_VALIDATION.md) covers the owner demo: its server, its page and its browser test. Decisions are in [ADR 0010](decisions/0010-owner-demo.md).
 
 - A28: the browser smoke test is met on the local network. A real Chrome connects an owner, creates and funds the wallet, approves a policy, and sees one payment made and payments over the limit, to an unknown recipient, while paused and after revocation refused, then a verified history. With P5's clean-checkout import and CLI example, A28 is met locally.
-- Signing through Freighter is not covered by a test; the browser test uses the page's local demo key.
+- Signing through Freighter is not covered by a test; the browser test uses the page's local demo key. It was tried by hand on the local network on 2026-11-26.
 
 ## P9 evidence
 
