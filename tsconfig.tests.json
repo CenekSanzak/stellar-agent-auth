@@ -27,6 +27,9 @@
       ],
       "@stellar-agent-auth/indexer": [
         "./services/indexer/src/index.ts"
+      ],
+      "@stellar-agent-auth/x402": [
+        "./packages/x402/src/index.ts"
       ]
     },
     "skipLibCheck": true

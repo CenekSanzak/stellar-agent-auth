@@ -1,0 +1,30 @@
+{
+  "name": "@stellar-agent-auth/x402",
+  "version": "0.0.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "description": "x402 payments from a policy-limited smart wallet: a client scheme, facilitators and a payee-side gate.",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@stellar-agent-auth/sdk": "0.0.0",
+    "@stellar/stellar-sdk": "17.4.0",
+    "@x402/core": "2.32.0",
+    "@x402/stellar": "2.32.0"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ]
+}

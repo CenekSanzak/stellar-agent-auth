@@ -9,8 +9,8 @@
     "apps/*"
   ],
   "scripts": {
-    "build": "npm run build -w @stellar-agent-auth/sdk --silent && npm run build -w @stellar-agent-auth/verifier --silent && npm run build -w @stellar-agent-auth/submitter --silent && npm run build -w @stellar-agent-auth/cli --silent && npm run build -w @stellar-agent-auth/indexer --silent && npm run build -w @stellar-agent-auth/demo --silent",
-    "typecheck": "npm run build -w @stellar-agent-auth/sdk --silent && npm run build -w @stellar-agent-auth/verifier --silent && npm run build -w @stellar-agent-auth/submitter --silent && npm run build -w @stellar-agent-auth/indexer --silent && npm run typecheck --workspaces && tsc -p tsconfig.tests.json --noEmit",
+    "build": "npm run build -w @stellar-agent-auth/sdk --silent && npm run build -w @stellar-agent-auth/verifier --silent && npm run build -w @stellar-agent-auth/submitter --silent && npm run build -w @stellar-agent-auth/cli --silent && npm run build -w @stellar-agent-auth/indexer --silent && npm run build -w @stellar-agent-auth/x402 --silent && npm run build -w @stellar-agent-auth/demo --silent",
+    "typecheck": "npm run build -w @stellar-agent-auth/sdk --silent && npm run build -w @stellar-agent-auth/verifier --silent && npm run build -w @stellar-agent-auth/submitter --silent && npm run build -w @stellar-agent-auth/indexer --silent && npm run build -w @stellar-agent-auth/x402 --silent && npm run typecheck --workspaces && tsc -p tsconfig.tests.json --noEmit",
     "check:rust": "cargo check --workspace --locked",
     "format:rust:check": "cargo fmt --all -- --check",
     "test": "npm run test:unit",
