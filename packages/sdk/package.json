@@ -1,6 +1,7 @@
 {
   "name": "@stellar-agent-auth/sdk",
   "version": "0.0.0",
+  "license": "Apache-2.0",
   "private": true,
   "type": "module",
   "description": "Client SDK for agent identities, verification, policy-controlled smart wallets and sponsored submission on Stellar.",
