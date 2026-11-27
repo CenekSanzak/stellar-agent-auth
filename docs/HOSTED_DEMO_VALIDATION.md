@@ -106,6 +106,8 @@ On the local network (`tests/integration/agent-mcp.test.ts`, 10 tests): the four
 
 Against the hosted demo on Testnet, run by hand on 2026-11-27 with Scout's key and a guest's wallet: `allowance` reported 10 per purchase, 20 per day and 8.5 spent; `sellers` listed the five products with their addresses; `price` for the digest answered 3 tUSD and that the wallet would pay; `buy` paid it ([`391a35e9…20dbd7af`](https://stellar.expert/explorer/testnet/tx/391a35e956c4c79b595d315effeffe23d8ca8cd2edcc280f1b74283820dbd7af)) and returned the digest; `buy` at Audited Sources was declined with `payee_gate_CheckNotPassed`; and `allowance` then reported 11.5 spent. The guest's page, open in a browser, showed the purchase as entry 10 of the wallet's record within seconds, verified against the wallet.
 
+With this package the whole run on 2026-11-27 was: `npm run check` passed with 537 unit tests; `npm run test:integration` passed with 93 tests in 15 files and 1 opt-in skipped; `npm run test:browser` passed with 10.
+
 No model took part. The machine this was built on has no agent harness with a command-line mode, so what a model does with these tools has not been observed.
 
 ## Not covered
