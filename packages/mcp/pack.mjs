@@ -10,7 +10,8 @@ await cp('../../LICENSE', 'dist/npm/LICENSE');
 await writeFile('dist/npm/package.json', `${JSON.stringify({
   name: 'stellar-agent-wallet', version, license: 'Apache-2.0', type: 'module',
   description: 'Lets an AI agent pay x402 resources from a policy-limited smart wallet on Stellar, as an MCP server.',
-  bin: { 'stellar-agent-wallet': './stellar-agent-wallet.mjs' },
+  // Written the way npm normalises it, so that publishing has nothing to correct.
+  bin: { 'stellar-agent-wallet': 'stellar-agent-wallet.mjs' },
   files: ['stellar-agent-wallet.mjs', 'README.md', 'LICENSE'], engines: { node: '>=20' },
   repository: { type: 'git', url: 'git+https://github.com/CenekSanzak/stellar-agent-auth.git', directory: 'packages/mcp' },
   keywords: ['stellar', 'soroban', 'mcp', 'x402', 'ai-agent', 'wallet'],
