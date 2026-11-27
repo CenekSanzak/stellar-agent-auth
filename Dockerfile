@@ -38,13 +38,11 @@ COPY --from=build /app/apps/demo/dist apps/demo/dist
 # Public addresses only. Keys are given as secrets when the container starts.
 COPY deployments/testnet/demo.json deployments/testnet/demo.json
 
+# Which keys to use is said by reference when the container starts (see fly.toml); none is in the image.
 ENV DEMO_HOST=0.0.0.0 \
     DEMO_PORT=8080 \
     DEMO_DEPLOYMENT=/app/deployments/testnet/demo.json \
-    DEMO_STATE_DIRECTORY=/data \
-    DEMO_AGENT_KEY=env:SCOUT_AGENT_SECRET \
-    DEMO_FUNDER_KEY=env:SCOUT_FUNDER_SECRET \
-    DEMO_FACILITATOR_KEY=env:SCOUT_FACILITATOR_SECRET
+    DEMO_STATE_DIRECTORY=/data
 RUN mkdir -p /data && chown node:node /data
 USER node
 EXPOSE 8080

@@ -10,6 +10,7 @@ Reviewed: 3 November 2026. Baseline: `c12bd39`. Revised: 25 November 2026.
 - P9 moves ahead of P6. The indexer, demo and final deployment are then built once, on the final contract interface.
 - P9, P6 and P7 were finished on 25 November, ahead of the revised schedule below; see their validation records.
 - On 26 November the owner chose to use some of the days gained for P9's stretch item: a real x402 client and a payee-side verification gate, in `packages/x402` and the demo ([ADR 0012](decisions/0012-x402-and-payee-gate.md)). P8 and the buffer keep their dates.
+- On 27 November the demo was rebuilt so that it can be hosted for reviewers, and its Testnet deployment was made ([ADR 0013](decisions/0013-hosted-demo.md)). What is left of P8 is the evidence package and the documentation.
 
 This is a proposed implementation plan, not an implementation or deployment report. The review changed no application code, made no commits, and performed no deployment. The existing untracked statement-of-work PDF was read without modification.
 
@@ -239,6 +240,8 @@ Dependencies: `P0 -> P1 -> P2/P3 -> P4 -> P5 -> P9 -> P6/P7 -> P8` (revised 25 N
 **Gate:** a developer follows the guide to run the demo; the owner approves one policy and stops agent access; the UI accurately reports confirmed and rejected outcomes without exposing signing secrets.
 
 *Built on 25 November 2026; see [ADR 0010](decisions/0010-owner-demo.md) and [P7 validation](P7_VALIDATION.md).* Four things differ from the text above. The owner creates the wallet in the page, since its constructor needs the owner's signature. The owner connects through Freighter directly, or on the local network through a key generated in the tab; a multi-wallet adapter was not added. The sponsor and the indexer run inside the demo server, because the wallet they serve does not exist until the owner creates it. And the verifier is not a demo process: the local setup publishes a labelled fixture result, and the real verifier runs for the Testnet deployment in P8.
+
+*Rebuilt on 27 November 2026 as a demo that can be hosted; see [ADR 0013](decisions/0013-hosted-demo.md) and [its validation record](HOSTED_DEMO_VALIDATION.md).* The owner asked for a demo link reviewers can open, and for a product-like scenario. The page is now Scout, a research agent on an allowance; every purchase is an x402 payment to one of four sellers; the server serves many visitors, each with their own wallet; a guest key and other wallets through Stellar Wallets Kit were added; and the setup runs on Testnet with the real verifier. The demo's Testnet deployment was made on the same day, ahead of the rest of P8.
 
 ### P8. Final Testnet release and evidence (days 24-27; days 28-30 reserved)
 

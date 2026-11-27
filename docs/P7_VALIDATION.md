@@ -1,5 +1,7 @@
 # P7 validation
 
+> The page and server described here were replaced on 2026-11-27 by the hosted demo; see [ADR 0013](decisions/0013-hosted-demo.md) and [its validation record](HOSTED_DEMO_VALIDATION.md). This record is kept as what was run for P7.
+
 P7 adds the owner demo: a page where an owner creates a wallet, approves a policy, watches the agent pay and be refused, and stops it, and the server behind that page. The decisions are in [ADR 0010](decisions/0010-owner-demo.md) and how to run it in the [demo README](../apps/demo/README.md). It has four parts:
 
 - a setup that deploys everything the demo needs except the owner's wallet (`apps/demo/server/setup.ts`);

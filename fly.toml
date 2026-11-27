@@ -9,6 +9,10 @@ primary_region = "fra"
 
 [env]
   DEMO_PUBLIC_URL = "https://scout-agent-demo.fly.dev"
+  # References to secrets, not secrets: each names the environment variable that `fly secrets set` fills.
+  DEMO_AGENT_KEY = "env:SCOUT_AGENT_SECRET"
+  DEMO_FUNDER_KEY = "env:SCOUT_FUNDER_SECRET"
+  DEMO_FACILITATOR_KEY = "env:SCOUT_FACILITATOR_SECRET"
 
 # The indexer's database. RPC servers keep only a window of recent events, so this file is the history.
 [mounts]

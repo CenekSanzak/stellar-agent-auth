@@ -1,0 +1,39 @@
+{
+  "network": "testnet",
+  "rpc_url": "https://soroban-testnet.stellar.org/",
+  "passphrase": "Test SDF Network ; September 2015",
+  "epoch": "demo-5950684",
+  "start_ledger": 5950684,
+  "agent_registry": "CDQXY7OPSHKQGEVCIJI6UITZPD7B7U2G7SJHK2TJNXTKSE4T5WBZLE63",
+  "verification_registry": "CDZDDHWQNZBZ7JCI5THJGU76ZTAXUOB3BXIXMVZJFKQP2ZPJ3SRTV6RS",
+  "asset": {
+    "contract": "CCCDL5N5Z7DCJH3WWJHW2JMIJQOKMOCTE5FA77IOW2EJMEYLTTIZB5GI",
+    "code": "tUSD",
+    "issuer": "GBPMOEWRIJURWRY53PPOVGNV56LHLVUFDTVFK2JJHI6V2IXMBODQNBLF",
+    "decimals": 7
+  },
+  "wallet_wasm_hash": "568ccc8e662a83f0011ee6c265681e8d887780336cce0173962a61a0625dd4b9",
+  "wallet_salt": "dea4dc954dfc52e6c0800b21e7cf8f500670f1eece693f75d92e7d9ad6438949",
+  "agent": {
+    "agent_id": "1",
+    "revision": "1",
+    "signer": "GDE5H7IXAKZAT2I4XBN4RBDGADBSPTVJQMMZ3U2UYAM4CICZXUVSNSQ7",
+    "controller": "GBCJ7QXPKJ4EYFU52WO7PXYGSN2T34FAWBEMDNCEF2BL3PLTLWD4BZFM",
+    "metadata_uri": "https://raw.githubusercontent.com/CenekSanzak/stellar-agent-auth/7373e45cdef6e6900f3ce15c8dd6a9aae39b4962/deployments/testnet/scout-metadata.json"
+  },
+  "provider": {
+    "address": "GBSJVKTMMTY52BQ7Q6MDRUPWSYA5GL74PS66RNVA4SRET6267RX33YHW",
+    "mode": "Live"
+  },
+  "vendors": {
+    "ledger-wire": "GDZY6JLHOTHW27536DYPC7PARNSF6FS5EATQWGBNR7RKPB5O6XSQ2SDI",
+    "deep-archive": "GD7CKIT6QWUNNAFZQJJF2CTSZKOYGCB66LS3RR6PV43WFX5CRLTOFDIS",
+    "audited-sources": "GBJSHFLOFTLPQPVD5GCMF6BBOGQW47443D2K6TNWGIDPAQDNCNMB33AU",
+    "bargain-data": "GBVKZFGEFPQ2GZ3TB5N7IYWDTVUA5VX6H275KFKXMJRBMVUTHLG4DZD6"
+  },
+  "roles": {
+    "funder": "GANP56VG6GBMZ34ABOSIHRKHENFE7HKNGXZJORUBDAZJYX5KGTOEGLL4",
+    "facilitator": "GAYO232SY7TUOXY67WCMOAT2EKSVCQDCTCW6U2WCLR7RVCX22H65ZP5E"
+  },
+  "created_at": "2026-11-27T10:59:45.429Z"
+}

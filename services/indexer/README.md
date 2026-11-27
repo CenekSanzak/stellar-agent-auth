@@ -28,6 +28,7 @@ stellar-agent-auth history --wallet C... --indexer http://127.0.0.1:8788/
 | --- | --- | --- |
 | `INDEXER_START_LEDGER` | required | First ledger to read. There is no default, because starting late silently drops the start of the history |
 | `INDEXER_WALLETS` | `WALLET_ID` | Comma-separated wallet contracts; their `audit_v1` events become audit entries |
+| `INDEXER_WALLET_CODE` | none | Comma-separated hex hashes of wallet code. Every contract that runs one of them is followed as a wallet, without being named. See "Following wallets by code" below |
 | `INDEXER_CONTRACTS` | none | More contracts to keep raw events for, such as a service. `AGENT_REGISTRY_ID` and `VERIFICATION_REGISTRY_ID` are added when set. At most 25 contracts in all |
 | `INDEXER_DATABASE_PATH` | `.local/history.sqlite` | The database file. Keep it on a persistent disk |
 | `DEPLOYMENT_EPOCH` | `<network>-p0` | Names the stream, as `<network>:<epoch>`. A new deployment needs a new epoch |
@@ -77,3 +78,17 @@ Without a token, only a loopback client may record. With `INDEXER_TOKEN_FILE`, r
 - **A gap does not always mean loss.** If every audit entry from the first to the head is stored, the wallet is `verified` whatever ledgers were skipped. The chain decides, not the gap.
 - **One process per file.** This is a single-instance service. Two processes on one file, or one stream fed from two places, is not supported.
 - **Unknown events are quarantined.** An event whose first topic is not a schema this version knows, or an `audit_v1` event that does not decode, is kept as a raw event and counted under `quarantined` in `/v1/health`. It is never guessed at.
+
+## Following wallets by code
+
+A deployment where each owner creates their own wallet cannot name its wallets in advance. With `INDEXER_WALLET_CODE` set, the indexer adds one filter that reads `audit_v1` events from the whole network. For each contract it has not seen, it reads the contract's code hash once; events of contracts that run the named code are kept, and all others are dropped without being stored. `INDEXER_WALLETS` may be left empty, and at most 20 other contracts can be named.
+
+In this mode:
+
+- `GET /v1/wallets/<wallet>/history` answers for any contract address. One that was never seen has an empty history.
+- Recording an attempt always needs the token. Being a local caller is not enough, since any wallet could be named.
+- A wallet's audit status is checked in the pass that brings it new entries, not in every pass. A reader verifies the chain against the wallet's head itself in any case; `readIndexedHistory` in the SDK does.
+- A failed code read stops the pass before its page is stored. The next pass reads the page again.
+
+Only a contract running known wallet code can be believed about its own history, which is why the code hash is the test and the event's shape is not.
+
