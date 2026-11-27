@@ -11,6 +11,7 @@ Reviewed: 3 November 2026. Baseline: `c12bd39`. Revised: 25 November 2026.
 - P9, P6 and P7 were finished on 25 November, ahead of the revised schedule below; see their validation records.
 - On 26 November the owner chose to use some of the days gained for P9's stretch item: a real x402 client and a payee-side verification gate, in `packages/x402` and the demo ([ADR 0012](decisions/0012-x402-and-payee-gate.md)). P8 and the buffer keep their dates.
 - On 27 November the demo was rebuilt so that it can be hosted for reviewers, and its Testnet deployment was made ([ADR 0013](decisions/0013-hosted-demo.md)). What is left of P8 is the evidence package and the documentation.
+- The demo was hosted the same day at <https://scout-agent-demo.fly.dev/>, and an MCP server was added so that a model in Claude Code or Codex can be the wallet's agent ([ADR 0014](decisions/0014-agent-over-mcp.md)).
 
 This is a proposed implementation plan, not an implementation or deployment report. The review changed no application code, made no commits, and performed no deployment. The existing untracked statement-of-work PDF was read without modification.
 

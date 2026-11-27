@@ -52,6 +52,10 @@ DEMO_DIRECTORY=.local/testnet-demo npm run demo:assess
 
 What happens is not scripted. Change the allowance and the outcomes change with it: allow 10 per purchase and the dataset is bought; tick Bargain Data and Scout buys the cheapest headlines there.
 
+## Let Claude Code or Codex be Scout
+
+Scout's tasks in the page are fixed code. A real model can take its place: [`packages/mcp`](../../packages/mcp/README.md) is an MCP server that gives an agent host four tools, `allowance`, `sellers`, `price` and `buy`, backed by the same wallet and the same sellers. Keep the page open while the model works; its purchases appear in the wallet's record as they happen. It needs Scout's key, so it runs where the deployment's keys are.
+
 ## The sellers
 
 Four sellers stand for other people's businesses. Each has its own account, its own price and its own rule about which agents it sells to. They are ordinary x402 resources under `/x402/`: they answer 402, are paid by whoever asks, and check the paying agent before they sell (see [ADR 0012](../../docs/decisions/0012-x402-and-payee-gate.md)). What they sell is read from the network when it is bought.
@@ -117,5 +121,5 @@ What it does not protect: anyone may name any owner, so anyone can have Scout ru
 
 - **A refusal on the ledger.** Scout asks the wallet before it signs, so a refused purchase is never sent. What the wallet does with a refused payment that is submitted anyway is covered by the contract and integration tests.
 - **The wallet's own `execute` call and a service that pulls its payment.** Every purchase here is an x402 payment on the account path. The other paths are in the [payment flow example](../../examples/payment-flow.ts) and the CLI.
-- **A real agent.** Scout's tasks are fixed code, not a model deciding what to buy. What is real is everything the tasks meet: the wallet, the allowance, the sellers and the network.
+- **A model, in the page.** Scout's tasks there are fixed code. What is real is everything the tasks meet: the wallet, the allowance, the sellers and the network. A model can be the agent from a terminal; see above.
 - **Wallets other than a guest key and Freighter, tested.** The other wallets go through Stellar Wallets Kit and need only transaction signing, which every wallet does; none of them was tried here by hand.

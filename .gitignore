@@ -9,3 +9,6 @@ coverage/
 
 .local/
 test_snapshots/
+
+# An agent host's local settings: they name a key file on this machine.
+.mcp.json

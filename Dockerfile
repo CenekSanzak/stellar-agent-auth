@@ -6,6 +6,7 @@ COPY package.json package-lock.json ./
 COPY packages/sdk/package.json packages/sdk/
 COPY packages/cli/package.json packages/cli/
 COPY packages/x402/package.json packages/x402/
+COPY packages/mcp/package.json packages/mcp/
 COPY services/submitter/package.json services/submitter/
 COPY services/verifier/package.json services/verifier/
 COPY services/indexer/package.json services/indexer/
@@ -24,6 +25,7 @@ COPY package.json package-lock.json ./
 COPY packages/sdk/package.json packages/sdk/
 COPY packages/cli/package.json packages/cli/
 COPY packages/x402/package.json packages/x402/
+COPY packages/mcp/package.json packages/mcp/
 COPY services/submitter/package.json services/submitter/
 COPY services/verifier/package.json services/verifier/
 COPY services/indexer/package.json services/indexer/
