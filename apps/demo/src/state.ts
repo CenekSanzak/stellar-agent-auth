@@ -60,15 +60,39 @@ export interface State {
   busy: string | null;
   /** A read that failed; shown, and retried on the next refresh. */
   readError: string | null;
-  /** What is unfolded on the page. Kept here because sections are redrawn. */
-  ui: {
-    record: boolean; details: boolean; withdraw: boolean; form: boolean; tables: number[];
-    /** The agent whose allowance form is asked for, if any. */
-    formAgent: string | null;
-    /** Set for a moment after the set-up prompt was copied. */
-    copied: boolean;
-  };
+  /** What the owner is looking at. Kept here because sections are redrawn. */
+  ui: Ui;
 }
+
+export type Tab = 'agents' | 'activity' | 'record' | 'sellers';
+
+/** The one window that can be open over the page. */
+export type Dialog =
+  | { kind: 'add' }
+  | { kind: 'connect' }
+  | { kind: 'allowance'; agent: string }
+  | { kind: 'withdraw' };
+
+export interface Ui {
+  tab: Tab;
+  dialog: Dialog | null;
+  /** The agent whose row is unfolded, if the owner chose one. */
+  openAgent: string | null;
+  /** Whether the owner asked to try the sample agent. Until then it is an option, not one of their agents. */
+  sample: boolean;
+  /** Set for a moment after the set-up prompt was copied. */
+  copied: boolean;
+  /** Tables of bought content that are shown in full. */
+  tables: number[];
+  /** Whether the addresses and exact rules are shown in the record. */
+  details: boolean;
+  /** What the last action came to, shown for a few seconds. */
+  flash: { text: string; tone: 'good' | 'warn' | 'bad' | 'muted' } | null;
+}
+
+export const initialUi = (): Ui => ({
+  tab: 'agents', dialog: null, openAgent: null, sample: false, copied: false, tables: [], details: false, flash: null,
+});
 
 export interface OwnAgent extends LinkedAgent {
   view: AgentView | null;
@@ -78,7 +102,7 @@ export const initialState = (): State => ({
   fatal: null, config: null, owner: null, connectError: null, reconnecting: false, accountFunded: null, session: null, now: 0n,
   agent: null, own: [], wallet: null, policies: [], agentsRead: false, exposure: [], history: null, historyError: null, catchingUp: false, attempts: [],
   activity: [], busy: null, readError: null,
-  ui: { record: false, details: false, withdraw: false, form: false, tables: [], formAgent: null, copied: false },
+  ui: initialUi(),
 });
 
 export type Phase = 'loading' | 'welcome' | 'checking' | 'setup' | 'ready';
@@ -121,12 +145,36 @@ export function agentName(state: State, agentId: string): string {
 }
 
 /**
- * The agent whose allowance form is shown, if any: the one the owner asked for, while it has no allowance. One
- * form at a time; it is drawn once, so typing in it survives a refresh.
+ * The agent whose allowance form is open, if any. It opens for an agent the page knows that has no allowance now;
+ * anything else asked for, such as an agent that is not the owner's, opens nothing.
  */
 export function formAgent(state: State): string | undefined {
-  const asked = state.ui.formAgent;
+  const asked = state.ui.dialog?.kind === 'allowance' ? state.ui.dialog.agent : undefined;
   if (!asked || !state.config || !state.agentsRead) return undefined;
   const known = asked === state.config.agent.agent_id || state.own.some((agent) => agent.agent_id === asked);
   return known && !currentAllowance(state, asked) ? asked : undefined;
+}
+
+/**
+ * Whether the sample agent is one of the owner's agents: they asked to try it, or it has had an allowance from
+ * them. Before that it is offered beside bringing an agent of one's own, and listed nowhere.
+ */
+export function sampleListed(state: State): boolean {
+  const id = state.config?.agent.agent_id;
+  return state.ui.sample || state.policies.some(({ policy }) => policy.agent_id.toString() === id);
+}
+
+/** The agents listed for the owner, their own first: `[id, name, kind]`. */
+export function listedAgents(state: State): { id: string; name: string; sample: boolean }[] {
+  const own = state.own.map((agent) => ({ id: agent.agent_id, name: agent.name, sample: false }));
+  return state.config && sampleListed(state) ? [...own, { id: state.config.agent.agent_id, name: 'Scout', sample: true }] : own;
+}
+
+/** The agent whose row is unfolded: the one the owner opened, or the only one there is. */
+export function openAgent(state: State): string | undefined {
+  const listed = listedAgents(state);
+  const chosen = state.ui.openAgent;
+  // Once the owner has opened or folded a row, that is what holds, including having folded the only one.
+  if (chosen !== null) return listed.some((agent) => agent.id === chosen) ? chosen : undefined;
+  return listed.length === 1 ? listed[0]!.id : undefined;
 }

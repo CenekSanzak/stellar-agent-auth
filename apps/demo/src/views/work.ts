@@ -3,7 +3,7 @@ import { clock, esc, money, tx } from '../format.js';
 import { allowanceView, explainStep, stageVerdict } from '../model.js';
 import { phaseOf, taskAllowance, type Activity, type State } from '../state.js';
 
-/** What the sample agent can be asked to do. Shown in its card; held back until it has had an allowance to try them under. */
+/** What the sample agent can be asked to do. Held back until it has had an allowance to try them under. */
 export function taskList(state: State): string {
   const { config } = state;
   if (!config) return '';
@@ -15,6 +15,17 @@ export function taskList(state: State): string {
         <span class="task-label">${esc(task.label)}</span>
         <span class="task-text">${esc(task.description)}</span>
       </button></li>`).join('')}</ul>
+  </div>`;
+}
+
+/** What the sample agent's latest task came to, shown where the task was given. The whole list is under Activity. */
+export function lastResult(state: State): string {
+  const item = state.activity.find((entry) => entry.kind === 'task');
+  if (!item?.result) return '';
+  return `<div class="last-result" data-testid="last-result">
+    <h3>${esc(item.title)}</h3>
+    ${item.result.notes.length > 1 ? `<ul class="notes">${item.result.notes.map((note) => `<li>${esc(note)}</li>`).join('')}</ul>` : ''}
+    <ul class="steps">${item.result.steps.map((step, index) => renderStep(step, index, item, state)).join('')}</ul>
   </div>`;
 }
 
@@ -52,14 +63,11 @@ function renderStep(step: Step, index: number, item: Activity, state: State): st
 /** What was asked for and what came of it, newest first. */
 export function renderActivity(state: State): string {
   const { config } = state;
-  if (!config || phaseOf(state) !== 'ready') return '';
-  const head = `<div class="card-head"><h2>Activity</h2>${state.busy ? `<span class="working" data-testid="busy">${esc(state.busy)}…</span>` : ''}</div>`;
+  if (!config || phaseOf(state) !== 'ready' || state.ui.tab !== 'activity') return '';
   if (!state.activity.length) {
-    return phaseOf(state) === 'ready'
-      ? `<div class="card">${head}<p class="muted">Nothing yet. What you and your agents do here appears in this list.</p></div>` : '';
+    return '<div class="empty"><h2>Nothing yet</h2><p class="muted">What you and your agents do here appears in this list.</p></div>';
   }
-  return `<div class="card">${head}
-    <ol class="feed">${state.activity.map((item) => {
+  return `<ol class="feed">${state.activity.map((item) => {
     const verdict = stageVerdict(item.stage);
     const steps = item.result?.steps ?? [];
     const paid = steps.filter((step) => step.status === 'paid').length;
@@ -73,5 +81,5 @@ export function renderActivity(state: State): string {
         ${item.result && item.result.notes.length > 1 ? `<ul class="notes">${item.result.notes.map((note) => `<li>${esc(note)}</li>`).join('')}</ul>` : ''}
         ${steps.length ? `<ul class="steps">${steps.map((step, index) => renderStep(step, index, item, state)).join('')}</ul>` : ''}
       </li>`;
-  }).join('')}</ol></div>`;
+  }).join('')}</ol>`;
 }

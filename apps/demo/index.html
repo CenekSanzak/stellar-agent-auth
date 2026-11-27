@@ -25,21 +25,15 @@
       <section id="setup" aria-label="Set up"></section>
       <div class="board">
         <section id="wallet" aria-label="Your wallet"></section>
-        <section id="withdraw" aria-label="Withdraw"></section>
-        <section id="agents" aria-label="Your agents"></section>
-        <section id="allowance-form" aria-label="New allowance"></section>
-        <div class="below">
-          <div class="col main">
-            <section id="activity" aria-label="Activity" aria-live="polite"></section>
-          </div>
-          <div class="col side">
-            <section id="record" aria-label="The wallet's record"></section>
-            <section id="sellers" aria-label="Sellers"></section>
-            <section id="details" aria-label="Under the hood"></section>
-          </div>
-        </div>
+        <nav id="tabs" aria-label="Sections"></nav>
+        <section id="agents" aria-label="Agents"></section>
+        <section id="activity" aria-label="Activity" aria-live="polite"></section>
+        <section id="record" aria-label="The wallet's record"></section>
+        <section id="sellers" aria-label="Sellers"></section>
       </div>
     </main>
+    <dialog id="dialog" class="dialog" aria-label="Details"></dialog>
+    <div id="toast" aria-live="polite"></div>
     <footer id="footer"></footer>
     <script type="module" src="/src/index.ts"></script>
   </body>

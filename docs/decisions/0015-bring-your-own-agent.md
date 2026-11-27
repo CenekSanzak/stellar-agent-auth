@@ -65,7 +65,9 @@ The same file is published to npm as `stellar-agent-wallet`, and the hosted inst
 
 ### The page is about the wallet and its agents
 
-The page began as Scout's: its allowance, its tasks, its sellers, with bringing an agent of one's own as one card far down a column. That put the sample in front of the product. It now has a wallet at the top and an **Agents** section under it, where each of the owner's agents is a card, and the two ways to get one, bringing your own and trying the sample, are cards of the same kind side by side. No allowance form is open until the owner picks an agent. The sample's tasks are inside its card.
+The page began as Scout's: its allowance, its tasks, its sellers, with bringing an agent of one's own as one card far down a column. That put the sample in front of the product. It now has the wallet at the top and, under it, one section at a time: Agents, Activity, Record, Sellers. Each of the owner's agents is a row that says who it is and what it has spent, and unfolds into its limits and the way to end its allowance. A new owner is offered the two ways to get an agent side by side and alike, bringing their own and trying the sample; the sample is listed as one of their agents only once they have asked for it. Anything to fill in, an allowance, a withdrawal, the sentence to paste, opens in a window over the page, and none is open unasked. The owner who is waiting in the window for their agent to register is taken to its allowance form when it does.
+
+The first reorganisation kept everything on one page, in cards. The owner's verdict was that it was still ugly and confusing, and it was: every card carried a paragraph, a banner, a meter, four tiles and a list, all at once. What changed it was showing one thing at a time and leaving detail folded until asked for.
 
 A reload brings the owner back as they were. The page remembers how they connected and asks the wallet quietly, without opening it; and while it does not yet know whether they have a wallet, it shows neither the welcome page nor the set-up steps.
 

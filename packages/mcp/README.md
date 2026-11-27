@@ -9,12 +9,12 @@ It works on Stellar Testnet with the hosted wallet at <https://stellar-agent-wal
 ## The quick way: one sentence
 
 1. Open <https://stellar-agent-wallet.fly.dev/>, connect a wallet (or try as a guest) and press **Set up my wallet**.
-2. Under **Agents**, in the card **Your own AI agent**, copy the sentence and paste it into your agent. It names the instructions and says you agree to the three things they do:
+2. Under **Agents**, choose **Your own AI agent**, copy the sentence from the window that opens, and paste it into your agent. It names the instructions and says you agree to the three things they do:
 
    > Set yourself up as the agent of my Stellar smart wallet on Testnet (test money only), following https://stellar-agent-wallet.fly.dev/agent-ready.md?owner=G... - I know what it involves, and you have my go-ahead for its three steps: run the npm package stellar-agent-wallet with npx; let it create a key for the agent under ~/.stellar-agent-wallet and register the agent on Stellar Testnet; and add it to the agent's MCP servers.
 
    The instructions say what each step does, where it leaves a trace and how to undo it. A careful agent may still ask you to confirm before it runs anything.
-3. Go back to the page. Your agent is listed there. Give it an allowance.
+3. Go back to the page. When your agent has registered, the window turns into its allowance form. Approve it.
 4. Ask your agent to buy something. Its purchases appear in the wallet's record as they happen.
 
 You need Node.js 20 or newer on the machine the agent runs on. Nothing else is installed.
