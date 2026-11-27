@@ -9,7 +9,7 @@ The demo was rebuilt so that it can be hosted and tried by anyone: Scout, a rese
 - the page: a welcome, a one-button setup, the wallet, the allowance, the sellers, the tasks, the activity and the wallet's record, with a guest key, Freighter and Stellar Wallets Kit (`src/`);
 - a container image and a Fly.io configuration (`Dockerfile`, `fly.toml`).
 
-No contract changed. It is not hosted yet: that needs the owner's hosting account.
+No contract changed. It is hosted at <https://scout-agent-demo.fly.dev/>; see "Hosted" below for what was run there and for the two faults that only the hosted run showed.
 
 ## What was run
 
@@ -17,12 +17,12 @@ On 2026-11-27, on macOS arm64 with Node 24.22.2, Rust 1.98.0, Stellar CLI 30.0.1
 
 | Suite | Result |
 | --- | --- |
-| `npm run check` | Passed: 536 unit tests in 17 files, 100 Rust tests, six WASM builds, 4 spec tests, and both package checks |
+| `npm run check` | Passed: 537 unit tests in 17 files, 100 Rust tests, six WASM builds, 4 spec tests, and both package checks |
 | `npm run test:integration`, protocol 29 Quickstart | Passed: 83 tests in 14 files; 1 more is opt-in and was skipped |
 | `npm run test:browser`, headless Chrome on the same network | Passed: 10 tests |
 | `docker build` | Built; 459 MB |
 
-The change adds 20 unit tests (6 for the indexer, 14 for the demo), 2 local-network tests and 2 browser tests; the demo's earlier tests were rewritten, not kept.
+The change adds 21 unit tests (6 for the indexer, 15 for the demo), 2 local-network tests and 2 browser tests; the demo's earlier tests were rewritten, not kept.
 
 Things that failed on the way and were fixed:
 
@@ -68,11 +68,40 @@ Run by hand on 2026-11-27 against `https://soroban-testnet.stellar.org/` (protoc
 3. The demo server was started against that record and opened in a browser. As a guest: the setup button took about 30 seconds from nothing to a wallet holding 100 tUSD; the suggested allowance was approved; "Find the cheapest headlines" was blocked at Bargain Data with `RecipientNotAllowed` and bought from Ledger Wire for 1 tUSD. The payment was settled by the published `@x402/stellar` facilitator with the allowance of ADR 0012: [`a72c1d7b…159efb16`](https://stellar.expert/explorer/testnet/tx/a72c1d7bc94b3d97e0f0674c30eb6f0dd569d7dc83c033e6a8e71464159efb16). The brief it bought described ledger 5,950,725. The wallet's record showed two entries, verified against the wallet.
 4. The container image was run with the same record and the three keys given as environment secrets. It listened in under 12 seconds, served the page and the configuration, answered 402 at a seller, reported the indexer caught up with no lag, used about 117 MiB, and exited with status 0 within a second of `docker stop`.
 
+## Hosted
+
+Deployed on 2026-11-27 to Fly.io: one `shared-cpu-1x` machine with 512 MB in Ashburn and a 1 GB volume, from the image built by Fly's builder (304 MB). The owner set the three secrets; nothing else was entered by hand.
+
+Run against <https://scout-agent-demo.fly.dev/> from a browser, as a guest:
+
+| Shown | Result |
+| --- | --- |
+| The address answers over HTTPS only | 200 for the page, 301 from HTTP, HSTS and the content security policy sent |
+| A seller is reachable as an x402 resource | 402 at `/x402/ledger-wire/brief` |
+| Setup | Test XLM, wallet and 100 tUSD, in about 30 seconds |
+| The suggested allowance | Approved |
+| Cheapest headlines | Blocked at Bargain Data (`RecipientNotAllowed`), bought from Ledger Wire |
+| The dataset | Blocked (`PaymentLimitExceeded`) |
+| The audited report | Refused by the seller (`payee_gate_CheckNotPassed`) |
+| The weekly catch-up | One digest bought, the next blocked (`DailyLimitExceeded`) |
+| Freezing, then unfreezing | The brief blocked (`Paused`) |
+| Ending the allowance | The brief blocked (`Revoked`) |
+| A new allowance of 10 per purchase with every seller | The dataset bought, 40 rows; the cheapest headlines bought at Bargain Data |
+| The wallet's record | Verified against the wallet throughout, including after a redeploy: the history is on the volume |
+| The indexer | Caught up, no lag, nothing quarantined |
+| Memory after all of the above | 137 MB resident, of 472 MB |
+
+Two faults appeared only here, and both were fixed:
+
+- **The server could not have written its database.** Fly mounts a volume owned by root, which hides the ownership the image gave `/data`, and the server ran as an unprivileged user. An entrypoint now hands the directory to that user and drops to it. This was caught before the first deploy and tried locally against a root-owned mount.
+- **The server ran out of memory on the first close-time digest, and restarted.** The digest asked the RPC for 120 ledgers. An RPC returns a ledger with everything that happened in it; on Testnet, decoding them used up the server's heap of about 256 MB, where the local network's empty ledgers had been nothing. The visitor saw "The demo server answered 502". The sellers now read recent ledgers from a watch that keeps a sequence, a close time and a hash per ledger, fed every five seconds and filled one ledger at a time at start; nothing in a ledger is decoded. A unit test checks that no more than one ledger is ever asked for at once. After the fix the same task ran on the hosted server and bought its digest.
+
+The second fault is the kind the local network cannot show: its ledgers are empty. Anything that reads ledgers, transactions or events in bulk should be tried on Testnet before it is believed.
+
 ## Not covered
 
-- **The hosted address itself.** The image and the configuration were tested locally. Deploying needs the owner's Fly.io account; the proxy headers and TLS in front of it were not exercised.
+- **Rate limits behind the real proxy.** The hosted server takes the client's address from Fly's header; that two visitors are limited separately was tested with that header locally, not from two networks.
 - **Wallets other than a guest key and Freighter.** The wallet picker opens under the content security policy and lists the wallets; no wallet in it was used to sign. Freighter was last used by hand with the earlier page, on a local network; the code that connects it is unchanged.
-- **The other four tasks on Testnet, and freezing and ending there.** They run the same code as the one that was tried, and all of it is covered on the local network.
 - **Load.** Two visitors at once were tested. The limits are set for a demo that a few reviewers use; the public Testnet RPC's own limits were not measured.
-- **A long-running deployment.** Nothing was left running for days. What needs doing over time is listed in [hosting](HOSTING.md).
+- **A long-running deployment.** It has been up for minutes, not days. What needs doing over time is listed in [hosting](HOSTING.md).
 - **A refusal as a transaction on the ledger**, as before: Scout asks the wallet before it signs.

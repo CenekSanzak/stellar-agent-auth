@@ -2,6 +2,8 @@
 
 Scout is a research agent. It buys briefs and datasets from sellers over x402 and pays from its owner's wallet, inside an allowance the owner sets: how much per purchase, per day and in total, which sellers, and until when. The owner can freeze it or end the allowance at any time.
 
+It is hosted at **<https://scout-agent-demo.fly.dev/>**, on Stellar Testnet, and can be tried there as a guest with nothing installed.
+
 The page is a small Vite and TypeScript app with no framework. Behind it runs one server that plays every part the owner does not. It runs on a local network and on Testnet, and it can be hosted so that anyone can try it. The design is in [ADR 0013](../../docs/decisions/0013-hosted-demo.md), what was tested in [the validation record](../../docs/HOSTED_DEMO_VALIDATION.md), and how to host it in [hosting](../../docs/HOSTING.md).
 
 ## Run it on a local network

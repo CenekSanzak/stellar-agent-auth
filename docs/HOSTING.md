@@ -1,6 +1,8 @@
 # Hosting the demo
 
-The demo is one container: it serves the page, plays Scout and the sellers, and runs the indexer. It needs a public HTTPS address, a small persistent disk, outbound access to the Stellar RPC, and three secrets. This page uses Fly.io; any host that runs a container behind a TLS proxy works the same way.
+The demo runs at <https://scout-agent-demo.fly.dev/>, deployed on 2026-11-27 as described here.
+
+It is one container: it serves the page, plays Scout and the sellers, and runs the indexer. It needs a public HTTPS address, a small persistent disk, outbound access to the Stellar RPC, and three secrets. This page uses Fly.io; any host that runs a container behind a TLS proxy works the same way.
 
 Design and risks are in [ADR 0013](decisions/0013-hosted-demo.md).
 
@@ -16,7 +18,7 @@ It fits inside Fly.io's Free plan. A personal organisation on that plan gets 5 U
 | Outbound data | $0.02 per GB; a demo uses far less than one |
 | **Total** | **about $3.85** |
 
-Usage above 5 dollars in a month is billed, and the account moves to Pay As You Go; it is not cut off. Two things would take this demo over: a region with higher machine prices (Frankfurt is about 15% more, which still fits, with less room), or a second machine. The container used about 120 MB at rest in testing, so the 256 MB size ($2.19) would probably also do.
+Usage above 5 dollars in a month is billed, and the account moves to Pay As You Go; it is not cut off. Two things would take this demo over: a region with higher machine prices (Frankfurt is about 15% more, which still fits, with less room), or a second machine. The deployed server used 137 MB after a run through every task, so the 256 MB size ($2.19) would probably also do; it was not tried.
 
 `iad` is also the sensible region for another reason: the server spends its time talking to the Testnet RPC, not to the visitor.
 
@@ -36,11 +38,11 @@ fly apps create <name>
 fly volumes create scout_data --size 1 --region iad --app <name>
 ```
 
-Give it the three secrets. Run this yourself, in your own shell; it reads the key files and sends them to Fly, and prints nothing.
+Give it the three secrets. Run this yourself, in your own shell; it reads the key files and sends them to Fly, and prints nothing. `--stage` keeps them until the first deploy.
 
 ```sh
 KEYS=$(ls -d .local/testnet-demo/*/keys | tail -1)
-fly secrets set --app <name> \
+fly secrets set --stage --app <name> \
   SCOUT_AGENT_SECRET="$(cat "$KEYS/agent.key")" \
   SCOUT_FUNDER_SECRET="$(cat "$KEYS/funder.key")" \
   SCOUT_FACILITATOR_SECRET="$(cat "$KEYS/facilitator.key")"
@@ -49,12 +51,16 @@ fly secrets set --app <name> \
 Then deploy and look at it:
 
 ```sh
-fly deploy
+fly deploy --ha=false
 fly status
 curl https://<name>.fly.dev/healthz
 ```
 
-Keep it at one machine (`fly scale count 1`). The rate limits, the table of running tasks and the indexer's database all live in one process.
+`--ha=false` makes one machine. Keep it at one: the rate limits, the table of running tasks and the indexer's database all live in one process, and a second machine would also take the cost past the Free plan.
+
+If the build stops at "Waiting for depot builder" with a connection error, add `--depot=false` to build on Fly's own builder instead.
+
+The container starts as root only to hand the mounted volume to an unprivileged user, and runs the server as that user. A volume is mounted owned by root, whatever the image set.
 
 ## Try the image before deploying
 
@@ -76,6 +82,7 @@ Open `http://localhost:8792/`. Do not run it at the same time as a deployed copy
 | What | When | How |
 | --- | --- | --- |
 | Scout's verification expires | 30 days after it was issued; the page shows the date | `DEMO_DIRECTORY=.local/testnet-demo npm run demo:assess`, from the machine that holds the provider's key. Nothing is redeployed |
+| The server restarts by itself | | `fly logs`. A machine this small has little room: the one crash seen was the server running out of memory, described in [the validation record](HOSTED_DEMO_VALIDATION.md) |
 | The faucet runs out of tUSD | After about 100,000 faucet payments | Pay more from the issuer to the funder; the issuer's key is in the setup's key directory |
 | The facilitator or the funder runs out of test XLM | Each payment costs a fraction of an XLM; Friendbot gave each 10,000 | Fund the account again from Friendbot |
 | Testnet is reset | Announced by the Stellar Development Foundation, a few times a year | Run the setup again, commit the new record, set the new secrets and redeploy. The volume can be emptied; a new deployment is a new stream |

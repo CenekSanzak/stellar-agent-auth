@@ -87,4 +87,5 @@ A result lasts 30 days by default. `npm run demo:assess` publishes a new one, fr
 - A refusal as a transaction on the ledger. Scout asks before it signs. If the acceptance evidence needs failed transactions to link to, making them belongs to the Testnet release (P8), not to the demo.
 - Proof that a visitor owns the account they name.
 - Automatic renewal of the agent's verification.
+- Reading ledgers in bulk. An RPC returns each ledger with all its contents, which is too much for a small machine; the sellers keep their own short record of recent ledgers instead.
 - More than one machine. The limits, the task table and the indexer's database are in one process.
