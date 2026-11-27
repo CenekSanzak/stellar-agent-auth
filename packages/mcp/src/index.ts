@@ -147,7 +147,9 @@ const USAGE = `Usage:
 
 function describe(result: InitResult, tool: string, defaultHome: string): string {
   // An agent kept somewhere other than the usual place has to be started with the same place named.
-  const script = result.home === defaultHome ? tool : `${tool} --home ${result.home}`;
+  // Run through npx, the tool sits in npm's cache, which is not a place to point a host at; name the package.
+  const start = /[\\/]_npx[\\/]/.test(tool) ? 'npx -y stellar-agent-wallet' : `node ${tool}`;
+  const script = result.home === defaultHome ? start : `${start} --home ${result.home}`;
   const verified = 'error' in result.verification ? `not verified yet: ${result.verification.error}`
     : `${result.verification.status === 'current' ? 'already verified' : 'verified'}; ${(result.verification.checks ?? [])
       .filter((check) => check.outcome === 'Passed').map((check) => check.kind).join(', ') || 'no checks'} passed`;
@@ -162,9 +164,9 @@ function describe(result: InitResult, tool: string, defaultHome: string): string
     `     ${result.approve_at}`,
     '',
     '2. The agent host is told how to start its tools:',
-    `     Claude Code:  claude mcp add agent-wallet -- node ${script} mcp`,
-    `     Codex:        codex mcp add agent-wallet -- node ${script} mcp`,
-    `     Any other:    the command "node" with the arguments: ${script} mcp`,
+    `     Claude Code:  claude mcp add agent-wallet -- ${script} mcp`,
+    `     Codex:        codex mcp add agent-wallet -- ${script} mcp`,
+    `     Any other:    start it with: ${script} mcp`,
     '',
     'Then ask the agent to call its `allowance` tool.',
   ].join('\n');

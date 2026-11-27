@@ -1,6 +1,6 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { extname, join, normalize, sep } from 'node:path';
 import { StrKey, rpc } from '@stellar/stellar-sdk';
@@ -214,6 +214,11 @@ export async function createBackend(options: BackendOptions) {
   const renewing = setInterval(renewOwn, 3_600_000);
   renewing.unref();
 
+  // The agent tool: its name on npm when it is published there, and the hash of the file this server hands out.
+  const agentNpmPackage = options.env['DEMO_AGENT_NPM_PACKAGE'] || undefined;
+  const agentToolSha256 = options.agentTool
+    ? await readFile(options.agentTool).then((bytes) => createHash('sha256').update(bytes).digest('hex'), () => undefined) : undefined;
+
   let marketUrl: string | undefined;
   const agent = new ScoutAgent(deployment, context, server, agentKey, () => {
     if (!marketUrl) throw new Error('The demo server has not been told its own address');
@@ -326,7 +331,7 @@ export async function createBackend(options: BackendOptions) {
     products: PRODUCTS.map(({ id, vendor, kind, title, price, path }) => ({ id, vendor, kind, title, price, path })),
     tasks: TASKS, faucet_amount: limits.faucetAmount, indexer_path: '/indexer/',
     // Whether someone can bring an agent of their own here, and whether this server can verify it.
-    own_agents: agentService.capabilities(), public_url: publicOrigin ?? null,
+    own_agents: agentService.capabilities(), public_url: publicOrigin ?? null, agent_npm_package: agentNpmPackage ?? null,
     // Reads are simulations and need the name of an account that exists; this one always does.
     read_source: deployment.roles.facilitator,
     explorer: deployment.network === 'testnet' ? 'https://stellar.expert/explorer/testnet' : null,
@@ -478,7 +483,7 @@ export async function createBackend(options: BackendOptions) {
         response.writeHead(200, { 'content-type': 'text/markdown; charset=utf-8', 'cache-control': 'no-store', ...SECURITY_HEADERS });
         return response.end(agentReady({
           origin, owner: asked && StrKey.isValidEd25519PublicKey(asked) ? asked : undefined, network: networkName,
-          verifies: agentService.capabilities().verify, npmPackage: options.env['DEMO_AGENT_NPM_PACKAGE'] || undefined,
+          verifies: agentService.capabilities().verify, npmPackage: agentNpmPackage, toolSha256: agentToolSha256,
         }));
       }
       if (request.method === 'GET' && url.pathname === '/agent/stellar-agent-wallet.mjs') {

@@ -9,7 +9,7 @@ import { connectGuest, forgetGuest } from '../../apps/demo/src/owner.js';
 import {
   agentName, currentAllowance, formAgent, initialState, phaseOf, taskAllowance, type Activity, type OwnAgent, type State,
 } from '../../apps/demo/src/state.js';
-import { renderConnect, renderOwnAgents, setupPrompt } from '../../apps/demo/src/views/agents.js';
+import { renderConnect, renderOwnAgents, setupPrompt, setupSteps } from '../../apps/demo/src/views/agents.js';
 import { renderScout, renderSellers } from '../../apps/demo/src/views/market.js';
 import { renderDetails, renderRecord } from '../../apps/demo/src/views/record.js';
 import { renderAllowance, renderAllowanceForm, renderWallet } from '../../apps/demo/src/views/wallet.js';
@@ -43,7 +43,7 @@ const config: Config = {
   vendors: VENDORS.map((vendor) => ({ ...vendor, requires: [...vendor.requires], address: payee[vendor.id]! })),
   products: PRODUCTS.map(({ id, vendor, kind, title, price, path }) => ({ id, vendor, kind, title, price, path })),
   tasks: [...TASKS], faucet_amount: '100', indexer_path: '/indexer/', read_source: account(12), explorer: null,
-  own_agents: { setup: true, verify: true }, public_url: null,
+  own_agents: { setup: true, verify: true }, public_url: null, agent_npm_package: null,
 };
 const testnet: Config = { ...config, network: 'testnet', explorer: 'https://explorer.example/testnet', provider: { ...config.provider, mode: 'Live' } };
 
@@ -304,35 +304,53 @@ describe('an agent of the owner\'s own', () => {
     expect(renderAllowanceForm(ready())).toBe('');
   });
 
-  it('is brought in with one sentence that names this server and the owner', () => {
-    expect(setupPrompt(config, account(20), 'http://127.0.0.1:8790')).toBe(
-      `Set yourself up as an agent of my Stellar smart wallet, so you can pay for things inside an allowance I control. Follow http://127.0.0.1:8790/agent-ready.md?owner=${account(20)}`);
-    expect(setupPrompt({ ...config, public_url: 'https://scout.example' }, account(20), 'http://ignored')).toContain('https://scout.example/agent-ready.md');
-    const html = renderConnect(ready(), 'http://127.0.0.1:8790');
+  it('is brought in with one sentence that names the instructions and carries the owner\'s go-ahead', () => {
+    const local = setupPrompt(config, account(20), 'http://127.0.0.1:8790');
+    expect(local).toContain(`following http://127.0.0.1:8790/agent-ready.md?owner=${account(20)}`);
+    expect(local).toContain('you have my go-ahead for its three steps');
+    expect(local).toContain('download one file, the agent tool, from this site and run it with Node.js');
+    expect(local).toContain('test money only');
+    const hosted = { ...testnet, public_url: 'https://scout.example', agent_npm_package: 'stellar-agent-wallet' };
+    const live = setupPrompt(hosted, account(20), 'http://ignored');
+    expect(live).toContain('https://scout.example/agent-ready.md');
+    expect(live).toContain('on Testnet');
+    expect(live).toContain('run the npm package stellar-agent-wallet with npx; let it create a key for the agent under ~/.stellar-agent-wallet and register the agent on Stellar Testnet; and add it to the agent\'s MCP servers.');
+    // The owner is shown the same three steps the sentence agrees to.
+    const html = renderConnect(ready({ config: hosted }), 'x');
     expect(html).toContain('data-testid="setup-prompt"');
-    expect(html).toContain(`agent-ready.md?owner=${account(20)}`);
+    for (const step of setupSteps(hosted)) expect(html).toContain(esc(step));
     expect(html).toContain('data-action="copy-prompt"');
+    expect(html).toContain('Nothing in this can spend');
     expect(renderConnect(ready({ ui: { ...initialState().ui, copied: true } }), 'x')).toContain('>Copied<');
     expect(renderConnect(ready({ config: { ...config, own_agents: { setup: true, verify: false } } }), 'x')).toContain('cannot verify agents at the moment');
     expect(renderConnect(ready({ config: { ...config, own_agents: { setup: false, verify: false } } }), 'x')).toBe('');
   });
 
-  it('is told how to set itself up, with commands that already name the server and the owner', () => {
-    const text = agentReady({ origin: 'https://scout.example', owner: account(20), network: 'Stellar Testnet', verifies: true });
-    expect(text).toContain('curl -fsSL https://scout.example/agent/stellar-agent-wallet.mjs');
-    expect(text).toContain(`init --market https://scout.example --owner ${account(20)}`);
-    expect(text).toContain('claude mcp add agent-wallet -- node ~/.stellar-agent-wallet/stellar-agent-wallet.mjs mcp');
+  it('is told plainly what the set-up does, where, and how to undo it, and is not told to act', () => {
+    const text = agentReady({ origin: 'https://scout.example', owner: account(20), network: 'Stellar Testnet', verifies: true, npmPackage: 'stellar-agent-wallet' });
+    expect(text).toContain(`npx -y stellar-agent-wallet init --market https://scout.example --owner ${account(20)}`);
+    expect(text).toContain('claude mcp add agent-wallet -- npx -y stellar-agent-wallet mcp');
     expect(text).toContain('codex mcp add agent-wallet');
-    expect(text).toContain('Do not ask them for any key');
+    // What a careful agent asks before running someone's program: what it is, what it touches, what stays.
+    expect(text).toContain('no dependencies and no install scripts');
+    expect(text).toContain('The registry entry stays');
+    expect(text).toContain('It does not read or need\nthe owner\'s keys');
+    expect(text).toContain('claude mcp remove agent-wallet');
+    expect(text).toContain('rm -rf ~/.stellar-agent-wallet');
+    expect(text).toContain('npm view stellar-agent-wallet');
+    // The decision is the person's. The page does not give it, and does not tell the agent to skip saying what it will do.
+    expect(text).toContain('The person who sent you here decides, not this page');
+    expect(text).not.toMatch(/do\s+not\s+explain/i);
+    expect(text).not.toContain('curl');
     expect(text).not.toContain('opened without an owner');
     expect(text).not.toContain('cannot verify agents');
-    const published = agentReady({ origin: 'https://scout.example', owner: account(20), network: 'Stellar Testnet', verifies: true, npmPackage: 'stellar-agent-wallet' });
-    expect(published).toContain(`npx -y stellar-agent-wallet init --market https://scout.example --owner ${account(20)}`);
-    expect(published).toContain('claude mcp add agent-wallet -- npx -y stellar-agent-wallet mcp');
-    expect(published).not.toContain('curl');
-    const bare = agentReady({ origin: 'https://scout.example', network: 'Stellar Testnet', verifies: false });
-    expect(bare).toContain('opened without an owner');
-    expect(bare).toContain('cannot verify agents at the moment');
+
+    const file = agentReady({ origin: 'http://127.0.0.1:8790', network: 'local Stellar', verifies: false, toolSha256: 'ab'.repeat(32) });
+    expect(file).toContain('curl -fsSL http://127.0.0.1:8790/agent/stellar-agent-wallet.mjs');
+    expect(file).toContain('node ~/.stellar-agent-wallet/stellar-agent-wallet.mjs init --market http://127.0.0.1:8790');
+    expect(file).toContain(`SHA-256 as this server serves it is \`${'ab'.repeat(32)}\``);
+    expect(file).toContain('opened without an owner');
+    expect(file).toContain('cannot verify agents at the moment');
   });
 
   it('is named in the wallet\'s record, as the owner is', () => {

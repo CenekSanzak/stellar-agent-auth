@@ -4,14 +4,27 @@ import { coverage, verificationVerdict } from '../model.js';
 import { phaseOf, type OwnAgent, type State } from '../state.js';
 import { allowanceCard } from './wallet.js';
 
+/** What an agent's set-up does on the owner's machine, in the order it does it. Shown to the owner, and said in the prompt. */
+export function setupSteps(config: Config): string[] {
+  const network = config.network === 'testnet' ? 'Stellar Testnet' : 'the local Stellar network';
+  return [
+    config.agent_npm_package ? `run the npm package ${config.agent_npm_package} with npx` : 'download one file, the agent tool, from this site and run it with Node.js',
+    `let it create a key for the agent under ~/.stellar-agent-wallet and register the agent on ${network}`,
+    'add it to the agent\'s MCP servers',
+  ];
+}
+
 /**
- * What the owner pastes into their own AI agent. It is one sentence and an address: the agent reads the
- * instructions at that address and sets itself up. The owner's account is in the address, so the agent knows whose
- * wallet it is asking for.
+ * What the owner pastes into their own AI agent. It names the instructions, with the owner's account in the
+ * address, and it carries the owner's go-ahead for the three things the set-up does. An agent should not run a
+ * program because a web page says so; it can because its user does, having seen what the program will do.
  */
 export function setupPrompt(config: Config, owner: string, origin: string): string {
   const base = config.public_url ?? origin;
-  return `Set yourself up as an agent of my Stellar smart wallet, so you can pay for things inside an allowance I control. Follow ${base}/agent-ready.md?owner=${owner}`;
+  const [first, second, third] = setupSteps(config);
+  return `Set yourself up as the agent of my Stellar smart wallet${config.network === 'testnet' ? ' on Testnet' : ''} (test money only), `
+    + `following ${base}/agent-ready.md?owner=${owner} - I know what it involves, and you have my go-ahead for its three steps: `
+    + `${first}; ${second}; and ${third}.`;
 }
 
 function ownAgentCard(state: State, agent: OwnAgent): string {
@@ -45,9 +58,12 @@ export function renderConnect(state: State, origin: string = typeof location ===
     <p>Scout is a sample. Your own agent can use this wallet the same way: it gets a key of its own on your machine, and
       spends only inside an allowance you approve here.</p>
     <ol class="steps-list">
-      <li><strong>Paste this into your agent.</strong> It installs a small tool, makes its own key, and registers itself.
-        <textarea class="prompt" data-testid="setup-prompt" readonly rows="4" spellcheck="false">${esc(setupPrompt(config, owner.address, origin))}</textarea>
-        <button data-action="copy-prompt" data-testid="copy-prompt">${state.ui.copied ? 'Copied' : 'Copy'}</button></li>
+      <li><strong>Paste this into your agent.</strong> It tells the agent to do three things on the machine it runs on, and
+        that you agree to them:
+        <ul class="plain" data-testid="setup-steps">${setupSteps(config).map((step) => `<li>${esc(step)}</li>`).join('')}</ul>
+        <textarea class="prompt" data-testid="setup-prompt" readonly rows="6" spellcheck="false">${esc(setupPrompt(config, owner.address, origin))}</textarea>
+        <button data-action="copy-prompt" data-testid="copy-prompt">${state.ui.copied ? 'Copied' : 'Copy'}</button>
+        <p class="muted small">Nothing in this can spend. A careful agent may still ask you to confirm before it runs anything; that is it doing its job.</p></li>
       <li><strong>Come back here.</strong> Your agent appears above within a few seconds. Give it an allowance.</li>
       <li><strong>Ask it to buy something.</strong> Its purchases show up in the wallet's record as they happen.</li>
     </ol>

@@ -53,6 +53,8 @@ export interface Config {
   own_agents: { setup: boolean; verify: boolean };
   /** The address this server is reached at by others, when it has one. */
   public_url: string | null;
+  /** The agent tool's name on npm, when it is published there. */
+  agent_npm_package: string | null;
   explorer: string | null;
 }
 

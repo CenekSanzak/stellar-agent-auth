@@ -16,6 +16,8 @@ primary_region = "iad"
   DEMO_FACILITATOR_KEY = "env:SCOUT_FACILITATOR_SECRET"
   # With the provider's key the server verifies agents people bring, and keeps Scout's verification current.
   DEMO_PROVIDER_KEY = "env:SCOUT_PROVIDER_SECRET"
+  # The agent tool is on npm under this name, so the instructions agents read use npx.
+  DEMO_AGENT_NPM_PACKAGE = "stellar-agent-wallet"
   # Let the server use most of the machine's 512 MB before it gives up; the default stops near 256 MB.
   NODE_OPTIONS = "--max-old-space-size=320"
 
