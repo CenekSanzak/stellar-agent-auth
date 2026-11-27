@@ -144,6 +144,14 @@ One fault was found by looking at the page and fixed: for a few seconds after an
 
 **A reload on Testnet, timed.** With the reorganised page first deployed, a returning guest saw "Looking for your wallet…" for about half a minute. The page read everything in turn and drew once at the end, and its ledger-time read decoded a whole Testnet ledger each time. Reads now go out together and the page draws as they return. Measured in a browser against the hosted server afterwards: the wallet section 0.8 seconds after the reload, the balance at 1.0, and the agents with their allowances at 1.6. Before the allowances have been read, the page says it is reading them; it does not say an agent has none.
 
+## The move
+
+On 2026-11-27 the site moved from `scout-agent-demo.fly.dev` to <https://stellar-agent-wallet.fly.dev/>: a new Fly app and volume, the same Testnet deployment and keys. The old app's machine was removed; the app and its volume were left.
+
+Run against the new address by hand, as a guest: the one-button set-up; then the published npm package, `npx -y stellar-agent-wallet init`, which registered agent 4 and had it verified by the server at its new address; an allowance of 2 per purchase approved from the printed link; and the package started by an MCP client with `npx -y stellar-agent-wallet mcp`, which bought a brief ([`8b39071e…9a64b081`](https://stellar.expert/explorer/testnet/tx/8b39071e1e753a0fe60b486556448ae001c48a9a52ade2c5ec951e5d9a64b081)) and was blocked on a digest.
+
+What the move cost, as expected: wallets and allowances are on the ledger and were untouched; the indexer read their history again from the network; the list of refused attempts, which lived only in the old volume, started empty; agents registered through the old address carry its address in their identity and have to be set up again; and a guest is a new guest, since a guest's key is kept by the browser per address.
+
 ## Not covered
 
 - **Rate limits behind the real proxy.** The hosted server takes the client's address from Fly's header; that two visitors are limited separately was tested with that header locally, not from two networks.
