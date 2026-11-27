@@ -113,7 +113,8 @@ export function createChain(config: Config, journal: TransactionJournal) {
     && error.code === 'NotFound';
 
   async function ledgerTime(): Promise<bigint> {
-    return BigInt((await server.getLatestLedger()).closeTime);
+    // The raw answer: a ledger comes with everything that happened in it, and only its close time is wanted.
+    return BigInt((await server._getLatestLedger()).closeTime);
   }
 
   async function accountExists(address: string): Promise<boolean> {

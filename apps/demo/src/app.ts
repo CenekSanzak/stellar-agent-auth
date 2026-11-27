@@ -148,45 +148,55 @@ export function startApp(root: Document, storage: Storage = localStorage) {
     }
     refreshing = true;
     try {
-      state.now = await chain.ledgerTime();
-      if (state.owner) {
-        const { address } = state.owner;
-        if (!state.agent || refreshes % AGENT_EVERY === 0) state.agent = await chain.readAgentView();
+      // Reads that do not depend on each other go out together, and the page is drawn as each group comes back:
+      // on a public network a read takes a good part of a second, and a visitor should not wait for all of them.
+      const { owner, config } = state;
+      if (!owner) {
+        state.now = await chain.ledgerTime();
+      } else {
+        const { address } = owner;
+        const stale = !state.agent || refreshes % AGENT_EVERY === 0;
         refreshes += 1;
-        if (!state.accountFunded) state.accountFunded = await chain.accountExists(address);
-        // The server derives the wallet address and says whether the wallet exists yet.
-        if (!state.session?.deployed) {
-          state.session = await demoServer.session(address);
-          if (state.session.deployed) loadActivity();
-        }
-        const { session } = state;
+        const active = chain;
+        // First, who this is: does the account exist, and is there a wallet. Everything shown depends on that.
+        const [now, funded, session] = await Promise.all([
+          active.ledgerTime(),
+          state.accountFunded ? true : active.accountExists(address),
+          // The server derives the wallet address and says whether the wallet exists yet.
+          state.session?.deployed ? state.session : demoServer.session(address),
+        ]);
+        if (state.owner?.address !== address) return;
+        const found = !state.session?.deployed && session.deployed;
+        Object.assign(state, { now, accountFunded: funded, session });
+        if (found) loadActivity();
+        render();
         if (session.deployed) {
-          state.wallet = await chain.readWalletView(session.wallet);
-          try {
-            const indexer = indexerUrl(state.config);
-            state.history = await chain.history(session.wallet, indexer);
-            state.attempts = await readAttempts(indexer, session.wallet);
-            state.historyError = null;
+          const indexer = indexerUrl(config);
+          const scout = stale ? active.readAgentView().then((view) => { state.agent = view; render(); }) : undefined;
+          const wallet = active.readWalletView(session.wallet).then((view) => { state.wallet = view; render(); });
+          const record = Promise.all([active.history(session.wallet, indexer), readAttempts(indexer, session.wallet)]).then(([history, attempts]) => {
+            Object.assign(state, { history, attempts, historyError: null });
             // Behind by its newest entries, and not for long: the indexer has not read them yet.
-            const behind = state.history.status === 'incomplete' && /not yet visible|No events found/.test(state.history.detail);
+            const behind = history.status === 'incomplete' && /not yet visible|No events found/.test(history.detail);
             behindSince = behind ? behindSince ?? Date.now() : null;
             state.catchingUp = behindSince !== null && Date.now() - behindSince < CATCH_UP_MS;
-          } catch (error) {
-            state.historyError = message(error);
-          }
-          // Ended allowances are no longer listed by the wallet; the record names every one it ever had.
-          const known = (state.history?.entries ?? []).flatMap(({ entry }) =>
-            (entry.outcome.kind === 'PolicyCreated' ? [toHex(entry.outcome.policy_hash)] : []));
-          state.policies = await chain.readPolicies(session.wallet, [...known, ...state.policies.map((policy) => policy.hash)]);
-          state.exposure = chain.exposure(state.policies, state.now);
+          }, (error: unknown) => { state.historyError = message(error); });
           // Agents the owner brought: who they are comes from the server, what they are from the registries.
-          const linked = await demoServer.agents(address).catch(() => state.own);
-          const stale = (refreshes - 1) % AGENT_EVERY === 0;
-          state.own = await Promise.all(linked.map(async (agent) => {
+          const own = demoServer.agents(address).catch(() => state.own).then((linked) => Promise.all(linked.map(async (agent) => {
             const before = state.own.find((item) => item.agent_id === agent.agent_id);
-            const view = before?.view && !stale ? before.view : await chain!.readAgentView(agent.agent_id).catch(() => before?.view ?? null);
+            const view = before?.view && !stale ? before.view : await active.readAgentView(agent.agent_id).catch(() => before?.view ?? null);
             return { ...agent, view };
-          }));
+          }))).then((agents) => { state.own = agents; });
+          // The allowances need the record first: ended ones are no longer listed by the wallet, and the record
+          // names every one it ever had.
+          const policies = record.then(async () => {
+            const known = (state.history?.entries ?? []).flatMap(({ entry }) =>
+              (entry.outcome.kind === 'PolicyCreated' ? [toHex(entry.outcome.policy_hash)] : []));
+            state.policies = await active.readPolicies(session.wallet, [...known, ...state.policies.map((policy) => policy.hash)]);
+            state.exposure = active.exposure(state.policies, state.now);
+          });
+          await Promise.all([scout, wallet, record, own, policies]);
+          state.agentsRead = true;
         }
       }
       state.readError = null;
@@ -206,7 +216,7 @@ export function startApp(root: Document, storage: Storage = localStorage) {
     signer = undefined;
     disconnectWallet = undefined;
     Object.assign(state, {
-      owner: null, session: null, accountFunded: null, wallet: null, policies: [], exposure: [], history: null,
+      owner: null, session: null, accountFunded: null, wallet: null, policies: [], agentsRead: false, exposure: [], history: null,
       historyError: null, catchingUp: false, attempts: [], activity: [], agent: null, own: [], connectError: null,
       reconnecting: false,
     });

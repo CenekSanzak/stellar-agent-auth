@@ -98,7 +98,9 @@ export function renderConnect(state: State, origin: string = typeof location ===
  */
 export function renderAgents(state: State, origin?: string): string {
   if (phaseOf(state) !== 'ready' || !state.config || !state.wallet) return '';
-  return `<div class="section-head"><h2>Agents</h2>
-      <p class="muted">Each agent has its own allowance, and can spend nothing without one. Freezing the wallet stops them all.</p></div>
+  const head = `<div class="section-head"><h2>Agents</h2>
+      <p class="muted">Each agent has its own allowance, and can spend nothing without one. Freezing the wallet stops them all.</p></div>`;
+  if (!state.agentsRead) return `${head}<p class="muted" data-testid="agents-reading">Reading your agents and their allowances…</p>`;
+  return `${head}
     <div class="agent-grid">${renderOwnAgents(state)}${renderConnect(state, origin)}${renderScoutCard(state)}</div>`;
 }

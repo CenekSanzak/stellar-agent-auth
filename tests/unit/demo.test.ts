@@ -85,7 +85,7 @@ const ready = (overrides: Partial<State> = {}): State => ({
   session: { wallet, deployed: true },
   agent: { identity, result, provider },
   wallet: { balance: 97n * UNIT, paused: false, head: { sequence: 2n, hash: bytes(9) } },
-  policies: [view()],
+  policies: [view()], agentsRead: true,
   ...overrides,
 });
 
@@ -258,6 +258,11 @@ describe('the allowance', () => {
     expect(html.match(/class="card agent-card/g)).toHaveLength(2);
     expect(html).toContain('Sample agent');
     expect(renderAgents(ready({ wallet: null }))).toBe('');
+    // Until the allowances have been read, nobody is told their agents have none.
+    const reading = renderAgents(ready({ agentsRead: false, policies: [] }));
+    expect(reading).toContain('data-testid="agents-reading"');
+    expect(reading).not.toContain('Set an allowance');
+    expect(formAgent(ready({ agentsRead: false, policies: [], ui: { ...initialState().ui, formAgent: '1' } }))).toBeUndefined();
   });
 
   it('shows the balance and warns when there is nothing to spend', () => {

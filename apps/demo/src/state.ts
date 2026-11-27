@@ -41,6 +41,11 @@ export interface State {
   own: OwnAgent[];
   wallet: WalletView | null;
   policies: PolicyView[];
+  /**
+   * Whether the allowances and the owner's agents have been read at least once. Until then the page says it is
+   * reading them: an owner with allowances must not be told, even for a moment, that their agents have none.
+   */
+  agentsRead: boolean;
   exposure: Exposure[];
   history: IndexedHistory | null;
   historyError: string | null;
@@ -71,7 +76,7 @@ export interface OwnAgent extends LinkedAgent {
 
 export const initialState = (): State => ({
   fatal: null, config: null, owner: null, connectError: null, reconnecting: false, accountFunded: null, session: null, now: 0n,
-  agent: null, own: [], wallet: null, policies: [], exposure: [], history: null, historyError: null, catchingUp: false, attempts: [],
+  agent: null, own: [], wallet: null, policies: [], agentsRead: false, exposure: [], history: null, historyError: null, catchingUp: false, attempts: [],
   activity: [], busy: null, readError: null,
   ui: { record: false, details: false, withdraw: false, form: false, tables: [], formAgent: null, copied: false },
 });
@@ -121,7 +126,7 @@ export function agentName(state: State, agentId: string): string {
  */
 export function formAgent(state: State): string | undefined {
   const asked = state.ui.formAgent;
-  if (!asked || !state.config) return undefined;
+  if (!asked || !state.config || !state.agentsRead) return undefined;
   const known = asked === state.config.agent.agent_id || state.own.some((agent) => agent.agent_id === asked);
   return known && !currentAllowance(state, asked) ? asked : undefined;
 }
