@@ -284,7 +284,8 @@ export async function createBackend(options: BackendOptions) {
     asset: deployment.asset, wallet_wasm_hash: deployment.wallet_wasm_hash, wallet_salt: deployment.wallet_salt,
     agent: deployment.agent, provider: deployment.provider,
     vendors: VENDORS.map((vendor) => ({ ...vendor, address: deployment.vendors[vendor.id] })),
-    products: PRODUCTS.map(({ id, vendor, kind, title, price }) => ({ id, vendor, kind, title, price })),
+    // The path is where the product is sold over x402, for a buyer that is not this page.
+    products: PRODUCTS.map(({ id, vendor, kind, title, price, path }) => ({ id, vendor, kind, title, price, path })),
     tasks: TASKS, faucet_amount: limits.faucetAmount, indexer_path: '/indexer/',
     // Reads are simulations and need the name of an account that exists; this one always does.
     read_source: deployment.roles.facilitator,

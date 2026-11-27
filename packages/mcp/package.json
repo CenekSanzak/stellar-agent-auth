@@ -1,0 +1,35 @@
+{
+  "name": "@stellar-agent-auth/mcp",
+  "version": "0.0.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "description": "An MCP server that lets an AI agent pay x402 resources from a policy-limited smart wallet.",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/index.js"
+  },
+  "bin": {
+    "stellar-agent-auth-mcp": "./dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "@stellar-agent-auth/sdk": "0.0.0",
+    "@stellar-agent-auth/x402": "0.0.0",
+    "@stellar/stellar-sdk": "17.4.0",
+    "zod": "4.6.7"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ]
+}

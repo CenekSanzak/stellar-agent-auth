@@ -20,6 +20,8 @@ export interface Product {
   title: string;
   /** Whole units of the demo asset. */
   price: string;
+  /** Where it is sold over x402, on this server. */
+  path: string;
 }
 
 export interface Task {

@@ -156,7 +156,9 @@ describe('demo backend on local Stellar', () => {
       ['ledger-wire', deployment.vendors['ledger-wire']], ['deep-archive', deployment.vendors['deep-archive']],
       ['audited-sources', deployment.vendors['audited-sources']], ['bargain-data', deployment.vendors['bargain-data']],
     ]);
-    expect(config['products']).toContainEqual({ id: 'archive-ledgers', vendor: 'deep-archive', kind: 'dataset', title: 'Recent ledgers dataset', price: '8' });
+    expect(config['products']).toContainEqual({
+      id: 'archive-ledgers', vendor: 'deep-archive', kind: 'dataset', title: 'Recent ledgers dataset', price: '8', path: '/x402/deep-archive/ledgers',
+    });
     expect(JSON.stringify(config)).not.toMatch(/S[A-Z2-7]{55}/);
     expect(JSON.stringify(config)).not.toContain(deployment.key_directory);
   }, TIMEOUT);

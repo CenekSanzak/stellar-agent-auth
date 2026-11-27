@@ -1,5 +1,5 @@
 import {
-  CONTRACT_ERROR_HELP, fromContractUnits,
+  CONTRACT_ERROR_HELP, fromContractUnits, stateAsOf,
   type AgentIdentity, type AuditOutcome, type ContractErrorName, type Policy, type PolicyState, type ProviderRecord,
   type VerificationResult,
 } from '@stellar-agent-auth/sdk';
@@ -151,7 +151,8 @@ export function describeOutcome(
 export function allowanceView(policy: Policy, state: PolicyState, asset: AssetInfo, now: bigint) {
   const limit = policy.assets.find((entry) => entry.asset === asset.contract);
   const of = (rows: PolicyState['daily_spend']) => rows.find((entry) => entry.asset === asset.contract)?.amount ?? 0n;
-  const spentToday = of(state.daily_spend);
+  // The wallet stores the day's spend with its day; once the day has changed, nothing is spent today yet.
+  const spentToday = of(stateAsOf(state, now).daily_spend);
   const spentEver = of(state.total_spend);
   const perDay = limit?.per_day ?? 0n;
   const total = limit?.total ?? null;

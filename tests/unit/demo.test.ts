@@ -37,7 +37,7 @@ const config: Config = {
   agent: { agent_id: '1', revision: '1', signer: account(5), controller: account(6), metadata_uri: 'https://agent.example.test/a.json' },
   provider: { address: account(7), mode: 'Fixture' },
   vendors: VENDORS.map((vendor) => ({ ...vendor, requires: [...vendor.requires], address: payee[vendor.id]! })),
-  products: PRODUCTS.map(({ id, vendor, kind, title, price }) => ({ id, vendor, kind, title, price })),
+  products: PRODUCTS.map(({ id, vendor, kind, title, price, path }) => ({ id, vendor, kind, title, price, path })),
   tasks: [...TASKS], faucet_amount: '100', indexer_path: '/indexer/', read_source: account(12), explorer: null,
 };
 const testnet: Config = { ...config, network: 'testnet', explorer: 'https://explorer.example/testnet', provider: { ...config.provider, mode: 'Live' } };
@@ -191,6 +191,8 @@ describe('the allowance', () => {
     expect(allowanceView({ ...allowance, assets: [] }, policyState(), asset, NOW)).toMatchObject({ perDay: '0', share: 0, leftToday: '0' });
     expect(allowanceView({ ...allowance, assets: [{ ...allowance.assets[0]!, total: null }] }, policyState(), asset, NOW).total).toBeNull();
     expect(allowanceView(allowance, policyState(), asset, allowance.valid_until + 5n).endsIn).toBe(0n);
+    // The wallet stores yesterday's spend until the next payment; a new day starts at nothing spent.
+    expect(allowanceView(allowance, policyState(), asset, NOW + 86_400n)).toMatchObject({ spentToday: '0', leftToday: '6', spentEver: '3', share: 0 });
   });
 
   it('shows the meter, the limits and the owner\'s two stops', () => {
