@@ -2,7 +2,7 @@
 
 A smart wallet that AI agents can pay from, inside allowances its owner sets: how much per purchase, per day and in total, which sellers, and until when. The owner can freeze the wallet or end an allowance at any time. Two kinds of agent use it. The owner's own, in Claude Code, Codex or any MCP host; and Scout, a sample agent that runs on the site, for seeing an allowance at work without setting anything up. Agents buy from sample sellers over x402.
 
-It is hosted at **<https://scout-agent-demo.fly.dev/>**, on Stellar Testnet, and can be tried there as a guest with nothing installed.
+It is hosted at **<https://stellar-agent-wallet.fly.dev/>**, on Stellar Testnet, and can be tried there as a guest with nothing installed.
 
 The page is a small Vite and TypeScript app with no framework. Behind it runs one server that plays every part the owner does not. It runs on a local network and on Testnet, and it can be hosted so that anyone can try it. The design is in [ADR 0013](../../docs/decisions/0013-hosted-demo.md), what was tested in [the validation record](../../docs/HOSTED_DEMO_VALIDATION.md), and how to host it in [hosting](../../docs/HOSTING.md).
 
@@ -56,7 +56,7 @@ What happens is not scripted. Change an allowance and the outcomes change with i
 
 Scout is a sample. The point is your own agent: in Claude Code, Codex or any MCP host, with a key of its own on your machine, spending from your wallet inside an allowance you approve in the page.
 
-In the page, under **Agents**, copy the sentence from the card **Your own AI agent** and paste it into your agent. The sentence names [`/agent-ready.md`](https://scout-agent-demo.fly.dev/agent-ready.md) and carries your go-ahead for the three things it does; the document says what each does, where it leaves a trace and how to undo it. The agent runs a one-file tool from npm, creates and registers itself, and has itself verified. It then appears in the page as a card of its own; give it an allowance. Its purchases show in the wallet's record as they happen. The tool, what it does and what to know before trusting it are in [`packages/mcp`](../../packages/mcp/README.md); the design is in [ADR 0015](../../docs/decisions/0015-bring-your-own-agent.md).
+In the page, under **Agents**, copy the sentence from the card **Your own AI agent** and paste it into your agent. The sentence names [`/agent-ready.md`](https://stellar-agent-wallet.fly.dev/agent-ready.md) and carries your go-ahead for the three things it does; the document says what each does, where it leaves a trace and how to undo it. The agent runs a one-file tool from npm, creates and registers itself, and has itself verified. It then appears in the page as a card of its own; give it an allowance. Its purchases show in the wallet's record as they happen. The tool, what it does and what to know before trusting it are in [`packages/mcp`](../../packages/mcp/README.md); the design is in [ADR 0015](../../docs/decisions/0015-bring-your-own-agent.md).
 
 ## The sellers
 

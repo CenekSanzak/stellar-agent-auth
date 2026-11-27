@@ -1,6 +1,6 @@
 # Hosting the demo
 
-The demo runs at <https://scout-agent-demo.fly.dev/>, deployed on 2026-11-27 as described here.
+The demo runs at <https://stellar-agent-wallet.fly.dev/>, deployed on 2026-11-27 as described here.
 
 It is one container: it serves the page, plays Scout and the sellers, and runs the indexer. It needs a public HTTPS address, a small persistent disk, outbound access to the Stellar RPC, and four secrets. This page uses Fly.io; any host that runs a container behind a TLS proxy works the same way.
 
@@ -35,7 +35,7 @@ Choose a name. It becomes the address, `https://<name>.fly.dev`, so set both `ap
 ```sh
 fly auth login
 fly apps create <name>
-fly volumes create scout_data --size 1 --region iad --app <name>
+fly volumes create wallet_data --size 1 --region iad --app <name>
 ```
 
 Give it the four secrets. Run this yourself, in your own shell; it reads the key files and sends them to Fly, and prints nothing. `--stage` keeps them until the first deploy.
@@ -43,10 +43,10 @@ Give it the four secrets. Run this yourself, in your own shell; it reads the key
 ```sh
 KEYS=$(ls -d .local/testnet-demo/*/keys | tail -1)
 fly secrets set --stage --app <name> \
-  SCOUT_AGENT_SECRET="$(cat "$KEYS/agent.key")" \
-  SCOUT_FUNDER_SECRET="$(cat "$KEYS/funder.key")" \
-  SCOUT_FACILITATOR_SECRET="$(cat "$KEYS/facilitator.key")" \
-  SCOUT_PROVIDER_SECRET="$(cat "$KEYS/provider.key")"
+  DEMO_AGENT_SECRET="$(cat "$KEYS/agent.key")" \
+  DEMO_FUNDER_SECRET="$(cat "$KEYS/funder.key")" \
+  DEMO_FACILITATOR_SECRET="$(cat "$KEYS/facilitator.key")" \
+  DEMO_PROVIDER_SECRET="$(cat "$KEYS/provider.key")"
 ```
 
 Then deploy and look at it:
@@ -70,10 +70,10 @@ docker build -t scout-demo .
 KEYS=$(ls -d .local/testnet-demo/*/keys | tail -1)
 docker run --rm -p 127.0.0.1:8792:8080 \
   -e DEMO_PUBLIC_URL=http://localhost:8792 \
-  -e DEMO_AGENT_KEY=env:SCOUT_AGENT_SECRET -e DEMO_FUNDER_KEY=env:SCOUT_FUNDER_SECRET \
-  -e DEMO_FACILITATOR_KEY=env:SCOUT_FACILITATOR_SECRET \
-  -e SCOUT_AGENT_SECRET="$(cat "$KEYS/agent.key")" -e SCOUT_FUNDER_SECRET="$(cat "$KEYS/funder.key")" \
-  -e SCOUT_FACILITATOR_SECRET="$(cat "$KEYS/facilitator.key")" scout-demo
+  -e DEMO_AGENT_KEY=env:DEMO_AGENT_SECRET -e DEMO_FUNDER_KEY=env:DEMO_FUNDER_SECRET \
+  -e DEMO_FACILITATOR_KEY=env:DEMO_FACILITATOR_SECRET \
+  -e DEMO_AGENT_SECRET="$(cat "$KEYS/agent.key")" -e DEMO_FUNDER_SECRET="$(cat "$KEYS/funder.key")" \
+  -e DEMO_FACILITATOR_SECRET="$(cat "$KEYS/facilitator.key")" scout-demo
 ```
 
 Open `http://localhost:8792/`. Do not run it at the same time as a deployed copy with the same keys: two facilitators on one account get in each other's way.

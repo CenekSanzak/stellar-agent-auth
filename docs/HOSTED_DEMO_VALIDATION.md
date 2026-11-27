@@ -9,7 +9,9 @@ The demo was rebuilt so that it can be hosted and tried by anyone: Scout, a rese
 - the page: a welcome, a one-button setup, the wallet, the allowance, the sellers, the tasks, the activity and the wallet's record, with a guest key, Freighter and Stellar Wallets Kit (`src/`);
 - a container image and a Fly.io configuration (`Dockerfile`, `fly.toml`).
 
-No contract changed. It is hosted at <https://scout-agent-demo.fly.dev/>; see "Hosted" below for what was run there and for the two faults that only the hosted run showed.
+No contract changed. It is hosted at <https://stellar-agent-wallet.fly.dev/>; see "Hosted" below for what was run and for the two faults that only the hosted run showed.
+
+> Everything below that names `scout-agent-demo.fly.dev` was run there, on 2026-11-27. The site moved to `stellar-agent-wallet.fly.dev` the same day, when the page stopped being about the sample agent; see "The move" at the end of this record. Those lines are left as they were run.
 
 ## What was run
 

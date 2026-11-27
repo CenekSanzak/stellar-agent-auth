@@ -4,14 +4,14 @@ Lets your own AI agent, in Claude Code, Codex or any MCP host, pay for things fr
 
 Your agent gets a key of its own, on the machine it runs on. It never sees your wallet's key. You approve an allowance for it in your wallet: how much per purchase, per day and in total, which sellers, until when. The wallet contract enforces it, and you can freeze the wallet or end the allowance at any time. A model that is talked into overspending is refused by the wallet, exactly as fixed code would be.
 
-It works on Stellar Testnet with the hosted wallet at <https://scout-agent-demo.fly.dev/>. All money there is test money.
+It works on Stellar Testnet with the hosted wallet at <https://stellar-agent-wallet.fly.dev/>. All money there is test money.
 
 ## The quick way: one sentence
 
-1. Open <https://scout-agent-demo.fly.dev/>, connect a wallet (or try as a guest) and press **Set up my wallet**.
+1. Open <https://stellar-agent-wallet.fly.dev/>, connect a wallet (or try as a guest) and press **Set up my wallet**.
 2. Under **Agents**, in the card **Your own AI agent**, copy the sentence and paste it into your agent. It names the instructions and says you agree to the three things they do:
 
-   > Set yourself up as the agent of my Stellar smart wallet on Testnet (test money only), following https://scout-agent-demo.fly.dev/agent-ready.md?owner=G... - I know what it involves, and you have my go-ahead for its three steps: run the npm package stellar-agent-wallet with npx; let it create a key for the agent under ~/.stellar-agent-wallet and register the agent on Stellar Testnet; and add it to the agent's MCP servers.
+   > Set yourself up as the agent of my Stellar smart wallet on Testnet (test money only), following https://stellar-agent-wallet.fly.dev/agent-ready.md?owner=G... - I know what it involves, and you have my go-ahead for its three steps: run the npm package stellar-agent-wallet with npx; let it create a key for the agent under ~/.stellar-agent-wallet and register the agent on Stellar Testnet; and add it to the agent's MCP servers.
 
    The instructions say what each step does, where it leaves a trace and how to undo it. A careful agent may still ask you to confirm before it runs anything.
 3. Go back to the page. Your agent is listed there. Give it an allowance.
@@ -23,7 +23,7 @@ You need Node.js 20 or newer on the machine the agent runs on. Nothing else is i
 
 ```sh
 npx -y stellar-agent-wallet init \
-  --market https://scout-agent-demo.fly.dev --owner <your G... account> --name "Claude Code on my laptop"
+  --market https://stellar-agent-wallet.fly.dev --owner <your G... account> --name "Claude Code on my laptop"
 ```
 
 `init` prints a link. Open it, approve an allowance, then tell your agent's host how to start the tools:
