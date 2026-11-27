@@ -30,7 +30,7 @@ A blocked or declined purchase is returned as the tool's result, not as a failed
 
 For the hosted demo the server runs with Scout's key, so a model in a terminal is Scout: the same registered agent, the same verification, the same allowance the owner approved in the page. Nothing in the page had to change, and the page's record shows the model's purchases as they happen, because the indexer follows the wallet whoever pays from it.
 
-A different agent would need its own registration, its own assessment by the provider, and an allowance naming it. The contracts and the SDK support that. The demo's page offers an allowance for Scout only.
+A different agent would need its own registration, its own assessment by the provider, and an allowance naming it. The contracts and the SDK support that. The demo's page offers an allowance for Scout only. ([ADR 0015](0015-bring-your-own-agent.md) built exactly this, later the same day.)
 
 ### What the server finds for itself
 

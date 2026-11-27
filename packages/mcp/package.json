@@ -6,9 +6,10 @@
   "type": "module",
   "description": "An MCP server that lets an AI agent pay x402 resources from a policy-limited smart wallet.",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node bundle.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "pack:npm": "node pack.mjs"
   },
   "bin": {
     "stellar-agent-auth-mcp": "./dist/index.js"
@@ -31,5 +32,8 @@
   "files": [
     "dist",
     "README.md"
-  ]
+  ],
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
 }

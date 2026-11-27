@@ -1,8 +1,8 @@
 # Hosting the demo
 
-The demo runs at <https://scout-agent-demo.fly.dev/>, deployed on 2026-11-27 as described here.
+The demo runs at <https://stellar-agent-wallet.fly.dev/>, deployed on 2026-11-27 as described here.
 
-It is one container: it serves the page, plays Scout and the sellers, and runs the indexer. It needs a public HTTPS address, a small persistent disk, outbound access to the Stellar RPC, and three secrets. This page uses Fly.io; any host that runs a container behind a TLS proxy works the same way.
+It is one container: it serves the page, plays Scout and the sellers, and runs the indexer. It needs a public HTTPS address, a small persistent disk, outbound access to the Stellar RPC, and four secrets. This page uses Fly.io; any host that runs a container behind a TLS proxy works the same way.
 
 Design and risks are in [ADR 0013](decisions/0013-hosted-demo.md).
 
@@ -25,7 +25,7 @@ Usage above 5 dollars in a month is billed, and the account moves to Pay As You 
 ## What is needed first
 
 - A Testnet deployment and its record in `deployments/testnet/demo.json`. The repository has one; [the demo README](../apps/demo/README.md) says how to make another.
-- The three keys the server signs with: `agent.key`, `funder.key` and `facilitator.key`, in the `keys` directory the setup wrote under `.local/testnet-demo/`. They are Testnet keys. The other keys in that directory stay where they are.
+- The four keys the server signs with: `agent.key`, `funder.key`, `facilitator.key` and `provider.key`, in the `keys` directory the setup wrote under `.local/testnet-demo/`. They are Testnet keys. The admin, controller and issuer keys stay where they are. The provider's key is what lets the server verify agents that visitors bring; without it everything else works ([ADR 0015](decisions/0015-bring-your-own-agent.md)).
 - [`flyctl`](https://fly.io/docs/flyctl/install/) and a Fly account.
 
 ## Deploy
@@ -35,17 +35,18 @@ Choose a name. It becomes the address, `https://<name>.fly.dev`, so set both `ap
 ```sh
 fly auth login
 fly apps create <name>
-fly volumes create scout_data --size 1 --region iad --app <name>
+fly volumes create wallet_data --size 1 --region iad --app <name>
 ```
 
-Give it the three secrets. Run this yourself, in your own shell; it reads the key files and sends them to Fly, and prints nothing. `--stage` keeps them until the first deploy.
+Give it the four secrets. Run this yourself, in your own shell; it reads the key files and sends them to Fly, and prints nothing. `--stage` keeps them until the first deploy.
 
 ```sh
 KEYS=$(ls -d .local/testnet-demo/*/keys | tail -1)
 fly secrets set --stage --app <name> \
-  SCOUT_AGENT_SECRET="$(cat "$KEYS/agent.key")" \
-  SCOUT_FUNDER_SECRET="$(cat "$KEYS/funder.key")" \
-  SCOUT_FACILITATOR_SECRET="$(cat "$KEYS/facilitator.key")"
+  DEMO_AGENT_SECRET="$(cat "$KEYS/agent.key")" \
+  DEMO_FUNDER_SECRET="$(cat "$KEYS/funder.key")" \
+  DEMO_FACILITATOR_SECRET="$(cat "$KEYS/facilitator.key")" \
+  DEMO_PROVIDER_SECRET="$(cat "$KEYS/provider.key")"
 ```
 
 Then deploy and look at it:
@@ -69,10 +70,10 @@ docker build -t scout-demo .
 KEYS=$(ls -d .local/testnet-demo/*/keys | tail -1)
 docker run --rm -p 127.0.0.1:8792:8080 \
   -e DEMO_PUBLIC_URL=http://localhost:8792 \
-  -e DEMO_AGENT_KEY=env:SCOUT_AGENT_SECRET -e DEMO_FUNDER_KEY=env:SCOUT_FUNDER_SECRET \
-  -e DEMO_FACILITATOR_KEY=env:SCOUT_FACILITATOR_SECRET \
-  -e SCOUT_AGENT_SECRET="$(cat "$KEYS/agent.key")" -e SCOUT_FUNDER_SECRET="$(cat "$KEYS/funder.key")" \
-  -e SCOUT_FACILITATOR_SECRET="$(cat "$KEYS/facilitator.key")" scout-demo
+  -e DEMO_AGENT_KEY=env:DEMO_AGENT_SECRET -e DEMO_FUNDER_KEY=env:DEMO_FUNDER_SECRET \
+  -e DEMO_FACILITATOR_KEY=env:DEMO_FACILITATOR_SECRET \
+  -e DEMO_AGENT_SECRET="$(cat "$KEYS/agent.key")" -e DEMO_FUNDER_SECRET="$(cat "$KEYS/funder.key")" \
+  -e DEMO_FACILITATOR_SECRET="$(cat "$KEYS/facilitator.key")" scout-demo
 ```
 
 Open `http://localhost:8792/`. Do not run it at the same time as a deployed copy with the same keys: two facilitators on one account get in each other's way.
@@ -81,7 +82,8 @@ Open `http://localhost:8792/`. Do not run it at the same time as a deployed copy
 
 | What | When | How |
 | --- | --- | --- |
-| Scout's verification expires | 30 days after it was issued; the page shows the date | `DEMO_DIRECTORY=.local/testnet-demo npm run demo:assess`, from the machine that holds the provider's key. Nothing is redeployed |
+| Scout's verification expires | 30 days after it was issued; the page shows the date | Nothing, when the server has the provider's key: it renews the result when less than seven days are left. Without the key, `DEMO_DIRECTORY=.local/testnet-demo npm run demo:assess` from the machine that has it |
+| The provider runs out of test XLM | Each verification it publishes costs a fraction of an XLM | Fund the provider's account again from Friendbot |
 | The server restarts by itself | | `fly logs`. A machine this small has little room: the one crash seen was the server running out of memory, described in [the validation record](HOSTED_DEMO_VALIDATION.md) |
 | The faucet runs out of tUSD | After about 100,000 faucet payments | Pay more from the issuer to the funder; the issuer's key is in the setup's key directory |
 | The facilitator or the funder runs out of test XLM | Each payment costs a fraction of an XLM; Friendbot gave each 10,000 | Fund the account again from Friendbot |
@@ -103,3 +105,16 @@ The server needs these set, and nothing Fly-specific:
 | `DEMO_AGENT_KEY`, `DEMO_FUNDER_KEY`, `DEMO_FACILITATOR_KEY` | `env:<NAME>` references to the three secrets |
 
 Behind a proxy, the client's address is taken from `Fly-Client-IP`, or failing that from the first entry of `X-Forwarded-For`. Use a proxy that sets one of them itself and does not pass on what a client sent, or every rate limit can be sidestepped. The proxy must terminate TLS; the server speaks plain HTTP.
+
+## Publishing the agent tool to npm
+
+Visitors' agents fetch the tool from this server as one file. To offer it from npm as well:
+
+```sh
+npm run build
+npm run pack:npm -w @stellar-agent-auth/mcp -- 0.1.0
+cd packages/mcp/dist/npm && npm publish
+```
+
+That publishes `stellar-agent-wallet`, a package with no dependencies. It needs an npm account and `npm login`. Then set `DEMO_AGENT_NPM_PACKAGE = "stellar-agent-wallet"` in `fly.toml` and deploy: the instructions agents read switch from the downloaded file to `npx`.
+

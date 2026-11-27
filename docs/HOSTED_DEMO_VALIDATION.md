@@ -9,7 +9,9 @@ The demo was rebuilt so that it can be hosted and tried by anyone: Scout, a rese
 - the page: a welcome, a one-button setup, the wallet, the allowance, the sellers, the tasks, the activity and the wallet's record, with a guest key, Freighter and Stellar Wallets Kit (`src/`);
 - a container image and a Fly.io configuration (`Dockerfile`, `fly.toml`).
 
-No contract changed. It is hosted at <https://scout-agent-demo.fly.dev/>; see "Hosted" below for what was run there and for the two faults that only the hosted run showed.
+No contract changed. It is hosted at <https://stellar-agent-wallet.fly.dev/>; see "Hosted" below for what was run and for the two faults that only the hosted run showed.
+
+> Everything below that names `scout-agent-demo.fly.dev` was run there, on 2026-11-27. The site moved to `stellar-agent-wallet.fly.dev` the same day, when the page stopped being about the sample agent; see "The move" at the end of this record. Those lines are left as they were run.
 
 ## What was run
 
@@ -110,10 +112,51 @@ With this package the whole run on 2026-11-27 was: `npm run check` passed with 5
 
 No model took part. The machine this was built on has no agent harness with a command-line mode, so what a model does with these tools has not been observed.
 
+## Bringing your own agent
+
+Anyone can connect their own AI agent to their wallet ([ADR 0015](decisions/0015-bring-your-own-agent.md), [how to use it](../packages/mcp/README.md)). Run on 2026-11-27 on the local network: `npm run check` passed with 543 unit tests; `npm run test:integration` passed with 100 tests in 16 files and 1 opt-in skipped; `npm run test:browser` passed with 11.
+
+**The agent's side and the server** (`tests/integration/own-agent.test.ts`, 7 tests). One call to `init` creates two key files readable by their owner only, registers a new agent whose identity carries the hash of the document the server serves for it, gets a result published for it (`Metadata` and `SignerAccount` passed, `Endpoint` not applicable), and puts it on the owner's list. Running it again registers nothing and publishes nothing. The command line says what is left to do and prints no key. The server refuses a name with markup in it, an unknown agent, linking the built-in agent, and a path that tries to leave the metadata directory. With an allowance the owner approves for it, the agent pays through its tools with no settings but its home directory; a purchase above its limit is blocked and a seller that wants more refuses it. The built-in agent, asked to pay under the new agent's allowance, pays nothing.
+
+**In the page** (`tests/browser/demo.test.ts`, one new test). A guest's page shows the sentence to paste, naming the server and the guest's account. The instructions and the one-file tool are served. After `init` runs for that guest, the agent appears in the page by itself, verified, with no allowance. The guest approves Scout's allowance and then a smaller one for the new agent; the agent buys a brief and is blocked on a digest above its limit; its card shows 1 of 4 spent while Scout's shows 0 of 6; and the record names the agent.
+
+**By hand, as an agent would do it.** The instructions were fetched from a running local server, the tool was downloaded from it with `curl` into an empty directory outside the repository and run with Node 24: `init` registered agent 2 and printed the link and the host commands; the link opened the page on that agent's allowance form; after approval the downloaded file, started as an MCP server by a client, reported the allowance, bought a brief and was blocked on a digest; the page showed the spend within seconds.
+
+One fault was found by looking at the page and fixed: for a few seconds after any action the record was labelled "Incomplete", with a warning, because the indexer had not yet read the newest entries. A record that trails the wallet by its newest entries is now shown as catching up for up to 45 seconds, and as incomplete only if it stays that way.
+
+**On Testnet, against the hosted server**, by hand on 2026-11-27, once the owner had given the server the provider's key. The tool was downloaded from <https://scout-agent-demo.fly.dev/agent/stellar-agent-wallet.mjs> into an empty directory and run for a guest's wallet:
+
+| Step | Result |
+| --- | --- |
+| `init` | Registered agent 2 and had it verified by the hosted verifier, which fetched the agent's document from the server's own public address: `Metadata` and `SignerAccount` passed |
+| The printed link, opened in the guest's browser | The page showed the agent, verified, and its allowance form |
+| An allowance of 2 per purchase and 4 per day, approved in the page | Active |
+| `allowance`, through the downloaded file as an MCP server | 2 per purchase, 4 per day, nothing spent, the wallet's balance |
+| `price` for a digest at 3 | The wallet would refuse |
+| `buy` a brief at 1 | Paid: [`76b80543…09cebb96`](https://stellar.expert/explorer/testnet/tx/76b80543b09ad4c38edce7aabb8b1c6c80a8790c4f96cbfd3dc7987609cebb96) |
+| `buy` a digest at 3 | Blocked by the wallet: `PaymentLimitExceeded` |
+| `buy` the audited report | Declined by the seller: `payee_gate_CheckNotPassed` |
+| The guest's page afterwards | 1 of 4 spent for the agent, Scout's allowance untouched, and the purchase in the wallet's record under the agent's name, verified against the wallet |
+
+**A model, once.** The owner pasted the first version of the sentence into Claude Code. It read `agent-ready.md`, checked Node, and stopped before running anything: the page told it to act without explaining, the file was too large to review, the registration could not be undone, and it would change its own configuration. It listed the three steps and asked for a go-ahead. Nothing was wrong with that; the document was. It was rewritten to say what each step does and how to undo it and to leave the decision with the person, and the pasted sentence now carries the owner's go-ahead for the three steps. How a model responds to the new version has not been seen yet.
+
+**The page, reorganised**, the same day, twice: first into cards on one page, then, since that was still crowded, into the wallet and one of four sections at a time, with agents as rows that unfold and forms that open over the page. With bringing your own and the sample offered side by side. The browser suite checks that no allowance form is open until an agent is picked, and that a reload of a connected, set-up owner never shows the welcome page or the set-up steps on the way back. Quiet reconnection for Freighter and for wallets through Stellar Wallets Kit is written and was not tried with a wallet: only the guest's was run.
+
+**A reload on Testnet, timed.** With the reorganised page first deployed, a returning guest saw "Looking for your wallet…" for about half a minute. The page read everything in turn and drew once at the end, and its ledger-time read decoded a whole Testnet ledger each time. Reads now go out together and the page draws as they return. Measured in a browser against the hosted server afterwards: the wallet section 0.8 seconds after the reload, the balance at 1.0, and the agents with their allowances at 1.6. Before the allowances have been read, the page says it is reading them; it does not say an agent has none.
+
+## The move
+
+On 2026-11-27 the site moved from `scout-agent-demo.fly.dev` to <https://stellar-agent-wallet.fly.dev/>: a new Fly app and volume, the same Testnet deployment and keys. The old app's machine was removed; the app and its volume were left.
+
+Run against the new address by hand, as a guest: the one-button set-up; then the published npm package, `npx -y stellar-agent-wallet init`, which registered agent 4 and had it verified by the server at its new address; an allowance of 2 per purchase approved from the printed link; and the package started by an MCP client with `npx -y stellar-agent-wallet mcp`, which bought a brief ([`8b39071e…9a64b081`](https://stellar.expert/explorer/testnet/tx/8b39071e1e753a0fe60b486556448ae001c48a9a52ade2c5ec951e5d9a64b081)) and was blocked on a digest.
+
+What the move cost, as expected: wallets and allowances are on the ledger and were untouched; the indexer read their history again from the network; the list of refused attempts, which lived only in the old volume, started empty; agents registered through the old address carry its address in their identity and have to be set up again; and a guest is a new guest, since a guest's key is kept by the browser per address.
+
 ## Not covered
 
 - **Rate limits behind the real proxy.** The hosted server takes the client's address from Fly's header; that two visitors are limited separately was tested with that header locally, not from two networks.
 - **Wallets other than a guest key and Freighter.** The wallet picker opens under the content security policy and lists the wallets; no wallet in it was used to sign. Freighter was last used by hand with the earlier page, on a local network; the code that connects it is unchanged.
 - **Load.** Two visitors at once were tested. The limits are set for a demo that a few reviewers use; the public Testnet RPC's own limits were not measured.
-- **A long-running deployment.** It has been up for minutes, not days. What needs doing over time is listed in [hosting](HOSTING.md).
+- **A model, to the end.** One read the instructions and asked before acting. None has completed the set-up or used the tools.
+- **A long-running deployment.** It has been up for hours, not days. What needs doing over time is listed in [hosting](HOSTING.md).
 - **A refusal as a transaction on the ledger**, as before: Scout asks the wallet before it signs.

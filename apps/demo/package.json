@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@stellar-agent-auth/indexer": "0.0.0",
+    "@stellar-agent-auth/mcp": "0.0.0",
     "@stellar-agent-auth/sdk": "0.0.0",
     "@stellar-agent-auth/verifier": "0.0.0",
     "@stellar-agent-auth/x402": "0.0.0",

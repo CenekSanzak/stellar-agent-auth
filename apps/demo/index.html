@@ -4,8 +4,8 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
-    <meta name="description" content="Scout: a research agent that pays from your wallet, inside an allowance you set. A demo of agent payments on Stellar." />
-    <title>Scout · an agent on an allowance</title>
+    <meta name="description" content="A smart wallet your AI agents can spend from, inside allowances you set. Agent payments on Stellar Testnet." />
+    <title>Agent Wallet · allowances for AI agents</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b5d4b'/%3E%3Cpath d='M16 6l3.2 6.8L26 16l-6.8 3.2L16 26l-3.2-6.8L6 16l6.8-3.2z' fill='%23f4f2ec'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
@@ -13,7 +13,7 @@
     <header class="top">
       <div class="brand">
         <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" /><path d="M16 6l3.2 6.8L26 16l-6.8 3.2L16 26l-3.2-6.8L6 16l6.8-3.2z" /></svg>
-        <span class="brand-name">Scout</span>
+        <span class="brand-name">Agent Wallet</span>
         <span id="network"></span>
       </div>
       <div id="account" class="account-bar"></div>
@@ -21,24 +21,19 @@
     <main>
       <div id="notice"></div>
       <section id="welcome" aria-label="Welcome"></section>
+      <section id="checking" aria-label="Looking for your wallet" aria-live="polite"></section>
       <section id="setup" aria-label="Set up"></section>
       <div class="board">
-        <div class="col side">
-          <section id="wallet" aria-label="Your wallet"></section>
-          <section id="withdraw" aria-label="Withdraw"></section>
-          <section id="allowance" aria-label="Scout's allowance"></section>
-          <section id="allowance-form" aria-label="New allowance"></section>
-          <section id="sellers" aria-label="Sellers"></section>
-          <section id="scout" aria-label="Scout"></section>
-        </div>
-        <div class="col main">
-          <section id="tasks" aria-label="Ask Scout"></section>
-          <section id="activity" aria-label="Activity" aria-live="polite"></section>
-          <section id="record" aria-label="The wallet's record"></section>
-          <section id="details" aria-label="Under the hood"></section>
-        </div>
+        <section id="wallet" aria-label="Your wallet"></section>
+        <nav id="tabs" aria-label="Sections"></nav>
+        <section id="agents" aria-label="Agents"></section>
+        <section id="activity" aria-label="Activity" aria-live="polite"></section>
+        <section id="record" aria-label="The wallet's record"></section>
+        <section id="sellers" aria-label="Sellers"></section>
       </div>
     </main>
+    <dialog id="dialog" class="dialog" aria-label="Details"></dialog>
+    <div id="toast" aria-live="polite"></div>
     <footer id="footer"></footer>
     <script type="module" src="/src/index.ts"></script>
   </body>

@@ -129,8 +129,8 @@ export function describeOutcome(
     case 'PolicyRevoked':
       return { title: 'Allowance ended', detail: `Policy ${toHex(outcome.policy_hash).slice(0, 12)}…`, tone: 'warn' };
     case 'PauseChanged':
-      return outcome.paused ? { title: 'Agent frozen', detail: 'No agent can pay until the owner unfreezes.', tone: 'warn' }
-        : { title: 'Agent unfrozen', detail: 'Agents can pay again under their allowances.', tone: 'muted' };
+      return outcome.paused ? { title: 'Wallet frozen', detail: 'No agent can pay until the owner unfreezes it.', tone: 'warn' }
+        : { title: 'Wallet unfrozen', detail: 'Agents can pay again under their allowances.', tone: 'muted' };
     case 'OwnerWithdrawal':
       return { title: 'Owner withdrawal', detail: pay(outcome.transfer), tone: 'muted' };
     case 'Executed':
@@ -205,7 +205,7 @@ export function explainStep(
     DailyLimitExceeded: `That would pass today's limit${of(allowance?.perDay)}. It resets at midnight UTC.`,
     TotalLimitExceeded: `That would pass the allowance's overall limit${of(allowance?.total)}.`,
     RecipientNotAllowed: `${vendor} is not one of the sellers you approved.`,
-    Paused: 'You froze Scout. Nothing can be paid until you unfreeze it.',
+    Paused: 'You froze the wallet. Nothing can be paid until you unfreeze it.',
     Revoked: 'You ended this allowance. Scout can spend nothing until you approve a new one.',
     Expired: 'This allowance has run out of time. Approve a new one to let Scout buy again.',
     TransferFailed: 'The wallet does not hold enough to pay for this.',

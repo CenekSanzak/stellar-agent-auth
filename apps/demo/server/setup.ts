@@ -68,7 +68,7 @@ export async function airdrop(server: rpc.Server, address: string, attempts = 6)
 const DAY = 86_400n;
 
 /** What the project's limited verifier covers, all implemented checks passing. */
-const FIXTURE_CHECKS: CheckResult[] = [
+export const FIXTURE_CHECKS: CheckResult[] = [
   { kind: 'Code', outcome: 'Unsupported', score: null },
   { kind: 'Endpoint', outcome: 'Passed', score: 0 },
   { kind: 'Media', outcome: 'Unsupported', score: null },
@@ -98,7 +98,7 @@ export interface SetupOptions {
 }
 
 /** The verifier's working files for a deployment: its reports, and what it needs to resume a publication. */
-const verifierContext = (deployment: Pick<Deployment, 'passphrase' | 'agent_registry' | 'verification_registry' | 'provider'>,
+export const verifierContext = (deployment: Pick<Deployment, 'passphrase' | 'agent_registry' | 'verification_registry' | 'provider'>,
   server: rpc.Server, directory: string) => ({
   server, networkPassphrase: deployment.passphrase, agentRegistry: deployment.agent_registry,
   verificationRegistry: deployment.verification_registry, provider: deployment.provider.address,

@@ -6,14 +6,21 @@ import {
   verificationVerdict,
 } from '../../apps/demo/src/model.js';
 import { connectGuest, forgetGuest } from '../../apps/demo/src/owner.js';
-import { currentAllowance, initialState, phaseOf, taskAllowance, type Activity, type State } from '../../apps/demo/src/state.js';
-import { renderScout, renderSellers } from '../../apps/demo/src/views/market.js';
-import { renderDetails, renderRecord } from '../../apps/demo/src/views/record.js';
-import { renderAllowance, renderAllowanceForm, renderWallet } from '../../apps/demo/src/views/wallet.js';
-import { renderAccount, renderNetwork, renderNotice, renderSetup, renderWelcome } from '../../apps/demo/src/views/welcome.js';
-import { renderActivity, renderTasks } from '../../apps/demo/src/views/work.js';
+import {
+  agentName, currentAllowance, formAgent, initialState, initialUi, listedAgents, openAgent, phaseOf, sampleListed, taskAllowance,
+  type Activity, type OwnAgent, type State, type Ui,
+} from '../../apps/demo/src/state.js';
+import { addOptions, connectDialog, renderAgents, renderDialog, setupPrompt, setupSteps } from '../../apps/demo/src/views/agents.js';
+import { renderSellers as sellersTab } from '../../apps/demo/src/views/market.js';
+import { renderRecord as recordTab } from '../../apps/demo/src/views/record.js';
+import { allowanceDialog, renderWallet } from '../../apps/demo/src/views/wallet.js';
+import {
+  renderAccount, renderChecking, renderNetwork, renderNotice, renderSetup, renderTabs, renderToast, renderWelcome,
+} from '../../apps/demo/src/views/welcome.js';
+import { renderActivity as activityTab } from '../../apps/demo/src/views/work.js';
 import type { Config, Step } from '../../apps/demo/src/backend.js';
 import { TASKS } from '../../apps/demo/server/agent.js';
+import { agentReady } from '../../apps/demo/server/agent-ready.js';
 import { rateLimiter } from '../../apps/demo/server/backend.js';
 import {
   LedgerWatch, PRODUCTS, VENDORS, VENDOR_IDS, backfill, observe, produce, type ContentSource, type LedgerSource,
@@ -39,6 +46,7 @@ const config: Config = {
   vendors: VENDORS.map((vendor) => ({ ...vendor, requires: [...vendor.requires], address: payee[vendor.id]! })),
   products: PRODUCTS.map(({ id, vendor, kind, title, price, path }) => ({ id, vendor, kind, title, price, path })),
   tasks: [...TASKS], faucet_amount: '100', indexer_path: '/indexer/', read_source: account(12), explorer: null,
+  own_agents: { setup: true, verify: true }, public_url: null, agent_npm_package: null,
 };
 const testnet: Config = { ...config, network: 'testnet', explorer: 'https://explorer.example/testnet', provider: { ...config.provider, mode: 'Live' } };
 
@@ -80,9 +88,23 @@ const ready = (overrides: Partial<State> = {}): State => ({
   session: { wallet, deployed: true },
   agent: { identity, result, provider },
   wallet: { balance: 97n * UNIT, paused: false, head: { sequence: 2n, hash: bytes(9) } },
-  policies: [view()],
+  policies: [view()], agentsRead: true,
   ...overrides,
 });
+
+/** The page's view state, with some of it changed. */
+const ui = (overrides: Partial<Ui> = {}): Ui => ({ ...initialUi(), ...overrides });
+const on = (state: State, overrides: Partial<Ui>): State => ({ ...state, ui: { ...state.ui, ...overrides } });
+/** Each section is drawn only under its own tab; these look at one as if its tab were open. */
+const renderActivity = (state: State) => activityTab(on(state, { tab: 'activity' }));
+const renderRecord = (state: State) => recordTab(on(state, { tab: 'record' }));
+const renderSellers = (state: State) => sellersTab(on(state, { tab: 'sellers' }));
+/** The sample agent's row, listed and unfolded. */
+const renderScoutCard = (state: State) => renderAgents(on(state, { sample: true, openAgent: '1' }));
+/** The owner's own agents' rows, the first one unfolded. */
+const renderOwnAgents = (state: State) => (state.own.length ? renderAgents(on(state, { openAgent: state.own[0]!.agent_id })) : '');
+/** The allowance form, opened for one agent. */
+const renderAllowanceForm = (state: State, agent?: string) => allowanceDialog(agent ? on(state, { dialog: { kind: 'allowance', agent } }) : state);
 
 describe('verification wording', () => {
   const verdict = (overrides: Partial<Parameters<typeof verificationVerdict>[0]> = {}) =>
@@ -112,24 +134,35 @@ describe('verification wording', () => {
   });
 
   it('labels a fixture result as simulated, and a live one not', () => {
-    const html = renderScout(ready());
+    const html = renderScoutCard(ready());
     expect(html).toContain('data-testid="fixture"');
     expect(html).toContain('SIMULATED');
     expect(html).toMatch(/data-testid="verification">Verified</);
-    expect(html).toContain('<dt>Not checked</dt><dd>Code</dd>');
-    expect(renderScout(ready({ now: result.expires_at + 10n }))).toMatch(/data-testid="verification">Expired</);
-    expect(renderScout(ready({ config: testnet }))).not.toContain('data-testid="fixture"');
-    expect(renderScout(ready({ agent: null }))).toContain('Reading the agent registry');
+    expect(html).toContain('not checked: Code, SignerHistory');
+    expect(renderScoutCard(ready({ now: result.expires_at + 10n }))).toMatch(/data-testid="verification">Expired</);
+    expect(renderScoutCard(ready({ config: testnet }))).not.toContain('data-testid="fixture"');
+    expect(renderScoutCard(ready({ agent: null }))).toContain('Reading…');
   });
+
 });
 
 describe('where the visitor is', () => {
-  it('goes from loading to welcome to setup to ready', () => {
+  it('goes from loading to welcome to setup to ready, and claims nothing while it does not know', () => {
     expect(phaseOf(initialState())).toBe('loading');
     expect(phaseOf({ ...initialState(), config })).toBe('welcome');
-    expect(phaseOf(ready({ session: null }))).toBe('setup');
     expect(phaseOf(ready({ session: { wallet, deployed: false } }))).toBe('setup');
     expect(phaseOf(ready())).toBe('ready');
+    // Connected, and not yet known to have a wallet or not: someone who set up yesterday is not shown the set-up.
+    expect(phaseOf(ready({ session: null }))).toBe('checking');
+    expect(phaseOf(ready({ session: { wallet, deployed: false }, accountFunded: null }))).toBe('checking');
+    expect(phaseOf({ ...initialState(), config, reconnecting: true })).toBe('checking');
+    const waiting = ready({ session: null });
+    expect(renderChecking(waiting)).toContain('Looking for your wallet');
+    expect(renderSetup(waiting)).toBe('');
+    expect(renderWelcome(waiting)).toBe('');
+    expect(renderChecking({ ...initialState(), config, reconnecting: true })).toContain('Reconnecting');
+    expect(renderWelcome({ ...initialState(), config, reconnecting: true })).toBe('');
+    expect(renderChecking(ready())).toBe('');
   });
 
   it('offers a guest, Freighter and other wallets, and says the money is not real', () => {
@@ -140,7 +173,7 @@ describe('where the visitor is', () => {
     expect(renderWelcome({ ...initialState(), config, connectError: 'Freighter was not found' })).toContain('data-testid="connect-error"');
     expect(renderWelcome(ready())).toBe('');
     expect(renderNetwork({ ...initialState(), config })).toContain('Local network · test money only');
-    expect(renderNetwork({ ...initialState(), config: testnet })).toContain('Testnet demo · test money only');
+    expect(renderNetwork({ ...initialState(), config: testnet })).toContain('Testnet · test money only');
   });
 
   it('walks a connected owner through setting up, one button for all of it', () => {
@@ -149,8 +182,6 @@ describe('where the visitor is', () => {
     expect(html).toContain('Friendbot');
     expect(html).not.toContain('class="done"');
     expect(renderSetup(ready({ session: { wallet, deployed: false } }))).toContain('class="done"');
-    // Nothing can be started before the page knows the account and the wallet address.
-    expect(renderSetup(ready({ session: null, accountFunded: null }))).toMatch(/data-action="setup" disabled/);
     expect(renderSetup(ready({ session: { wallet, deployed: false }, owner: { kind: 'freighter', label: 'Freighter', address: account(20) } })))
       .toContain('Your wallet asks you to approve it');
     expect(renderSetup(ready())).toBe('');
@@ -195,37 +226,88 @@ describe('the allowance', () => {
     expect(allowanceView(allowance, policyState(), asset, NOW + 86_400n)).toMatchObject({ spentToday: '0', leftToday: '6', spentEver: '3', share: 0 });
   });
 
-  it('shows the meter, the limits and the owner\'s two stops', () => {
-    const html = renderAllowance(ready());
+  it('shows an agent as a row with what it has spent, and unfolded, its limits and the way to end it', () => {
+    const html = renderScoutCard(ready());
+    expect(html).toMatch(/data-testid="scout" data-agent="1" data-allowance="active" data-open="true"/);
     expect(html).toMatch(/data-testid="allowance-status">Active</);
-    expect(html).toMatch(/<strong>3<\/strong> of 6 tUSD spent today/);
+    expect(html).toMatch(/data-testid="allowance-spent">3 of 6 tUSD spent today · 3 left</);
     expect(html).toContain('width:50%');
     expect(html).toContain('3 / 20');
-    expect(html).toContain('data-action="freeze"');
+    expect(html).toContain('May pay: Ledger Wire, Deep Archive, Audited Sources.');
     expect(html).toMatch(/data-action="end" data-policy="a{64}"/);
-    const frozen = renderAllowance(ready({ wallet: { balance: 1n, paused: true, head: { sequence: 2n, hash: bytes(9) } } }));
-    expect(frozen).toMatch(/data-testid="allowance-status">Frozen</);
-    expect(frozen).toContain('data-action="unfreeze"');
-    expect(frozen).not.toContain('data-action="freeze"');
+    // Folded, the row keeps what matters and drops the rest.
+    const folded = renderAgents(on(ready(), { openAgent: '' }));
+    expect(folded).toMatch(/data-allowance="active" data-open="false"/);
+    expect(folded).toMatch(/allowance-spent">3 of 6 tUSD spent today/);
+    expect(folded).not.toContain('data-action="end"');
+    // Freezing is the wallet's: it stops every agent at once, so it sits with the wallet.
+    expect(html).not.toContain('data-action="freeze"');
+    expect(renderWallet(ready())).toContain('data-action="freeze"');
+    const paused = ready({ wallet: { balance: 1n, paused: true, head: { sequence: 2n, hash: bytes(9) } } });
+    expect(renderScoutCard(paused)).toMatch(/data-allowance="frozen"[\s\S]*data-testid="allowance-status">Frozen</);
+    expect(renderWallet(paused)).toContain('data-action="unfreeze"');
+    expect(renderWallet(paused)).toContain('data-testid="frozen"');
+    expect(renderWallet(paused)).not.toContain('data-action="freeze"');
   });
 
-  it('says there is none, before the first and after the last, and offers the form', () => {
-    expect(renderAllowance(ready({ policies: [] }))).toContain('Scout cannot spend anything yet');
-    expect(renderAllowance(ready({ policies: [view({}, { revoked: true })] }))).toContain('The last allowance has ended');
-    const form = renderAllowanceForm(ready({ policies: [] }));
+  it('says there is none, before the first and after the last, and opens the form only when asked', () => {
+    const none = renderScoutCard(ready({ policies: [] }));
+    expect(none).toMatch(/data-allowance="none"/);
+    expect(none).toContain('No allowance yet');
+    expect(none).toContain('Scout cannot spend anything yet');
+    expect(none).toMatch(/data-action="set-allowance" data-agent="1"/);
+    const ended = renderScoutCard(ready({ policies: [view({}, { revoked: true })] }));
+    expect(ended).toContain('Its allowance has ended');
+    expect(ended).toContain('The last allowance has ended');
+    // No form is put in front of anyone: it opens for the agent the owner picks.
+    expect(renderAllowanceForm(ready({ policies: [] }))).toBe('');
+    const form = renderAllowanceForm(ready({ policies: [] }), '1');
     expect(form).toContain('data-form="allowance"');
+    expect(form).toContain('Set Scout&#39;s allowance');
     // Three sellers are ticked to begin with; the cheapest is left for the owner to decide.
     expect(form.match(/name="vendor" value="[a-z-]+" checked/g)).toHaveLength(3);
     expect(form).toMatch(/value="bargain-data"\s+\/>/);
     expect(form).toContain('Recent ledgers dataset 8');
   });
 
-  it('marks each seller approved or not under the current allowance', () => {
+  it('lists where agents can buy, and whom each seller sells to', () => {
     const html = renderSellers(ready());
-    const approvedOf = (id: string) => new RegExp(`data-vendor="${id}" data-approved="(true|false)"`).exec(html)?.[1];
-    expect(VENDOR_IDS.map(approvedOf)).toEqual(['true', 'true', 'true', 'false']);
-    expect(html).toContain('only agents whose code was audited');
-    expect(renderSellers(ready({ policies: [] }))).not.toContain('data-approved="true"');
+    expect(html.match(/data-testid="vendor"/g)).toHaveLength(4);
+    expect(html).toContain('Only agents whose code was audited');
+    expect(html).toContain('Recent ledgers dataset');
+    expect(html).toContain('8 tUSD');
+    // A section is drawn under its own tab and nowhere else.
+    expect(sellersTab(ready())).toBe('');
+  });
+
+  it('offers bringing an agent and trying the sample as equals, and lists only agents the owner has', () => {
+    // A new owner has no agents: the two ways to get one are offered side by side, in the same form.
+    const fresh = ready({ policies: [] });
+    expect(listedAgents(fresh)).toEqual([]);
+    const empty = renderAgents(fresh);
+    expect(empty).toContain('Add your first agent');
+    expect(empty.indexOf('data-testid="connect"')).toBeGreaterThan(-1);
+    expect(empty.indexOf('data-testid="connect"')).toBeLessThan(empty.indexOf('data-testid="sample"'));
+    expect(empty.match(/class="option"/g)).toHaveLength(2);
+    expect(empty).not.toContain('data-testid="scout"');
+    // The sample becomes one of the owner's agents when they ask to try it, or once it has had an allowance.
+    expect(sampleListed(fresh)).toBe(false);
+    expect(sampleListed(on(fresh, { sample: true }))).toBe(true);
+    expect(sampleListed(ready())).toBe(true);
+    expect(renderAgents(ready())).toContain('data-testid="scout"');
+    // Once it is listed it is no longer offered; bringing your own always is.
+    expect(addOptions(ready())).not.toContain('data-testid="sample"');
+    expect(addOptions(ready())).toContain('data-testid="connect"');
+    expect(renderAgents(ready())).toContain('data-testid="add-agent"');
+    // The only agent's row is unfolded without asking; among several, the one the owner opened.
+    expect(openAgent(ready())).toBe('1');
+    expect(renderAgents(ready({ wallet: null }))).toBe('');
+    expect(renderAgents(on(ready(), { tab: 'activity' }))).toBe('');
+    // Until the allowances have been read, nobody is told their agents have none.
+    const reading = renderAgents(ready({ agentsRead: false, policies: [] }));
+    expect(reading).toContain('data-testid="agents-reading"');
+    expect(reading).not.toContain('Add your first agent');
+    expect(formAgent(ready({ agentsRead: false, policies: [], ui: ui({ dialog: { kind: 'allowance', agent: '1' } }) }))).toBeUndefined();
   });
 
   it('shows the balance and warns when there is nothing to spend', () => {
@@ -235,6 +317,144 @@ describe('the allowance', () => {
     expect(html).not.toContain('The wallet is empty');
     expect(renderWallet(ready({ wallet: { balance: 0n, paused: false, head: { sequence: 0n, hash: bytes(0) } } }))).toContain('The wallet is empty');
     expect(renderWallet(ready({ wallet: null }))).toContain('Reading the wallet');
+  });
+});
+
+describe('an agent of the owner\'s own', () => {
+  const mine: OwnAgent = { agent_id: '7', name: 'Claude on my laptop', signer: account(40), view: {
+    identity: { ...identity, agent_id: 7n, signer: account(40) }, provider,
+    result: { ...result, agent_id: 7n, checks: [
+      { kind: 'Endpoint', outcome: 'NotApplicable', score: null }, { kind: 'Metadata', outcome: 'Passed', score: 0 },
+      { kind: 'SignerAccount', outcome: 'Passed', score: 0 }, { kind: 'Code', outcome: 'Unsupported', score: null },
+    ] },
+  } };
+  const forMine = view({ agent_id: 7n, signer: account(40), assets: [{ asset: asset.contract, per_transaction: 2n * UNIT, per_day: 4n * UNIT, total: null }] },
+    { daily_spend: [], total_spend: [] }, 'dd'.repeat(32));
+
+  it('has an allowance of its own, apart from Scout\'s', () => {
+    const both = ready({ own: [mine], policies: [forMine, view()] });
+    expect(currentAllowance(both)?.hash).toBe('aa'.repeat(32));
+    expect(currentAllowance(both, '7')?.hash).toBe('dd'.repeat(32));
+    expect(currentAllowance(ready({ own: [mine] }), '7')).toBeUndefined();
+    // Scout's tasks never run under another agent's allowance.
+    expect(taskAllowance(ready({ own: [mine], policies: [forMine] }))).toBeUndefined();
+    expect(agentName(both, '7')).toBe('Claude on my laptop');
+    expect(agentName(both, '1')).toBe('Scout');
+    expect(agentName(both, '99')).toBe('Agent 99');
+  });
+
+  it('is a row of its own, with its verification and its own limits, and asks for an allowance when it has none', () => {
+    const both = ready({ own: [mine], policies: [forMine, view()] });
+    expect(listedAgents(both).map((agent) => agent.id)).toEqual(['7', '1']);
+    // With several agents nothing is unfolded until the owner opens one.
+    expect(openAgent(both)).toBeUndefined();
+    expect(openAgent(on(both, { openAgent: '7' }))).toBe('7');
+    const html = renderOwnAgents(both);
+    expect(html).toMatch(/data-testid="own-agent" data-agent="7" data-allowance="active" data-open="true"/);
+    expect(html).toContain('Claude on my laptop');
+    expect(html).toMatch(/data-testid="own-agent-verification">Verified</);
+    expect(html).toContain('Verified for Metadata, SignerAccount');
+    expect(html).toMatch(/own-allowance-spent">0 of 4 tUSD spent today/);
+    expect(html).toMatch(/data-action="end" data-policy="d{64}"/);
+    const waiting = renderOwnAgents(ready({ own: [mine], policies: [] }));
+    expect(waiting).toMatch(/data-testid="own-agent" data-agent="7" data-allowance="none"/);
+    expect(waiting).toMatch(/data-action="set-allowance" data-agent="7"/);
+    expect(renderOwnAgents(ready({ own: [{ ...mine, view: null }], policies: [] }))).toContain('Reading…');
+    const lapsed = renderOwnAgents(ready({ own: [mine], policies: [], now: result.expires_at + 5n }));
+    expect(lapsed).toMatch(/own-agent-verification">Expired</);
+    expect(lapsed).toContain('will not pay for it until it is verified again');
+  });
+
+  it('gets the allowance form when the owner asks for it, and nobody gets one unasked', () => {
+    expect(formAgent(ready({ policies: [] }))).toBeUndefined();
+    expect(formAgent(ready({ policies: [], ui: ui({ dialog: { kind: 'allowance', agent: '1' } }) }))).toBe('1');
+    // An agent that has an allowance has no form to fill in.
+    expect(formAgent(ready({ ui: ui({ dialog: { kind: 'allowance', agent: '1' } }) }))).toBeUndefined();
+    const asked = ready({ own: [mine], ui: ui({ dialog: { kind: 'allowance', agent: '7' } }) });
+    expect(formAgent(asked)).toBe('7');
+    const [key, form] = renderDialog(asked, 'x');
+    expect(key).toBe('allowance:7');
+    expect(form).toMatch(/data-agent="7"/);
+    expect(form).toContain('Set Claude on my laptop&#39;s allowance');
+    expect(form).toContain('name="agent" value="7"');
+    expect(form).toContain('data-action="close-dialog"');
+    // Asking for an agent that is not the owner's, or that already has an allowance, opens nothing.
+    expect(renderDialog(ready({ ui: ui({ dialog: { kind: 'allowance', agent: '7' } }) }), 'x')).toEqual(['', '']);
+    expect(formAgent(ready({ ui: ui({ dialog: { kind: 'allowance', agent: '99' } }) }))).toBeUndefined();
+    expect(formAgent(ready({ own: [mine], policies: [forMine, view()], ui: ui({ dialog: { kind: 'allowance', agent: '7' } }) }))).toBeUndefined();
+    // The other windows: choosing how to add an agent, and taking money out.
+    expect(renderDialog(ready({ ui: ui({ dialog: { kind: 'add' } }) }), 'x')[1]).toContain('Add an agent');
+    expect(renderDialog(ready({ ui: ui({ dialog: { kind: 'withdraw' } }) }), 'x')[1]).toContain('data-form="withdraw"');
+    expect(renderDialog(ready(), 'x')).toEqual(['', '']);
+  });
+
+  it('is brought in with one sentence that names the instructions and carries the owner\'s go-ahead', () => {
+    const local = setupPrompt(config, account(20), 'http://127.0.0.1:8790');
+    expect(local).toContain(`following http://127.0.0.1:8790/agent-ready.md?owner=${account(20)}`);
+    expect(local).toContain('you have my go-ahead for its three steps');
+    expect(local).toContain('download one file, the agent tool, from this site and run it with Node.js');
+    expect(local).toContain('test money only');
+    const hosted = { ...testnet, public_url: 'https://scout.example', agent_npm_package: 'stellar-agent-wallet' };
+    const live = setupPrompt(hosted, account(20), 'http://ignored');
+    expect(live).toContain('https://scout.example/agent-ready.md');
+    expect(live).toContain('on Testnet');
+    expect(live).toContain('run the npm package stellar-agent-wallet with npx; let it create a key for the agent under ~/.stellar-agent-wallet and register the agent on Stellar Testnet; and add it to the agent\'s MCP servers.');
+    // The owner is shown the same three steps the sentence agrees to.
+    const html = connectDialog(ready({ config: hosted }), 'x');
+    expect(html).toContain('data-testid="setup-prompt"');
+    for (const step of setupSteps(hosted)) expect(html).toContain(esc(step));
+    expect(html).toContain('data-action="copy-prompt"');
+    expect(connectDialog(ready({ ui: ui({ copied: true }) }), 'x')).toContain('Copied');
+    expect(connectDialog(ready({ config: { ...config, own_agents: { setup: true, verify: false } } }), 'x')).toContain('cannot verify agents at the moment');
+    // Where agents cannot be set up, bringing one is not offered.
+    expect(addOptions(ready({ config: { ...config, own_agents: { setup: false, verify: false } } }))).not.toContain('data-testid="connect"');
+  });
+
+  it('is told plainly what the set-up does, where, and how to undo it, and is not told to act', () => {
+    const text = agentReady({ origin: 'https://scout.example', owner: account(20), network: 'Stellar Testnet', verifies: true, npmPackage: 'stellar-agent-wallet' });
+    expect(text).toContain(`npx -y stellar-agent-wallet init --market https://scout.example --owner ${account(20)}`);
+    expect(text).toContain('claude mcp add agent-wallet -- npx -y stellar-agent-wallet mcp');
+    expect(text).toContain('codex mcp add agent-wallet');
+    // What a careful agent asks before running someone's program: what it is, what it touches, what stays.
+    expect(text).toContain('no dependencies and no install scripts');
+    expect(text).toContain('The registry entry stays');
+    expect(text).toContain('It does not read or need\nthe owner\'s keys');
+    expect(text).toContain('claude mcp remove agent-wallet');
+    expect(text).toContain('rm -rf ~/.stellar-agent-wallet');
+    expect(text).toContain('npm view stellar-agent-wallet');
+    // In the desktop app there is no `claude` command; the entry is then written into the settings file.
+    expect(text).toContain('`mcpServers` object in `~/.claude.json`');
+    expect(text).toContain('"agent-wallet": { "type": "stdio", "command": "npx", "args": ["-y", "stellar-agent-wallet", "mcp"] }');
+    // The decision is the person's. The page does not give it, and does not tell the agent to skip saying what it will do.
+    expect(text).toContain('The person who sent you here decides, not this page');
+    expect(text).not.toMatch(/do\s+not\s+explain/i);
+    expect(text).not.toContain('curl');
+    expect(text).not.toContain('opened without an owner');
+    expect(text).not.toContain('cannot verify agents');
+
+    const file = agentReady({ origin: 'http://127.0.0.1:8790', network: 'local Stellar', verifies: false, toolSha256: 'ab'.repeat(32) });
+    expect(file).toContain('curl -fsSL http://127.0.0.1:8790/agent/stellar-agent-wallet.mjs');
+    expect(file).toContain('node ~/.stellar-agent-wallet/stellar-agent-wallet.mjs init --market http://127.0.0.1:8790');
+    expect(file).toContain(`SHA-256 as this server serves it is \`${'ab'.repeat(32)}\``);
+    expect(file).toContain('opened without an owner');
+    expect(file).toContain('cannot verify agents at the moment');
+  });
+
+  it('is named in the wallet\'s record, as the owner is', () => {
+    const paid = { kind: 'AccountPayment' as const, policy_hash: bytes(1), authorization: bytes(2),
+      action: { kind: 'Transfer' as const, transfer: { asset: asset.contract, recipient: payee['ledger-wire']!, amount: UNIT } } };
+    const entry = (sequence: bigint, actor: string, outcome: Parameters<typeof describeOutcome>[0]) => ({
+      entry: { schema_version: 1, wallet, sequence, previous_hash: bytes(0), ledger: 10, timestamp: NOW, actor, outcome },
+      hash: bytes(1), ledger: 10, transaction: 'ab'.repeat(32), event_id: `${sequence}`,
+    });
+    const history = {
+      status: 'verified' as const, detail: 'ok', head: { sequence: 3n, hash: bytes(1) }, indexer: { status: 'verified', detail: 'ok' },
+      entries: [entry(1n, account(20), { kind: 'PolicyCreated', policy_hash: bytes(1) }), entry(2n, account(40), paid), entry(3n, account(5), paid)],
+    };
+    const html = renderRecord(ready({ own: [mine], history, ui: ui() }));
+    expect(html).toContain('<td>Claude on my laptop</td>');
+    expect(html).toContain('<td>Scout</td>');
+    expect(html).toContain('<td>You</td>');
   });
 });
 
@@ -250,7 +470,7 @@ describe('what became of a purchase', () => {
     expect(blocked('DailyLimitExceeded').detail).toContain('today\'s limit of 6 tUSD');
     expect(blocked('TotalLimitExceeded').detail).toContain('overall limit of 20 tUSD');
     expect(blocked('RecipientNotAllowed').detail).toContain('Deep Archive is not one of the sellers you approved');
-    expect(blocked('Paused').detail).toContain('You froze Scout');
+    expect(blocked('Paused').detail).toContain('You froze the wallet');
     expect(blocked('Revoked').detail).toContain('You ended this allowance');
     // Without the allowance at hand the sentence still stands, without the number.
     expect(explainStep({ status: 'blocked', error: 'PaymentLimitExceeded' }, { vendor: 'x', code: 'tUSD' }).detail)
@@ -301,7 +521,7 @@ describe('what became of a purchase', () => {
     // A long table is cut until asked for, and a hash is shortened with the whole of it on hover.
     expect(html.match(/<tr><td>/g)).toHaveLength(5);
     expect(html).toContain('Show all 8 rows');
-    expect(renderActivity(ready({ activity: [item], ui: { ...initialState().ui, tables: [301] } })).match(/<tr><td>/g)).toHaveLength(8);
+    expect(renderActivity(ready({ activity: [item], ui: ui({ tables: [301] }) })).match(/<tr><td>/g)).toHaveLength(8);
     expect(html).not.toContain(`>${'f'.repeat(64)}<`);
     expect(renderActivity(ready())).toContain('Nothing yet');
   });
@@ -317,15 +537,32 @@ describe('what became of a purchase', () => {
     expect(html).not.toContain('>Confirmed<');
   });
 
-  it('lists the tasks, and holds them back until there is an allowance to try them under', () => {
-    const html = renderTasks(ready());
+  it('lists the sample agent\'s tasks in its row, with what the last one came to, and holds them back until there is an allowance', () => {
+    const html = renderScoutCard(ready());
     for (const task of TASKS) expect(html).toContain(`data-task="${task.id}"`);
     expect(html).not.toContain('disabled');
-    expect(renderTasks(ready({ policies: [] }))).toMatch(/data-task="brief" disabled/);
+    expect(html).not.toContain('data-testid="last-result"');
+    expect(renderScoutCard(ready({ policies: [] }))).toMatch(/data-task="brief" disabled/);
     // After the allowance is ended the tasks stay, so that the wallet's refusal can be seen.
-    expect(renderTasks(ready({ policies: [view({}, { revoked: true })] }))).not.toContain('disabled');
-    expect(renderTasks(ready({ busy: 'Scout is working: Get today\'s network brief' }))).toContain('data-testid="busy"');
+    expect(renderScoutCard(ready({ policies: [view({}, { revoked: true })] }))).not.toMatch(/data-task="brief" disabled/);
+    const done: Activity = {
+      id: 4, at: '2026-11-27T14:02:11.000Z', kind: 'task', title: 'Buy the full ledger dataset', stage: 'refused', detail: '', hash: null, policy: 'aa'.repeat(32),
+      result: { task: 'dataset', notes: ['The wallet blocked the purchase.'], steps: [{
+        vendor: 'deep-archive', product: 'archive-ledgers', title: 'Recent ledgers dataset', amount: '8', payee: payee['deep-archive']!,
+        status: 'blocked', error: 'PaymentLimitExceeded', detail: null, tx_hash: null, content: null,
+      }] },
+    };
+    const after = renderScoutCard(ready({ activity: [done] }));
+    expect(after).toContain('data-testid="last-result"');
+    expect(after).toContain('That is more than your limit of 5 tUSD for one purchase');
+    // What is going on is said in one line out of the way of the page, and what the last action came to after it.
+    expect(renderToast(ready({ busy: 'Scout is working: Get today\'s network brief' }))).toContain('data-testid="busy"');
+    expect(renderToast(ready({ ui: ui({ flash: { text: 'Freeze all agents: confirmed', tone: 'good' } }) }))).toMatch(/data-testid="flash">Freeze all agents: confirmed</);
+    expect(renderToast(ready())).toBe('');
+    expect(renderTabs(ready({ activity: [done] }))).toMatch(/data-tab="activity">Activity<span class="count">1</);
+    expect(renderTabs(on(ready(), { tab: 'record' }))).toMatch(/aria-selected="true" data-action="tab" data-tab="record"/);
   });
+
 });
 
 describe('the wallet\'s record', () => {
@@ -345,36 +582,38 @@ describe('the wallet\'s record', () => {
     { id: 1, kind: 'simulation' as const, status: 'blocked', error: 'PaymentLimitExceeded', detail: 'Deep Archive, Recent ledgers dataset, 8 tUSD. Too much.', tx_hash: null, recorded_at: '2026-11-25T15:00:00.000Z' },
     { id: 2, kind: 'simulation' as const, status: 'declined', error: 'payee_gate_CheckNotPassed', detail: 'Audited Sources, Audited fee report, 2 tUSD. Refused.', tx_hash: null, recorded_at: '2026-11-25T15:01:00.000Z' },
   ];
-  const open = { ...initialState().ui, record: true };
+  const open = ui();
 
   it('describes each kind of entry, calling sellers by name', () => {
     expect(describeOutcome({ kind: 'AccountPayment', policy_hash: bytes(1), authorization: bytes(2), action: { kind: 'Transfer', transfer } }, asset, names))
       .toMatchObject({ title: 'Purchase', detail: '3 tUSD to Ledger Wire' });
     expect(describeOutcome({ kind: 'Executed', policy_hash: bytes(1), action_hash: bytes(2), action: { kind: 'Transfer', transfer } }, asset))
       .toMatchObject({ title: 'Agent payment', detail: expect.stringMatching(/^3 tUSD to G/) });
-    expect(describeOutcome({ kind: 'PauseChanged', paused: true }, asset).title).toBe('Agent frozen');
-    expect(describeOutcome({ kind: 'PauseChanged', paused: false }, asset).title).toBe('Agent unfrozen');
+    expect(describeOutcome({ kind: 'PauseChanged', paused: true }, asset).title).toBe('Wallet frozen');
+    expect(describeOutcome({ kind: 'PauseChanged', paused: false }, asset).title).toBe('Wallet unfrozen');
     expect(describeOutcome({ kind: 'PolicyCreated', policy_hash: bytes(1) }, asset).title).toBe('Allowance approved');
     expect(describeOutcome({ kind: 'PolicyRevoked', policy_hash: bytes(1) }, asset).title).toBe('Allowance ended');
     expect(describeOutcome({ kind: 'OwnerWithdrawal', transfer: { ...transfer, asset: contract(50) } }, asset).detail).toContain('units of');
   });
 
   it('says whether the list is the whole record, and keeps refusals apart', () => {
-    const closed = renderRecord(ready({ history, attempts }));
-    expect(closed).toMatch(/data-testid="history-status">Verified against the wallet</);
-    expect(closed).toContain('Show the record (2 on the ledger, 2 refused)');
-    expect(closed).not.toContain('data-testid="entries"');
-    const html = renderRecord(ready({ history, attempts, ui: open }));
+    const html = renderRecord(ready({ history, attempts }));
+    expect(html).toMatch(/data-testid="history-status">Verified against the wallet</);
     expect(html.indexOf('Purchase')).toBeLessThan(html.indexOf('Allowance approved'));
     expect(html).toContain('3 tUSD to Ledger Wire');
     expect(html).toContain('These are not on the ledger');
     expect(html).toMatch(/data-error="payee_gate_CheckNotPassed" data-status="declined"[\s\S]*Refused by the seller[\s\S]*Audited Sources, Audited fee report, 2 tUSD/);
     expect(html).toContain('PaymentLimitExceeded:');
     expect(html).not.toContain('Do not treat this list');
+    expect(recordTab(ready({ history, attempts }))).toBe('');
 
     const partial = renderRecord(ready({ history: { ...history, status: 'incomplete', detail: 'Entries after 2 are not yet visible' } }));
     expect(partial).toMatch(/data-testid="history-status">Incomplete</);
     expect(partial).toContain('Do not treat this list as the whole record');
+    // For a few seconds after an action the record trails the wallet. That is said plainly, without the warning.
+    const trailing = renderRecord(ready({ catchingUp: true, history: { ...history, status: 'incomplete', detail: 'Entries after 2 are not yet visible' } }));
+    expect(trailing).toMatch(/data-testid="history-status">Catching up</);
+    expect(trailing).not.toContain('Do not treat this list');
     expect(renderRecord(ready({ history: { ...history, status: 'mismatch', detail: 'Entry 2 does not hash' } })))
       .toMatch(/history-status">Does not match the wallet</);
     expect(renderRecord(ready({ historyError: 'offline' }))).toContain('The record could not be read: offline');
@@ -399,13 +638,14 @@ describe('the wallet\'s record', () => {
   });
 
   it('shows the addresses and the exact rules to anyone who asks', () => {
-    expect(renderDetails(ready())).not.toContain('Agent registry');
-    const html = renderDetails(ready({ ui: { ...initialState().ui, details: true } }));
+    expect(renderRecord(ready({ history }))).not.toContain('Agent registry');
+    const html = renderRecord(ready({ history, ui: ui({ details: true }) }));
     expect(html).toContain('Agent registry');
     expect(html).toContain('Ledger Wire is paid at');
     expect(html).toMatch(/data-testid="policy" data-status="active"/);
     expect(html).toContain('may pay up to 5 tUSD at a time and 6 tUSD per UTC day, and 20 tUSD in total');
   });
+
 });
 
 describe('the guest', () => {

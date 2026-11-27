@@ -71,7 +71,7 @@ The keys it needs are the agent's, the funder's and the facilitator's. They are 
 
 The setup now runs on Testnet as well. There the provider is `Live`: the agent's metadata is fetched from a public address and assessed by the project's verifier, and the result is published. On a local network the result is still a labelled fixture.
 
-A result lasts 30 days by default. `npm run demo:assess` publishes a new one, from the machine that holds the provider's key. The hosted server does not renew it: that would put the provider's key on the host, and the provider is the deployment's root of trust.
+A result lasts 30 days by default. `npm run demo:assess` publishes a new one, from the machine that holds the provider's key. The hosted server does not renew it: that would put the provider's key on the host, and the provider is the deployment's root of trust. ([ADR 0015](0015-bring-your-own-agent.md) later reversed this, so that the server can verify agents visitors bring.)
 
 ## Consequences
 

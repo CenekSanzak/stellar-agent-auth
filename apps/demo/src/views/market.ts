@@ -1,49 +1,21 @@
-import { addr, esc, money } from '../format.js';
-import { coverage, verificationVerdict } from '../model.js';
-import { currentAllowance, phaseOf, type State } from '../state.js';
+import { esc, money } from '../format.js';
+import { phaseOf, type State } from '../state.js';
 
-/** The sellers, what each asks, and whether the current allowance lets Scout pay them. */
+/** Where agents can buy here: sample sellers, what each asks, and whom each sells to. */
 export function renderSellers(state: State): string {
   const { config } = state;
-  if (phaseOf(state) !== 'ready' || !config) return '';
-  const approved = new Set(currentAllowance(state)?.policy.allowed_recipients ?? []);
+  if (phaseOf(state) !== 'ready' || state.ui.tab !== 'sellers' || !config) return '';
   const { code } = config.asset;
-  return `<div class="card sellers">
-    <div class="card-head"><h2>Sellers</h2><span class="muted small">paid over x402</span></div>
-    <ul class="vendor-list">${config.vendors.map((vendor) => {
-    const ok = approved.has(vendor.address);
-    return `<li data-testid="vendor" data-vendor="${esc(vendor.id)}" data-approved="${ok}">
-        <div class="vendor-head"><strong>${esc(vendor.name)}</strong>
-          <span class="badge ${ok ? 'good' : 'muted'}">${ok ? 'Approved' : 'Not approved'}</span></div>
-        <p class="muted small">${esc(vendor.tagline)}</p>
-        <ul class="prices">${config.products.filter((product) => product.vendor === vendor.id).map((product) =>
-    `<li><span>${esc(product.title)}</span><span class="price">${esc(money(product.price))} ${esc(code)}</span></li>`).join('')}</ul>
-        <p class="small ${vendor.requires.includes('Code') ? 'warn-text' : 'muted'}">Sells to: ${esc(vendor.sells_to.toLowerCase())}</p>
-      </li>`;
-  }).join('')}</ul>
-  </div>`;
-}
-
-/** The agent: who it is, who vouches for it, and what that covers. */
-export function renderScout(state: State): string {
-  const { config, agent } = state;
-  if (phaseOf(state) !== 'ready' || !config) return '';
-  if (!agent) return '<div class="card"><h2>Scout</h2><p class="muted">Reading the agent registry…</p></div>';
-  const verdict = verificationVerdict({ ...agent, now: state.now });
-  const covered = agent.result ? coverage(agent.result) : undefined;
-  const fixture = config.provider.mode === 'Fixture';
-  return `<div class="card scout">
-    <div class="card-head"><h2>Scout</h2><span class="badge ${verdict.tone}" data-testid="verification">${esc(verdict.label)}</span></div>
-    <p class="muted small">Agent ${esc(config.agent.agent_id)} in the agent registry. It signs with ${addr(config.agent.signer, config.explorer)} and holds no funds.</p>
-    <p>${esc(verdict.detail)}</p>
-    ${fixture ? '<p class="banner warn small" data-testid="fixture">On this local network the verification is SIMULATED test data, not a real assessment.</p>' : ''}
-    ${covered ? `<dl class="facts">
-      <dt>Checked and passed</dt><dd>${esc(covered.passed.join(', ') || 'nothing')}</dd>
-      ${covered.failed.length ? `<dt>Failed</dt><dd class="bad-text">${esc(covered.failed.join(', '))}</dd>` : ''}
-      ${covered.inconclusive.length ? `<dt>Inconclusive</dt><dd>${esc(covered.inconclusive.join(', '))}</dd>` : ''}
-      <dt>Not checked</dt><dd>${esc(covered.notChecked.join(', ') || 'nothing')}</dd>
-      <dt>Verified by</dt><dd>${addr(config.provider.address, config.explorer)}</dd>
-    </dl>` : ''}
-    <p class="muted small">Your wallet reads this verification itself before every payment. If it expires or is revoked, payments stop.</p>
-  </div>`;
+  return `<div class="section-head"><p class="muted">Sample sellers that run on this site and stand for other people's shops. They are paid over x402,
+      and an agent's allowance says which of them it may pay.</p></div>
+    <div class="table-wrap"><table class="sellers"><thead><tr><th>Seller</th><th>Sells</th><th>Price</th><th>Sells to</th></tr></thead><tbody>
+    ${config.vendors.map((vendor) => {
+    const products = config.products.filter((product) => product.vendor === vendor.id);
+    return `<tr data-testid="vendor" data-vendor="${esc(vendor.id)}">
+        <td><strong>${esc(vendor.name)}</strong><br /><span class="small muted">${esc(vendor.tagline)}</span></td>
+        <td>${products.map((product) => esc(product.title)).join('<br />')}</td>
+        <td class="price">${products.map((product) => `${esc(money(product.price))} ${esc(code)}`).join('<br />')}</td>
+        <td class="${vendor.requires.includes('Code') ? 'warn-text' : 'muted'}">${esc(vendor.sells_to)}</td>
+      </tr>`;
+  }).join('')}</tbody></table></div>`;
 }

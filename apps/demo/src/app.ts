@@ -3,13 +3,17 @@ import { demoServer, indexerUrl, readAttempts, type Config } from './backend.js'
 import { StorageJournal, createChain, type AllowanceDraft, type Chain, type OwnerOutcome } from './chain.js';
 import { fromHex, toHex } from './format.js';
 import type { Stage } from './model.js';
-import { ConnectCancelled, connectFreighter, connectGuest, connectWithKit, type Owner } from './owner.js';
-import { currentAllowance, initialState, phaseOf, taskAllowance, type Activity, type State } from './state.js';
-import { renderScout, renderSellers } from './views/market.js';
-import { renderDetails, renderRecord } from './views/record.js';
-import { renderAllowance, renderAllowanceForm, renderWallet, renderWithdraw } from './views/wallet.js';
-import { renderAccount, renderFooter, renderNetwork, renderNotice, renderSetup, renderWelcome } from './views/welcome.js';
-import { renderActivity, renderTasks } from './views/work.js';
+import { ConnectCancelled, connectFreighter, connectGuest, connectWithKit, reconnect, type Owner, type OwnerKind } from './owner.js';
+import { agentName, initialState, initialUi, phaseOf, taskAllowance, type Activity, type Dialog, type State, type Tab } from './state.js';
+import { renderAgents, renderDialog, setupPrompt } from './views/agents.js';
+import { renderSellers } from './views/market.js';
+import { renderRecord } from './views/record.js';
+import { renderWallet } from './views/wallet.js';
+import {
+  renderAccount, renderChecking, renderFooter, renderNetwork, renderNotice, renderSetup, renderTabs, renderToast, renderWelcome,
+} from './views/welcome.js';
+import { renderActivity } from './views/work.js';
+import { stageVerdict } from './model.js';
 
 /**
  * The page: one state object, a few actions that change it, and sections that are redrawn when their HTML changes.
@@ -23,6 +27,8 @@ const REFRESH_MS = 5_000;
 /** The agent's identity and verification change rarely; they are read on every sixth refresh. */
 const AGENT_EVERY = 6;
 const KEEP_ACTIVITY = 30;
+/** How long the record may trail the wallet before the page calls it incomplete. */
+const CATCH_UP_MS = 45_000;
 const LAST_KEY = 'scout-demo:last';
 
 export function startApp(root: Document, storage: Storage = localStorage) {
@@ -34,12 +40,13 @@ export function startApp(root: Document, storage: Storage = localStorage) {
   let refreshing = false;
   let refreshAgain = false;
   let refreshes = 0;
+  let behindSince: number | null = null;
   const drawn = new Map<string, string>();
 
   const sections: Record<string, (current: State) => string> = {
-    network: renderNetwork, account: renderAccount, notice: renderNotice, welcome: renderWelcome, setup: renderSetup,
-    wallet: renderWallet, allowance: renderAllowance, sellers: renderSellers, scout: renderScout, tasks: renderTasks,
-    activity: renderActivity, record: renderRecord, details: renderDetails, footer: renderFooter,
+    network: renderNetwork, account: renderAccount, notice: renderNotice, welcome: renderWelcome, checking: renderChecking,
+    setup: renderSetup, wallet: renderWallet, tabs: renderTabs, agents: renderAgents, activity: renderActivity,
+    record: renderRecord, sellers: renderSellers, toast: renderToast, footer: renderFooter,
   };
 
   function render() {
@@ -49,19 +56,20 @@ export function startApp(root: Document, storage: Storage = localStorage) {
       drawn.set(id, html);
       root.getElementById(id)!.innerHTML = html;
     }
-    // Forms are drawn once per situation, so a refresh never clears what the owner is typing.
-    const ready = phaseOf(state) === 'ready' && state.wallet !== null;
-    const forms: Record<string, [string, () => string]> = {
-      'allowance-form': [ready && !currentAllowance(state) ? `${state.session!.wallet}:${state.policies.length}` : '', () => renderAllowanceForm(state)],
-      withdraw: [ready && state.ui.withdraw ? state.session!.wallet : '', () => renderWithdraw(state)],
-    };
-    for (const [id, [key, draw]] of Object.entries(forms)) {
-      if (drawn.get(id) === key) continue;
-      drawn.set(id, key);
-      root.getElementById(id)!.innerHTML = key ? draw() : '';
+    // The window over the page is drawn when it changes and left alone otherwise, so that a refresh never clears
+    // what the owner is typing in it.
+    const host = root.getElementById('dialog') as HTMLDialogElement;
+    const [key, html] = renderDialog(state, root.location.origin);
+    if (drawn.get('dialog') !== key) {
+      drawn.set('dialog', key);
+      host.innerHTML = html;
+      if (key && !host.open) host.showModal();
+      if (!key && host.open) host.close();
     }
     root.body.dataset['busy'] = state.busy ? 'true' : 'false';
     root.body.dataset['phase'] = phaseOf(state);
+    // How far the newest action has got, whichever section is in view.
+    root.body.dataset['last'] = state.activity[0]?.stage ?? '';
   }
 
   // ---- What was done, kept in this browser per wallet ----
@@ -113,9 +121,25 @@ export function startApp(root: Document, storage: Storage = localStorage) {
     } finally {
       state.busy = null;
       saveActivity();
+      flash();
       render();
       await refresh();
     }
+  }
+
+  /** Say what the action that just ended came to, for a few seconds. The whole of it is under Activity. */
+  let flashTimer: ReturnType<typeof setTimeout> | undefined;
+  function flash() {
+    const item = state.activity[0];
+    if (!item) return;
+    const steps = item.result?.steps ?? [];
+    const paid = steps.filter((step) => step.status === 'paid').length;
+    const verdict = stageVerdict(item.stage);
+    state.ui.flash = item.result
+      ? { text: `${item.title}: ${paid} of ${steps.length} bought`, tone: paid === steps.length ? 'good' : paid ? 'warn' : 'muted' }
+      : { text: `${item.title}: ${verdict.label.toLowerCase()}${item.detail && item.stage !== 'confirmed' ? `. ${item.detail}` : ''}`, tone: verdict.tone };
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => { state.ui.flash = null; render(); }, 7_000);
   }
 
   /** One owner transaction inside an action that is already running, with its stages shown as they are reached. */
@@ -144,33 +168,63 @@ export function startApp(root: Document, storage: Storage = localStorage) {
     }
     refreshing = true;
     try {
-      state.now = await chain.ledgerTime();
-      if (state.owner) {
-        const { address } = state.owner;
-        if (!state.agent || refreshes % AGENT_EVERY === 0) state.agent = await chain.readAgentView();
+      // Reads that do not depend on each other go out together, and the page is drawn as each group comes back:
+      // on a public network a read takes a good part of a second, and a visitor should not wait for all of them.
+      const { owner, config } = state;
+      if (!owner) {
+        state.now = await chain.ledgerTime();
+      } else {
+        const { address } = owner;
+        const stale = !state.agent || refreshes % AGENT_EVERY === 0;
         refreshes += 1;
-        if (!state.accountFunded) state.accountFunded = await chain.accountExists(address);
-        // The server derives the wallet address and says whether the wallet exists yet.
-        if (!state.session?.deployed) {
-          state.session = await demoServer.session(address);
-          if (state.session.deployed) loadActivity();
-        }
-        const { session } = state;
+        const active = chain;
+        // First, who this is: does the account exist, and is there a wallet. Everything shown depends on that.
+        const [now, funded, session] = await Promise.all([
+          active.ledgerTime(),
+          state.accountFunded ? true : active.accountExists(address),
+          // The server derives the wallet address and says whether the wallet exists yet.
+          state.session?.deployed ? state.session : demoServer.session(address),
+        ]);
+        if (state.owner?.address !== address) return;
+        const found = !state.session?.deployed && session.deployed;
+        Object.assign(state, { now, accountFunded: funded, session });
+        if (found) loadActivity();
+        render();
         if (session.deployed) {
-          state.wallet = await chain.readWalletView(session.wallet);
-          try {
-            const indexer = indexerUrl(state.config);
-            state.history = await chain.history(session.wallet, indexer);
-            state.attempts = await readAttempts(indexer, session.wallet);
-            state.historyError = null;
-          } catch (error) {
-            state.historyError = message(error);
-          }
-          // Ended allowances are no longer listed by the wallet; the record names every one it ever had.
-          const known = (state.history?.entries ?? []).flatMap(({ entry }) =>
-            (entry.outcome.kind === 'PolicyCreated' ? [toHex(entry.outcome.policy_hash)] : []));
-          state.policies = await chain.readPolicies(session.wallet, [...known, ...state.policies.map((policy) => policy.hash)]);
-          state.exposure = chain.exposure(state.policies, state.now);
+          const indexer = indexerUrl(config);
+          const scout = stale ? active.readAgentView().then((view) => { state.agent = view; render(); }) : undefined;
+          const wallet = active.readWalletView(session.wallet).then((view) => { state.wallet = view; render(); });
+          const record = Promise.all([active.history(session.wallet, indexer), readAttempts(indexer, session.wallet)]).then(([history, attempts]) => {
+            Object.assign(state, { history, attempts, historyError: null });
+            // Behind by its newest entries, and not for long: the indexer has not read them yet.
+            const behind = history.status === 'incomplete' && /not yet visible|No events found/.test(history.detail);
+            behindSince = behind ? behindSince ?? Date.now() : null;
+            state.catchingUp = behindSince !== null && Date.now() - behindSince < CATCH_UP_MS;
+          }, (error: unknown) => { state.historyError = message(error); });
+          // Agents the owner brought: who they are comes from the server, what they are from the registries.
+          const own = demoServer.agents(address).catch(() => state.own).then((linked) => Promise.all(linked.map(async (agent) => {
+            const before = state.own.find((item) => item.agent_id === agent.agent_id);
+            const view = before?.view && !stale ? before.view : await active.readAgentView(agent.agent_id).catch(() => before?.view ?? null);
+            return { ...agent, view };
+          }))).then((agents) => {
+            // An agent that arrives while the owner is waiting for it is what they were waiting for: go on to
+            // its allowance.
+            const fresh = state.agentsRead ? agents.find((agent) => !state.own.some((before) => before.agent_id === agent.agent_id)) : undefined;
+            state.own = agents;
+            if (fresh && state.ui.dialog?.kind === 'connect') {
+              Object.assign(state.ui, { dialog: { kind: 'allowance', agent: fresh.agent_id }, openAgent: fresh.agent_id, tab: 'agents' });
+            }
+          });
+          // The allowances need the record first: ended ones are no longer listed by the wallet, and the record
+          // names every one it ever had.
+          const policies = record.then(async () => {
+            const known = (state.history?.entries ?? []).flatMap(({ entry }) =>
+              (entry.outcome.kind === 'PolicyCreated' ? [toHex(entry.outcome.policy_hash)] : []));
+            state.policies = await active.readPolicies(session.wallet, [...known, ...state.policies.map((policy) => policy.hash)]);
+            state.exposure = active.exposure(state.policies, state.now);
+          });
+          await Promise.all([scout, wallet, record, own, policies]);
+          state.agentsRead = true;
         }
       }
       state.readError = null;
@@ -190,13 +244,14 @@ export function startApp(root: Document, storage: Storage = localStorage) {
     signer = undefined;
     disconnectWallet = undefined;
     Object.assign(state, {
-      owner: null, session: null, accountFunded: null, wallet: null, policies: [], exposure: [], history: null,
-      historyError: null, attempts: [], activity: [], agent: null, connectError: null,
+      owner: null, session: null, accountFunded: null, wallet: null, policies: [], agentsRead: false, exposure: [], history: null,
+      historyError: null, catchingUp: false, attempts: [], activity: [], agent: null, own: [], connectError: null,
+      reconnecting: false,
     });
-    state.ui = { record: false, details: false, withdraw: false, form: false, tables: [] };
+    state.ui = { ...initialUi(), dialog: state.ui.dialog?.kind === 'allowance' ? state.ui.dialog : null };
   }
 
-  async function connect(make: (config: Config) => Promise<Owner> | Owner) {
+  async function connect(make: (config: Config) => Promise<Owner> | Owner, quiet = false) {
     if (!state.config || state.busy) return;
     state.connectError = null;
     try {
@@ -205,16 +260,17 @@ export function startApp(root: Document, storage: Storage = localStorage) {
       signer = owner.signer;
       disconnectWallet = owner.disconnect;
       state.owner = { kind: owner.kind, label: owner.label, address: owner.address };
-      // A guest comes back as the same guest after a reload; a wallet is asked again, since that takes its consent.
+      // Remembered, so that a reload comes back as the same owner without asking them again.
       try {
-        if (owner.kind === 'guest') storage.setItem(LAST_KEY, 'guest');
-        else storage.removeItem(LAST_KEY);
+        storage.setItem(LAST_KEY, owner.kind);
       } catch {
         // Not remembered, then.
       }
     } catch (error) {
-      if (!(error instanceof ConnectCancelled)) state.connectError = message(error);
+      // Coming back after a reload fails quietly: the welcome page is the answer, not an error about a wallet.
+      if (!(error instanceof ConnectCancelled) && !quiet) state.connectError = message(error);
     }
+    state.reconnecting = false;
     render();
     await refresh();
   }
@@ -284,9 +340,9 @@ export function startApp(root: Document, storage: Storage = localStorage) {
     },
     setup,
     fund: () => exclusive('The faucet is adding test dollars', faucet),
-    freeze: () => ownerAction('Freeze Scout', (onStage) => chain!.ownerCall(signer!, walletId(), 'pause', {}, onStage)),
-    unfreeze: () => ownerAction('Unfreeze Scout', (onStage) => chain!.ownerCall(signer!, walletId(), 'resume', {}, onStage)),
-    end: (target) => ownerAction('End Scout\'s allowance', (onStage) =>
+    freeze: () => ownerAction('Freeze all agents', (onStage) => chain!.ownerCall(signer!, walletId(), 'pause', {}, onStage)),
+    unfreeze: () => ownerAction('Unfreeze the wallet', (onStage) => chain!.ownerCall(signer!, walletId(), 'resume', {}, onStage)),
+    end: (target) => ownerAction('End an allowance', (onStage) =>
       chain!.ownerCall(signer!, walletId(), 'revoke_policy', { policy_hash: fromHex(target.dataset['policy']!) }, onStage)),
     task: (target) => {
       const task = state.config!.tasks.find(({ id }) => id === target.dataset['task']);
@@ -307,10 +363,49 @@ export function startApp(root: Document, storage: Storage = localStorage) {
         }
       });
     },
-    toggle: async (target) => {
-      const what = target.dataset['what'] as 'record' | 'details' | 'withdraw' | 'form';
-      state.ui[what] = !state.ui[what];
+    'set-allowance': async (target) => {
+      const agent = target.dataset['agent'];
+      state.ui.dialog = agent ? { kind: 'allowance', agent } : null;
       render();
+    },
+    'try-sample': async () => {
+      const agent = state.config!.agent.agent_id;
+      Object.assign(state.ui, { sample: true, openAgent: agent, dialog: { kind: 'allowance', agent } });
+      render();
+    },
+    dialog: async (target) => {
+      state.ui.dialog = { kind: target.dataset['dialog'] } as Dialog;
+      render();
+    },
+    'close-dialog': async () => {
+      state.ui.dialog = null;
+      render();
+    },
+    tab: async (target) => {
+      state.ui.tab = target.dataset['tab'] as Tab;
+      render();
+    },
+    'toggle-agent': async (target) => {
+      const agent = target.dataset['agent']!;
+      // Folding the only agent's row is allowed too: an empty string is nobody's ID.
+      state.ui.openAgent = target.getAttribute('aria-expanded') === 'true' ? '' : agent;
+      render();
+    },
+    'toggle-details': async () => {
+      state.ui.details = !state.ui.details;
+      render();
+    },
+    'copy-prompt': async () => {
+      const prompt = setupPrompt(state.config!, state.owner!.address, root.location.origin);
+      try {
+        await navigator.clipboard.writeText(prompt);
+      } catch {
+        // No clipboard here: select the text, so one keystroke copies it.
+        root.querySelector<HTMLTextAreaElement>('textarea.prompt')?.select();
+      }
+      state.ui.copied = true;
+      render();
+      setTimeout(() => { state.ui.copied = false; render(); }, 2_000);
     },
     'toggle-table': async (target) => {
       const id = Number(target.dataset['id']);
@@ -319,23 +414,30 @@ export function startApp(root: Document, storage: Storage = localStorage) {
     },
   };
   /** Things that only change what is shown; they are allowed while something else is running. */
-  const passive = new Set(['toggle', 'toggle-table']);
+  const passive = new Set(['toggle-table', 'toggle-details', 'toggle-agent', 'tab', 'dialog', 'close-dialog', 'set-allowance', 'try-sample', 'copy-prompt']);
 
   const forms: Record<string, (form: FormData) => Promise<void>> = {
-    allowance: (form) => ownerAction('Approve Scout\'s allowance', async (onStage) => {
-      const draft: AllowanceDraft = {
-        perPurchase: text(form, 'perPurchase'), perDay: text(form, 'perDay'), total: text(form, 'total'),
-        days: number(form, 'days'), vendors: form.getAll('vendor').map(String),
-        maxRisk: number(form, 'maxRisk'), maxAgeDays: number(form, 'maxAgeDays'),
-      };
-      try {
-        const policy = await chain!.draftAllowance(draft);
-        return await chain!.ownerCall(signer!, walletId(), 'approve_policy', { policy }, onStage);
-      } catch (error) {
-        // A value the form let through and the SDK did not: nothing was signed.
-        return { stage: 'error', hash: null, detail: message(error) };
-      }
-    }),
+    allowance: (form) => {
+      const agentId = text(form, 'agent') || state.config!.agent.agent_id;
+      return ownerAction(`Approve ${agentName(state, agentId)}'s allowance`, async (onStage) => {
+        // The wallet will ask for every check the agent has passed today, and no check it never had.
+        const view = agentId === state.config!.agent.agent_id ? state.agent : state.own.find((agent) => agent.agent_id === agentId)?.view;
+        const passed = new Set((view?.result?.checks ?? []).filter((check) => check.outcome === 'Passed').map((check) => check.kind));
+        const draft: AllowanceDraft = {
+          perPurchase: text(form, 'perPurchase'), perDay: text(form, 'perDay'), total: text(form, 'total'),
+          days: number(form, 'days'), vendors: form.getAll('vendor').map(String),
+          maxRisk: number(form, 'maxRisk'), maxAgeDays: number(form, 'maxAgeDays'), agentId,
+          requiredChecks: (['Endpoint', 'Metadata', 'SignerAccount'] as const).filter((kind) => passed.has(kind)),
+        };
+        try {
+          const policy = await chain!.draftAllowance(draft);
+          return await chain!.ownerCall(signer!, walletId(), 'approve_policy', { policy }, onStage);
+        } catch (error) {
+          // A value the form let through and the SDK did not: nothing was signed.
+          return { stage: 'error', hash: null, detail: message(error) };
+        }
+      });
+    },
     withdraw: (form) => ownerAction('Withdraw', async (onStage) => {
       try {
         const amount = toContractUnits(text(form, 'amount'), state.config!.asset.decimals);
@@ -353,15 +455,33 @@ export function startApp(root: Document, storage: Storage = localStorage) {
     const action = actions[name];
     if (target && action && (!state.busy || passive.has(name))) void action(target);
   });
+  // Escape, or a click beside the window, closes it; the state has to hear of it.
+  const host = root.getElementById('dialog') as HTMLDialogElement;
+  host.addEventListener('close', () => {
+    if (state.ui.dialog) {
+      state.ui.dialog = null;
+      render();
+    }
+  });
+  host.addEventListener('click', (event) => { if (event.target === host) host.close(); });
   root.addEventListener('submit', (event) => {
     const form = (event.target as HTMLElement).closest<HTMLFormElement>('form[data-form]');
     const handler = form && forms[form.dataset['form'] ?? ''];
     if (!form || !handler) return;
     event.preventDefault();
-    if (!state.busy) void handler(new FormData(form));
+    if (state.busy) return;
+    // What was filled in is read before the window that holds it is closed.
+    const filled = new FormData(form);
+    const agent = filled.get('agent');
+    Object.assign(state.ui, { dialog: null, tab: 'agents', ...(typeof agent === 'string' && agent ? { openAgent: agent } : {}) });
+    render();
+    void handler(filled);
   });
 
   async function boot() {
+    // A link from an agent's set-up names the agent that is waiting for an allowance.
+    const asked = new URLSearchParams(root.location.search).get('agent');
+    if (asked && /^\d{1,19}$/.test(asked)) Object.assign(state.ui, { dialog: { kind: 'allowance', agent: asked }, openAgent: asked });
     render();
     try {
       state.config = await demoServer.config();
@@ -376,8 +496,14 @@ export function startApp(root: Document, storage: Storage = localStorage) {
     } catch {
       // Storage is unavailable: start at the welcome page.
     }
-    if (state.config && last === 'guest') await connect((config) => connectGuest(config.passphrase, storage));
-    else await refresh();
+    if (state.config && (last === 'guest' || last === 'freighter' || last === 'kit')) {
+      // Whoever was here before the reload: found again without a click, or not at all.
+      state.reconnecting = true;
+      render();
+      await connect((config) => reconnect(last as OwnerKind, config.passphrase, storage), true);
+    } else {
+      await refresh();
+    }
     // Nothing is read for a page nobody is looking at.
     setInterval(() => { if (!state.busy && !root.hidden) void refresh(); }, REFRESH_MS);
     root.addEventListener('visibilitychange', () => { if (!root.hidden && !state.busy) void refresh(); });
