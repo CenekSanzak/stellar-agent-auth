@@ -16,6 +16,7 @@ import {
   type PayeeTerms,
 } from '@stellar-agent-auth/x402';
 import { ScoutAgent, TASKS, UnknownTask } from './agent.js';
+import { agentReady } from './agent-ready.js';
 import { AgentServiceError, createAgentService } from './agents.js';
 import { LedgerWatch, PRODUCTS, VENDORS, backfill, observe, produce, vendorOf } from './catalogue.js';
 import { hexToBytes, type Deployment } from './deployment.js';
@@ -81,6 +82,8 @@ export interface BackendOptions {
   directory: string;
   /** The built web app, served at `/` when present. */
   webRoot?: string;
+  /** The agent tool as one file, handed to an agent that is setting itself up. */
+  agentTool?: string;
   /** Origins a browser may call from, besides this server's own: the Vite dev server. */
   allowedOrigins?: readonly string[];
   /**
@@ -462,6 +465,24 @@ export async function createBackend(options: BackendOptions) {
       limited('any', client);
       // An agent's metadata document, at the address its identity names. It is public by nature: the verifier and
       // anyone checking the agent fetch it by this address.
+      if (request.method === 'GET' && url.pathname === '/agent-ready.md') {
+        // Written for an AI agent to read. The commands in it name this server as its visitors reach it.
+        const asked = url.searchParams.get('owner') ?? undefined;
+        const host = header(request, 'host') ?? '';
+        const origin = publicOrigin ?? (/^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/.test(host) ? `http://${host}` : undefined);
+        if (!origin) throw new Rejected(403, 'Host not allowed');
+        response.writeHead(200, { 'content-type': 'text/markdown; charset=utf-8', 'cache-control': 'no-store', ...SECURITY_HEADERS });
+        return response.end(agentReady({
+          origin, owner: asked && StrKey.isValidEd25519PublicKey(asked) ? asked : undefined, network: networkName,
+          verifies: agentService.capabilities().verify,
+        }));
+      }
+      if (request.method === 'GET' && url.pathname === '/agent/stellar-agent-wallet.mjs') {
+        const info = options.agentTool ? await stat(options.agentTool).catch(() => undefined) : undefined;
+        if (!info?.isFile()) return json(response, 404, { error: 'Not found' });
+        response.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store', ...SECURITY_HEADERS });
+        return createReadStream(options.agentTool!).pipe(response);
+      }
       const metadataRoute = /^\/agents\/(G[A-Z2-7]{55})\.json$/.exec(url.pathname);
       if (request.method === 'GET' && metadataRoute) {
         const bytes = await agentService.document(metadataRoute[1]!);

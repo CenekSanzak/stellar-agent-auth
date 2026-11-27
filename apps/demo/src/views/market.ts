@@ -14,7 +14,7 @@ export function renderSellers(state: State): string {
     const ok = approved.has(vendor.address);
     return `<li data-testid="vendor" data-vendor="${esc(vendor.id)}" data-approved="${ok}">
         <div class="vendor-head"><strong>${esc(vendor.name)}</strong>
-          <span class="badge ${ok ? 'good' : 'muted'}">${ok ? 'Approved' : 'Not approved'}</span></div>
+          <span class="badge ${ok ? 'good' : 'muted'}">${ok ? 'Scout may pay' : 'Not for Scout'}</span></div>
         <p class="muted small">${esc(vendor.tagline)}</p>
         <ul class="prices">${config.products.filter((product) => product.vendor === vendor.id).map((product) =>
     `<li><span>${esc(product.title)}</span><span class="price">${esc(money(product.price))} ${esc(code)}</span></li>`).join('')}</ul>

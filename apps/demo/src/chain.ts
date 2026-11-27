@@ -6,7 +6,7 @@ import {
   readPolicyState, readProvider, readWalletBalance, readWalletOwner, settleScope, submit, toContractUnits,
   walletDeployment,
   type AgentIdentity, type AuditHead, type Exposure, type IndexedHistory, type Invocation, type NetworkContext,
-  type Policy, type PolicyState, type ProviderRecord, type Signer, type TransactionJournal, type TransactionRecord,
+  type CheckKind, type Policy, type PolicyState, type ProviderRecord, type Signer, type TransactionJournal, type TransactionRecord,
   type VerificationResult, type WalletArgs, type WalletOwnerMethod,
 } from '@stellar-agent-auth/sdk';
 import type { Config } from './backend.js';
@@ -87,8 +87,12 @@ export interface AllowanceDraft {
   /** Empty for no overall cap. */
   total: string;
   days: number;
-  /** IDs of the sellers Scout may pay. */
+  /** IDs of the sellers the agent may pay. */
   vendors: string[];
+  /** The agent the allowance is for. */
+  agentId: string;
+  /** The checks its verification must show as passed. */
+  requiredChecks: CheckKind[];
   maxRisk: number;
   maxAgeDays: number;
 }
@@ -142,8 +146,8 @@ export function createChain(config: Config, journal: TransactionJournal) {
     }
   }
 
-  async function readAgentView(): Promise<AgentView> {
-    const agentId = BigInt(config.agent.agent_id);
+  async function readAgentView(id: string = config.agent.agent_id): Promise<AgentView> {
+    const agentId = BigInt(id);
     const optional = async <T>(work: Promise<T>) => work.catch((error: unknown) => {
       if (missing(error)) return undefined;
       throw error;
@@ -190,13 +194,14 @@ export function createChain(config: Config, journal: TransactionJournal) {
     const now = await ledgerTime();
     const units = (value: string) => toContractUnits(value, config.asset.decimals);
     const id = crypto.getRandomValues(new Uint8Array(32));
-    const agent = await readAgent(read(config.agent_registry), BigInt(config.agent.agent_id));
+    const agent = await readAgent(read(config.agent_registry), BigInt(draft.agentId));
     const recipients = config.vendors.filter((vendor) => draft.vendors.includes(vendor.id)).map((vendor) => vendor.address);
     // An empty list would mean any recipient at all, which is the opposite of approving nobody.
-    if (!recipients.length) throw new Error('Approve at least one seller, or Scout has nowhere to buy');
+    if (!recipients.length) throw new Error('Approve at least one seller, or the agent has nowhere to buy');
+    if (!draft.requiredChecks.length) throw new Error('This agent has no verification to require yet; wait until it is verified');
     return canonicalPolicy({
       schema_version: 1, policy_id: id, agent_id: agent.agent_id, revision: agent.revision, signer: agent.signer,
-      provider: config.provider.address, required_checks: ['Endpoint', 'Metadata', 'SignerAccount'],
+      provider: config.provider.address, required_checks: draft.requiredChecks,
       max_assessment_age: BigInt(draft.maxAgeDays) * 86_400n, max_risk_score: draft.maxRisk,
       assets: [{
         asset: config.asset.contract, per_transaction: units(draft.perPurchase), per_day: units(draft.perDay),

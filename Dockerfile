@@ -34,6 +34,7 @@ COPY apps/demo/package.json apps/demo/
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/packages/sdk/dist packages/sdk/dist
 COPY --from=build /app/packages/x402/dist packages/x402/dist
+COPY --from=build /app/packages/mcp/dist packages/mcp/dist
 COPY --from=build /app/services/verifier/dist services/verifier/dist
 COPY --from=build /app/services/indexer/dist services/indexer/dist
 COPY --from=build /app/apps/demo/dist apps/demo/dist

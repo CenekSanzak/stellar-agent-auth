@@ -43,9 +43,11 @@ export async function startDemo(
   const deployment = await loadDeployment(env['DEMO_DEPLOYMENT'] ?? recordPath(env));
   const webRoot = fileURLToPath(new URL('../web', import.meta.url));
   const built = await stat(join(webRoot, 'index.html')).then((info) => info.isFile(), () => false);
+  // The agent tool's one-file build, from the package beside this one.
+  const agentTool = fileURLToPath(new URL('../../../../packages/mcp/dist/stellar-agent-wallet.mjs', import.meta.url));
   const backend = await createBackend({
     deployment, directory: env['DEMO_STATE_DIRECTORY'] ?? join(demoDirectory(env), 'state', deployment.epoch), env,
-    ...(built ? { webRoot } : {}), ...(publicUrl ? { publicUrl } : {}),
+    ...(built ? { webRoot } : {}), ...(publicUrl ? { publicUrl } : {}), agentTool,
     allowedOrigins: (env['DEMO_ALLOWED_ORIGINS'] ?? (publicUrl ? '' : 'http://localhost:5173,http://127.0.0.1:5173')).split(',')
       .map((origin) => origin.trim()).filter(Boolean),
   });

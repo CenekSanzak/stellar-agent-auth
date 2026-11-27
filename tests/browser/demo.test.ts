@@ -8,10 +8,12 @@ import { chromium, type Browser, type Page } from 'playwright-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createBackend } from '../../apps/demo/server/backend.js';
 import { setupDeployment } from '../../apps/demo/server/setup.js';
+import { configure, createWalletAgent, initAgent } from '../../packages/mcp/src/index.js';
 import { localNetwork } from '../integration/support/local-network.js';
 
 const TIMEOUT = 300_000;
 const WEB_ROOT = fileURLToPath(new URL('../../apps/demo/dist/web', import.meta.url));
+const AGENT_TOOL = fileURLToPath(new URL('../../packages/mcp/dist/stellar-agent-wallet.mjs', import.meta.url));
 
 /**
  * The demo in a real browser, against the local network. The page is the built app, served by the demo server
@@ -73,9 +75,9 @@ describe('Scout demo in a browser', () => {
       env: process.env, directory: join(directory, 'run'), record: join(directory, 'deployment.json'), log: () => {},
     });
     backend = await createBackend({
-      deployment, directory: join(directory, 'state'), env: process.env, webRoot: WEB_ROOT,
+      deployment, directory: join(directory, 'state'), env: process.env, webRoot: WEB_ROOT, agentTool: AGENT_TOOL,
       // Both browsers in this suite are one client address.
-      limits: { tasksPerClientPerMinute: 1_000 },
+      limits: { tasksPerClientPerMinute: 1_000, agentSetupPerClientPerHour: 1_000 },
     });
     http = createServer((request, response) => { void backend.handler(request, response); });
     await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve));
@@ -205,7 +207,7 @@ describe('Scout demo in a browser', () => {
     await expect.poll(() => text('allowance-status'), { timeout: 30_000 }).toBe('Frozen');
     const frozen = await ask('brief', 'refused');
     expect(await steps(frozen)).toEqual([['ledger-wire', 'blocked', 'Paused']]);
-    expect(await frozen.innerText()).toContain('You froze Scout');
+    expect(await frozen.innerText()).toContain('You froze the wallet');
 
     await click('unfreeze');
     await settled('confirmed');
@@ -250,6 +252,63 @@ describe('Scout demo in a browser', () => {
     await click('disconnect');
     await page.locator('[data-action="connect-guest"]').waitFor();
     expect(await page.getByTestId('wallet-balance').count()).toBe(0);
+  }, TIMEOUT);
+
+  it('lets a visitor bring their own agent: one sentence to paste, then an allowance for it', async () => {
+    const context = await browser.newContext();
+    const mine = await context.newPage();
+    watch(mine);
+    await arrive(mine);
+    const owner = (await mine.locator('[data-testid="owner"] .addr').getAttribute('title'))!;
+
+    // The page offers one sentence to paste into an agent. It names this server and this owner.
+    const prompt = await mine.getByTestId('setup-prompt').inputValue();
+    expect(prompt).toContain(`${base}agent-ready.md?owner=${owner}`);
+    // What the agent reads there, and the tool it is told to fetch, are both served.
+    const instructions = await (await fetch(`${base}agent-ready.md?owner=${owner}`)).text();
+    expect(instructions).toContain(`init --market ${base.slice(0, -1)} --owner ${owner}`);
+    const tool = await fetch(`${base}agent/stellar-agent-wallet.mjs`);
+    expect(tool.status).toBe(200);
+    expect((await tool.text()).startsWith('#!/usr/bin/env node')).toBe(true);
+
+    // The agent's side, as its machine would run it: keys of its own, an identity, a verification, a note to the owner.
+    const home = join(directory, 'visitor-agent');
+    const agent = await initAgent({ market: base, owner, name: 'Claude on a test machine', home });
+    expect(agent.approve_at).toBe(`${base}?agent=${agent.agent_id}`);
+
+    // The owner's page lists it by itself, verified, with nothing it may spend.
+    const card = mine.locator(`[data-testid="own-agent"][data-agent="${agent.agent_id}"]`);
+    await card.waitFor({ timeout: 60_000 });
+    expect(await card.innerText()).toContain('Claude on a test machine');
+    await expect.poll(() => card.getByTestId('own-agent-verification').innerText(), { timeout: 30_000 }).toBe('Verified');
+    expect(await card.getByTestId('own-allowance').getAttribute('data-status')).toBe('none');
+
+    // Scout gets its allowance first; then the owner gives the new agent a smaller one of its own.
+    await mine.locator('form[data-form="allowance"] button[type="submit"]').click();
+    await settled('confirmed', mine);
+    await card.locator('[data-action="set-allowance"]').click();
+    const form = mine.locator(`form[data-form="allowance"][data-agent="${agent.agent_id}"]`);
+    await form.waitFor({ timeout: 30_000 });
+    expect(await form.innerText()).toContain('Set Claude on a test machine\'s allowance');
+    await form.locator('input[name="perPurchase"]').fill('2');
+    await form.locator('input[name="perDay"]').fill('4');
+    await form.locator('button[type="submit"]').click();
+    await settled('confirmed', mine);
+    await expect.poll(() => card.getByTestId('own-allowance-status').innerText(), { timeout: 30_000 }).toBe('Active');
+    expect(await card.getByTestId('own-allowance-spent').innerText()).toContain('0 of 4 tUSD spent today');
+
+    // The agent buys with its own tools, under its own allowance. The owner's page shows it, by name.
+    const tools = createWalletAgent(await configure({ STELLAR_AGENT_WALLET_HOME: home }));
+    expect(await tools.allowance()).toMatchObject({ allowed: true, assets: [{ per_purchase: '2', per_day: '4' }] });
+    expect(await tools.buy(`${base}x402/ledger-wire/brief`)).toMatchObject({ outcome: 'paid', amount: '1' });
+    expect(await tools.buy(`${base}x402/ledger-wire/digest`)).toMatchObject({ outcome: 'blocked', error: 'PaymentLimitExceeded' });
+    await expect.poll(() => card.getByTestId('own-allowance-spent').innerText(), { timeout: 60_000 }).toContain('1 of 4 tUSD spent today');
+    // Scout's allowance is untouched by it.
+    expect(await text('allowance-spent', mine)).toContain('0 of 6 tUSD spent today');
+    await mine.getByTestId('record-toggle').click();
+    await expect.poll(() => mine.locator('[data-testid="entries"] tbody tr').first().innerText(), { timeout: 30_000 })
+      .toContain('Claude on a test machine');
+    await context.close();
   }, TIMEOUT);
 
   it('fits a phone screen without sideways scrolling, with the tasks above the reading', async () => {

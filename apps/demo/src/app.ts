@@ -4,7 +4,8 @@ import { StorageJournal, createChain, type AllowanceDraft, type Chain, type Owne
 import { fromHex, toHex } from './format.js';
 import type { Stage } from './model.js';
 import { ConnectCancelled, connectFreighter, connectGuest, connectWithKit, type Owner } from './owner.js';
-import { currentAllowance, initialState, phaseOf, taskAllowance, type Activity, type State } from './state.js';
+import { agentName, formAgent, initialState, phaseOf, taskAllowance, type Activity, type State } from './state.js';
+import { renderConnect, renderOwnAgents, setupPrompt } from './views/agents.js';
 import { renderScout, renderSellers } from './views/market.js';
 import { renderDetails, renderRecord } from './views/record.js';
 import { renderAllowance, renderAllowanceForm, renderWallet, renderWithdraw } from './views/wallet.js';
@@ -38,7 +39,8 @@ export function startApp(root: Document, storage: Storage = localStorage) {
 
   const sections: Record<string, (current: State) => string> = {
     network: renderNetwork, account: renderAccount, notice: renderNotice, welcome: renderWelcome, setup: renderSetup,
-    wallet: renderWallet, allowance: renderAllowance, sellers: renderSellers, scout: renderScout, tasks: renderTasks,
+    wallet: renderWallet, allowance: renderAllowance, 'own-agents': renderOwnAgents, connect: renderConnect,
+    sellers: renderSellers, scout: renderScout, tasks: renderTasks,
     activity: renderActivity, record: renderRecord, details: renderDetails, footer: renderFooter,
   };
 
@@ -52,7 +54,7 @@ export function startApp(root: Document, storage: Storage = localStorage) {
     // Forms are drawn once per situation, so a refresh never clears what the owner is typing.
     const ready = phaseOf(state) === 'ready' && state.wallet !== null;
     const forms: Record<string, [string, () => string]> = {
-      'allowance-form': [ready && !currentAllowance(state) ? `${state.session!.wallet}:${state.policies.length}` : '', () => renderAllowanceForm(state)],
+      'allowance-form': [ready && formAgent(state) ? `${state.session!.wallet}:${formAgent(state)}:${state.policies.length}` : '', () => renderAllowanceForm(state)],
       withdraw: [ready && state.ui.withdraw ? state.session!.wallet : '', () => renderWithdraw(state)],
     };
     for (const [id, [key, draw]] of Object.entries(forms)) {
@@ -171,6 +173,14 @@ export function startApp(root: Document, storage: Storage = localStorage) {
             (entry.outcome.kind === 'PolicyCreated' ? [toHex(entry.outcome.policy_hash)] : []));
           state.policies = await chain.readPolicies(session.wallet, [...known, ...state.policies.map((policy) => policy.hash)]);
           state.exposure = chain.exposure(state.policies, state.now);
+          // Agents the owner brought: who they are comes from the server, what they are from the registries.
+          const linked = await demoServer.agents(address).catch(() => state.own);
+          const stale = (refreshes - 1) % AGENT_EVERY === 0;
+          state.own = await Promise.all(linked.map(async (agent) => {
+            const before = state.own.find((item) => item.agent_id === agent.agent_id);
+            const view = before?.view && !stale ? before.view : await chain!.readAgentView(agent.agent_id).catch(() => before?.view ?? null);
+            return { ...agent, view };
+          }));
         }
       }
       state.readError = null;
@@ -191,9 +201,9 @@ export function startApp(root: Document, storage: Storage = localStorage) {
     disconnectWallet = undefined;
     Object.assign(state, {
       owner: null, session: null, accountFunded: null, wallet: null, policies: [], exposure: [], history: null,
-      historyError: null, attempts: [], activity: [], agent: null, connectError: null,
+      historyError: null, attempts: [], activity: [], agent: null, own: [], connectError: null,
     });
-    state.ui = { record: false, details: false, withdraw: false, form: false, tables: [] };
+    state.ui = { ...initialState().ui, formAgent: state.ui.formAgent };
   }
 
   async function connect(make: (config: Config) => Promise<Owner> | Owner) {
@@ -284,9 +294,9 @@ export function startApp(root: Document, storage: Storage = localStorage) {
     },
     setup,
     fund: () => exclusive('The faucet is adding test dollars', faucet),
-    freeze: () => ownerAction('Freeze Scout', (onStage) => chain!.ownerCall(signer!, walletId(), 'pause', {}, onStage)),
-    unfreeze: () => ownerAction('Unfreeze Scout', (onStage) => chain!.ownerCall(signer!, walletId(), 'resume', {}, onStage)),
-    end: (target) => ownerAction('End Scout\'s allowance', (onStage) =>
+    freeze: () => ownerAction('Freeze all agents', (onStage) => chain!.ownerCall(signer!, walletId(), 'pause', {}, onStage)),
+    unfreeze: () => ownerAction('Unfreeze the wallet', (onStage) => chain!.ownerCall(signer!, walletId(), 'resume', {}, onStage)),
+    end: (target) => ownerAction('End an allowance', (onStage) =>
       chain!.ownerCall(signer!, walletId(), 'revoke_policy', { policy_hash: fromHex(target.dataset['policy']!) }, onStage)),
     task: (target) => {
       const task = state.config!.tasks.find(({ id }) => id === target.dataset['task']);
@@ -312,6 +322,23 @@ export function startApp(root: Document, storage: Storage = localStorage) {
       state.ui[what] = !state.ui[what];
       render();
     },
+    'set-allowance': async (target) => {
+      state.ui.formAgent = target.dataset['agent'] || null;
+      render();
+      root.getElementById('allowance-form')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    },
+    'copy-prompt': async () => {
+      const prompt = setupPrompt(state.config!, state.owner!.address, root.location.origin);
+      try {
+        await navigator.clipboard.writeText(prompt);
+      } catch {
+        // No clipboard here: select the text, so one keystroke copies it.
+        root.querySelector<HTMLTextAreaElement>('textarea.prompt')?.select();
+      }
+      state.ui.copied = true;
+      render();
+      setTimeout(() => { state.ui.copied = false; render(); }, 2_000);
+    },
     'toggle-table': async (target) => {
       const id = Number(target.dataset['id']);
       state.ui.tables = state.ui.tables.includes(id) ? state.ui.tables.filter((open) => open !== id) : [...state.ui.tables, id];
@@ -319,23 +346,32 @@ export function startApp(root: Document, storage: Storage = localStorage) {
     },
   };
   /** Things that only change what is shown; they are allowed while something else is running. */
-  const passive = new Set(['toggle', 'toggle-table']);
+  const passive = new Set(['toggle', 'toggle-table', 'set-allowance', 'copy-prompt']);
 
   const forms: Record<string, (form: FormData) => Promise<void>> = {
-    allowance: (form) => ownerAction('Approve Scout\'s allowance', async (onStage) => {
-      const draft: AllowanceDraft = {
-        perPurchase: text(form, 'perPurchase'), perDay: text(form, 'perDay'), total: text(form, 'total'),
-        days: number(form, 'days'), vendors: form.getAll('vendor').map(String),
-        maxRisk: number(form, 'maxRisk'), maxAgeDays: number(form, 'maxAgeDays'),
-      };
-      try {
-        const policy = await chain!.draftAllowance(draft);
-        return await chain!.ownerCall(signer!, walletId(), 'approve_policy', { policy }, onStage);
-      } catch (error) {
-        // A value the form let through and the SDK did not: nothing was signed.
-        return { stage: 'error', hash: null, detail: message(error) };
-      }
-    }),
+    allowance: (form) => {
+      const agentId = text(form, 'agent') || state.config!.agent.agent_id;
+      return ownerAction(`Approve ${agentName(state, agentId)}'s allowance`, async (onStage) => {
+        // The wallet will ask for every check the agent has passed today, and no check it never had.
+        const view = agentId === state.config!.agent.agent_id ? state.agent : state.own.find((agent) => agent.agent_id === agentId)?.view;
+        const passed = new Set((view?.result?.checks ?? []).filter((check) => check.outcome === 'Passed').map((check) => check.kind));
+        const draft: AllowanceDraft = {
+          perPurchase: text(form, 'perPurchase'), perDay: text(form, 'perDay'), total: text(form, 'total'),
+          days: number(form, 'days'), vendors: form.getAll('vendor').map(String),
+          maxRisk: number(form, 'maxRisk'), maxAgeDays: number(form, 'maxAgeDays'), agentId,
+          requiredChecks: (['Endpoint', 'Metadata', 'SignerAccount'] as const).filter((kind) => passed.has(kind)),
+        };
+        try {
+          const policy = await chain!.draftAllowance(draft);
+          const outcome = await chain!.ownerCall(signer!, walletId(), 'approve_policy', { policy }, onStage);
+          if (outcome.stage === 'confirmed') state.ui.formAgent = null;
+          return outcome;
+        } catch (error) {
+          // A value the form let through and the SDK did not: nothing was signed.
+          return { stage: 'error', hash: null, detail: message(error) };
+        }
+      });
+    },
     withdraw: (form) => ownerAction('Withdraw', async (onStage) => {
       try {
         const amount = toContractUnits(text(form, 'amount'), state.config!.asset.decimals);
@@ -362,6 +398,9 @@ export function startApp(root: Document, storage: Storage = localStorage) {
   });
 
   async function boot() {
+    // A link from an agent's set-up names the agent that is waiting for an allowance.
+    const asked = new URLSearchParams(root.location.search).get('agent');
+    if (asked && /^\d{1,19}$/.test(asked)) state.ui.formAgent = asked;
     render();
     try {
       state.config = await demoServer.config();

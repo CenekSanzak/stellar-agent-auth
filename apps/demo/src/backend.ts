@@ -49,7 +49,18 @@ export interface Config {
   indexer_path: string;
   /** An account that exists, to name as the source of read-only simulations. */
   read_source: string;
+  /** Whether someone can bring an agent of their own to this server, and whether it can verify one. */
+  own_agents: { setup: boolean; verify: boolean };
+  /** The address this server is reached at by others, when it has one. */
+  public_url: string | null;
   explorer: string | null;
+}
+
+/** An agent someone set up on their own machine, which asked to work for this owner. */
+export interface LinkedAgent {
+  agent_id: string;
+  name: string;
+  signer: string;
 }
 
 export interface Session {
@@ -109,6 +120,7 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
 export const demoServer = {
   config: () => call<Config>('/v1/config'),
   session: (owner: string) => call<Session>('/v1/session', { owner }),
+  agents: (owner: string) => call<{ agents: LinkedAgent[] }>(`/v1/agents?owner=${encodeURIComponent(owner)}`).then((answer) => answer.agents),
   fund: (owner: string) => call<{ status: string; tx_hash: string; amount: string; asset: string }>('/v1/fund', { owner }),
   task: (owner: string, task: string, policyHash: string) =>
     call<TaskResult>('/v1/tasks', { owner, task, policy_hash: policyHash }),

@@ -6,7 +6,10 @@ import {
   verificationVerdict,
 } from '../../apps/demo/src/model.js';
 import { connectGuest, forgetGuest } from '../../apps/demo/src/owner.js';
-import { currentAllowance, initialState, phaseOf, taskAllowance, type Activity, type State } from '../../apps/demo/src/state.js';
+import {
+  agentName, currentAllowance, formAgent, initialState, phaseOf, taskAllowance, type Activity, type OwnAgent, type State,
+} from '../../apps/demo/src/state.js';
+import { renderConnect, renderOwnAgents, setupPrompt } from '../../apps/demo/src/views/agents.js';
 import { renderScout, renderSellers } from '../../apps/demo/src/views/market.js';
 import { renderDetails, renderRecord } from '../../apps/demo/src/views/record.js';
 import { renderAllowance, renderAllowanceForm, renderWallet } from '../../apps/demo/src/views/wallet.js';
@@ -14,6 +17,7 @@ import { renderAccount, renderNetwork, renderNotice, renderSetup, renderWelcome 
 import { renderActivity, renderTasks } from '../../apps/demo/src/views/work.js';
 import type { Config, Step } from '../../apps/demo/src/backend.js';
 import { TASKS } from '../../apps/demo/server/agent.js';
+import { agentReady } from '../../apps/demo/server/agent-ready.js';
 import { rateLimiter } from '../../apps/demo/server/backend.js';
 import {
   LedgerWatch, PRODUCTS, VENDORS, VENDOR_IDS, backfill, observe, produce, type ContentSource, type LedgerSource,
@@ -39,6 +43,7 @@ const config: Config = {
   vendors: VENDORS.map((vendor) => ({ ...vendor, requires: [...vendor.requires], address: payee[vendor.id]! })),
   products: PRODUCTS.map(({ id, vendor, kind, title, price, path }) => ({ id, vendor, kind, title, price, path })),
   tasks: [...TASKS], faucet_amount: '100', indexer_path: '/indexer/', read_source: account(12), explorer: null,
+  own_agents: { setup: true, verify: true }, public_url: null,
 };
 const testnet: Config = { ...config, network: 'testnet', explorer: 'https://explorer.example/testnet', provider: { ...config.provider, mode: 'Live' } };
 
@@ -201,12 +206,16 @@ describe('the allowance', () => {
     expect(html).toMatch(/<strong>3<\/strong> of 6 tUSD spent today/);
     expect(html).toContain('width:50%');
     expect(html).toContain('3 / 20');
-    expect(html).toContain('data-action="freeze"');
+    expect(html).toContain('May pay: Ledger Wire, Deep Archive, Audited Sources.');
     expect(html).toMatch(/data-action="end" data-policy="a{64}"/);
-    const frozen = renderAllowance(ready({ wallet: { balance: 1n, paused: true, head: { sequence: 2n, hash: bytes(9) } } }));
-    expect(frozen).toMatch(/data-testid="allowance-status">Frozen</);
-    expect(frozen).toContain('data-action="unfreeze"');
-    expect(frozen).not.toContain('data-action="freeze"');
+    // Freezing is the wallet's: it stops every agent at once, so it sits with the wallet.
+    expect(html).not.toContain('data-action="freeze"');
+    expect(renderWallet(ready())).toContain('data-action="freeze"');
+    const paused = ready({ wallet: { balance: 1n, paused: true, head: { sequence: 2n, hash: bytes(9) } } });
+    expect(renderAllowance(paused)).toMatch(/data-testid="allowance-status">Frozen</);
+    expect(renderWallet(paused)).toContain('data-action="unfreeze"');
+    expect(renderWallet(paused)).toContain('data-testid="frozen"');
+    expect(renderWallet(paused)).not.toContain('data-action="freeze"');
   });
 
   it('says there is none, before the first and after the last, and offers the form', () => {
@@ -238,6 +247,108 @@ describe('the allowance', () => {
   });
 });
 
+describe('an agent of the owner\'s own', () => {
+  const mine: OwnAgent = { agent_id: '7', name: 'Claude on my laptop', signer: account(40), view: {
+    identity: { ...identity, agent_id: 7n, signer: account(40) }, provider,
+    result: { ...result, agent_id: 7n, checks: [
+      { kind: 'Endpoint', outcome: 'NotApplicable', score: null }, { kind: 'Metadata', outcome: 'Passed', score: 0 },
+      { kind: 'SignerAccount', outcome: 'Passed', score: 0 }, { kind: 'Code', outcome: 'Unsupported', score: null },
+    ] },
+  } };
+  const forMine = view({ agent_id: 7n, signer: account(40), assets: [{ asset: asset.contract, per_transaction: 2n * UNIT, per_day: 4n * UNIT, total: null }] },
+    { daily_spend: [], total_spend: [] }, 'dd'.repeat(32));
+
+  it('has an allowance of its own, apart from Scout\'s', () => {
+    const both = ready({ own: [mine], policies: [forMine, view()] });
+    expect(currentAllowance(both)?.hash).toBe('aa'.repeat(32));
+    expect(currentAllowance(both, '7')?.hash).toBe('dd'.repeat(32));
+    expect(currentAllowance(ready({ own: [mine] }), '7')).toBeUndefined();
+    // Scout's tasks never run under another agent's allowance.
+    expect(taskAllowance(ready({ own: [mine], policies: [forMine] }))).toBeUndefined();
+    expect(agentName(both, '7')).toBe('Claude on my laptop');
+    expect(agentName(both, '1')).toBe('Scout');
+    expect(agentName(both, '99')).toBe('Agent 99');
+  });
+
+  it('is shown with its verification and its own limits, and asks for an allowance when it has none', () => {
+    const html = renderOwnAgents(ready({ own: [mine], policies: [forMine, view()] }));
+    expect(html).toMatch(/data-testid="own-agent" data-agent="7"/);
+    expect(html).toContain('Claude on my laptop');
+    expect(html).toMatch(/data-testid="own-agent-verification">Verified</);
+    expect(html).toContain('Checked and passed: Metadata, SignerAccount');
+    expect(html).toMatch(/<strong>0<\/strong> of 4 tUSD spent today/);
+    expect(html).toMatch(/data-action="end" data-policy="d{64}"/);
+    const waiting = renderOwnAgents(ready({ own: [mine] }));
+    expect(waiting).toMatch(/data-testid="own-allowance" data-status="none"/);
+    expect(waiting).toMatch(/data-action="set-allowance" data-agent="7"/);
+    expect(renderOwnAgents(ready({ own: [{ ...mine, view: null }] }))).toContain('Reading…');
+    const lapsed = renderOwnAgents(ready({ own: [mine], now: result.expires_at + 5n }));
+    expect(lapsed).toMatch(/own-agent-verification">Expired</);
+    expect(lapsed).toContain('will not pay for it until it is verified again');
+    expect(renderOwnAgents(ready())).toBe('');
+  });
+
+  it('gets the one allowance form when the owner asks, and Scout gets it otherwise', () => {
+    expect(formAgent(ready({ policies: [] }))).toBe('1');
+    expect(formAgent(ready())).toBeUndefined();
+    const asked = ready({ own: [mine], ui: { ...initialState().ui, formAgent: '7' } });
+    expect(formAgent(asked)).toBe('7');
+    const form = renderAllowanceForm(asked);
+    expect(form).toMatch(/data-agent="7"/);
+    expect(form).toContain('Set Claude on my laptop\'s allowance');
+    expect(form).toContain('name="agent" value="7"');
+    expect(form).toContain('Not now');
+    // Asking for an agent that is not the owner's, or that already has an allowance, shows nothing for it.
+    expect(formAgent(ready({ ui: { ...initialState().ui, formAgent: '7' } }))).toBeUndefined();
+    expect(formAgent(ready({ own: [mine], policies: [forMine, view()], ui: { ...initialState().ui, formAgent: '7' } }))).toBeUndefined();
+    expect(renderAllowanceForm(ready())).toBe('');
+  });
+
+  it('is brought in with one sentence that names this server and the owner', () => {
+    expect(setupPrompt(config, account(20), 'http://127.0.0.1:8790')).toBe(
+      `Set yourself up as an agent of my Stellar smart wallet, so you can pay for things inside an allowance I control. Follow http://127.0.0.1:8790/agent-ready.md?owner=${account(20)}`);
+    expect(setupPrompt({ ...config, public_url: 'https://scout.example' }, account(20), 'http://ignored')).toContain('https://scout.example/agent-ready.md');
+    const html = renderConnect(ready(), 'http://127.0.0.1:8790');
+    expect(html).toContain('data-testid="setup-prompt"');
+    expect(html).toContain(`agent-ready.md?owner=${account(20)}`);
+    expect(html).toContain('data-action="copy-prompt"');
+    expect(renderConnect(ready({ ui: { ...initialState().ui, copied: true } }), 'x')).toContain('>Copied<');
+    expect(renderConnect(ready({ config: { ...config, own_agents: { setup: true, verify: false } } }), 'x')).toContain('cannot verify agents at the moment');
+    expect(renderConnect(ready({ config: { ...config, own_agents: { setup: false, verify: false } } }), 'x')).toBe('');
+  });
+
+  it('is told how to set itself up, with commands that already name the server and the owner', () => {
+    const text = agentReady({ origin: 'https://scout.example', owner: account(20), network: 'Stellar Testnet', verifies: true });
+    expect(text).toContain('curl -fsSL https://scout.example/agent/stellar-agent-wallet.mjs');
+    expect(text).toContain(`init --market https://scout.example --owner ${account(20)}`);
+    expect(text).toContain('claude mcp add agent-wallet -- node ~/.stellar-agent-wallet/stellar-agent-wallet.mjs mcp');
+    expect(text).toContain('codex mcp add agent-wallet');
+    expect(text).toContain('Do not ask them for any key');
+    expect(text).not.toContain('opened without an owner');
+    expect(text).not.toContain('cannot verify agents');
+    const bare = agentReady({ origin: 'https://scout.example', network: 'Stellar Testnet', verifies: false });
+    expect(bare).toContain('opened without an owner');
+    expect(bare).toContain('cannot verify agents at the moment');
+  });
+
+  it('is named in the wallet\'s record, as the owner is', () => {
+    const paid = { kind: 'AccountPayment' as const, policy_hash: bytes(1), authorization: bytes(2),
+      action: { kind: 'Transfer' as const, transfer: { asset: asset.contract, recipient: payee['ledger-wire']!, amount: UNIT } } };
+    const entry = (sequence: bigint, actor: string, outcome: Parameters<typeof describeOutcome>[0]) => ({
+      entry: { schema_version: 1, wallet, sequence, previous_hash: bytes(0), ledger: 10, timestamp: NOW, actor, outcome },
+      hash: bytes(1), ledger: 10, transaction: 'ab'.repeat(32), event_id: `${sequence}`,
+    });
+    const history = {
+      status: 'verified' as const, detail: 'ok', head: { sequence: 3n, hash: bytes(1) }, indexer: { status: 'verified', detail: 'ok' },
+      entries: [entry(1n, account(20), { kind: 'PolicyCreated', policy_hash: bytes(1) }), entry(2n, account(40), paid), entry(3n, account(5), paid)],
+    };
+    const html = renderRecord(ready({ own: [mine], history, ui: { ...initialState().ui, record: true } }));
+    expect(html).toContain('<td>Claude on my laptop</td>');
+    expect(html).toContain('<td>Scout</td>');
+    expect(html).toContain('<td>You</td>');
+  });
+});
+
 describe('what became of a purchase', () => {
   const context = { vendor: 'Deep Archive', code: 'tUSD', allowance: { perPurchase: '5', perDay: '6', total: '20' } };
   const blocked = (error: string | null) => explainStep({ status: 'blocked', error }, context);
@@ -250,7 +361,7 @@ describe('what became of a purchase', () => {
     expect(blocked('DailyLimitExceeded').detail).toContain('today\'s limit of 6 tUSD');
     expect(blocked('TotalLimitExceeded').detail).toContain('overall limit of 20 tUSD');
     expect(blocked('RecipientNotAllowed').detail).toContain('Deep Archive is not one of the sellers you approved');
-    expect(blocked('Paused').detail).toContain('You froze Scout');
+    expect(blocked('Paused').detail).toContain('You froze the wallet');
     expect(blocked('Revoked').detail).toContain('You ended this allowance');
     // Without the allowance at hand the sentence still stands, without the number.
     expect(explainStep({ status: 'blocked', error: 'PaymentLimitExceeded' }, { vendor: 'x', code: 'tUSD' }).detail)
@@ -352,8 +463,8 @@ describe('the wallet\'s record', () => {
       .toMatchObject({ title: 'Purchase', detail: '3 tUSD to Ledger Wire' });
     expect(describeOutcome({ kind: 'Executed', policy_hash: bytes(1), action_hash: bytes(2), action: { kind: 'Transfer', transfer } }, asset))
       .toMatchObject({ title: 'Agent payment', detail: expect.stringMatching(/^3 tUSD to G/) });
-    expect(describeOutcome({ kind: 'PauseChanged', paused: true }, asset).title).toBe('Agent frozen');
-    expect(describeOutcome({ kind: 'PauseChanged', paused: false }, asset).title).toBe('Agent unfrozen');
+    expect(describeOutcome({ kind: 'PauseChanged', paused: true }, asset).title).toBe('Wallet frozen');
+    expect(describeOutcome({ kind: 'PauseChanged', paused: false }, asset).title).toBe('Wallet unfrozen');
     expect(describeOutcome({ kind: 'PolicyCreated', policy_hash: bytes(1) }, asset).title).toBe('Allowance approved');
     expect(describeOutcome({ kind: 'PolicyRevoked', policy_hash: bytes(1) }, asset).title).toBe('Allowance ended');
     expect(describeOutcome({ kind: 'OwnerWithdrawal', transfer: { ...transfer, asset: contract(50) } }, asset).detail).toContain('units of');

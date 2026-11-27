@@ -24,6 +24,11 @@ export function renderRecord(state: State): string {
   const completeness = COMPLETENESS[history.status]!;
   const entries = [...history.entries].reverse();
   const names = Object.fromEntries(config.vendors.map((vendor) => [vendor.address, vendor.name]));
+  // Who did it, by name where the page knows the key.
+  const actors: Record<string, string> = {
+    [config.agent.signer]: 'Scout', ...Object.fromEntries(state.own.map((agent) => [agent.signer, agent.name])),
+    ...(state.owner ? { [state.owner.address]: 'You' } : {}),
+  };
   const count = `${entries.length} on the ledger, ${state.attempts.length} refused`;
   const open = state.ui.record;
   return `<div class="card record">
@@ -39,7 +44,7 @@ export function renderRecord(state: State): string {
     const text = describeOutcome(record.entry.outcome, config.asset, names);
     return `<tr data-kind="${esc(record.entry.outcome.kind)}"><td>${esc(record.entry.sequence)}</td><td>${esc(utc(record.entry.timestamp))}</td>
           <td><strong>${esc(text.title)}</strong><br /><span class="small muted">${esc(text.detail)}</span></td>
-          <td>${addr(record.entry.actor)}</td><td>${tx(record.transaction, config.explorer)}</td></tr>`;
+          <td>${actors[record.entry.actor] ? esc(actors[record.entry.actor]) : addr(record.entry.actor)}</td><td>${tx(record.transaction, config.explorer)}</td></tr>`;
   }).join('')}</tbody></table></div>` : '<p class="muted">Nothing yet.</p>'}
     <h3>Refused</h3>
     <p class="muted small">These are not on the ledger. Scout asks the wallet before it signs, so a refused purchase is never
