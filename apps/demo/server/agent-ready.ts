@@ -106,7 +106,15 @@ claude mcp add agent-wallet -- ${run} mcp      # Claude Code
 codex mcp add agent-wallet -- ${run} mcp       # Codex
 \`\`\`
 
-For another MCP host, the command to start is \`${run} mcp\`. Where a host wants the command and its arguments
+If your host's command is not on the path, as with Claude Code inside the Claude desktop app where \`claude\` is
+not a shell command, add the entry to the host's settings file instead. For Claude Code that is the top-level
+\`mcpServers\` object in \`~/.claude.json\`; add this one entry and change nothing else in the file:
+
+\`\`\`json
+"agent-wallet": { "type": "stdio", "command": "${npm ? 'npx' : 'node'}", "args": [${npm ? `"-y", "${npm}"` : '"<home directory>/.stellar-agent-wallet/stellar-agent-wallet.mjs"'}, "mcp"] }
+\`\`\`
+
+For any other MCP host, the command to start is \`${run} mcp\`. Where a host wants the command and its arguments
 apart, write the home directory out in any path; hosts do not expand \`~\`.
 
 New tools usually appear only in a new session. If you cannot call \`allowance\` after adding them, that is why.
@@ -138,14 +146,17 @@ claude mcp remove agent-wallet        # or the same in your host
 rm -rf ~/.stellar-agent-wallet
 \`\`\`
 
+Where the entry was added to a settings file by hand, remove that one entry from the same file.
+
 The owner can also end your allowance or freeze the wallet from their page at any time; that takes effect at once
 and needs nothing from you.
 
 ## If something goes wrong
 
 - \`init\` says the faucet did not fund an account: the test network's faucet is busy. Wait a minute and run it again.
-- \`init\` says the directory already holds an agent for another address: add \`--home <another directory>\` to both
-  \`init\` and the \`mcp\` command, to keep the two apart.
+- \`init\` says the directory already holds an agent for another address: that agent was set up for a different
+  site. To keep it, add \`--home <another directory>\` to both \`init\` and the \`mcp\` command. If the person no longer
+  wants it, ask them before deleting \`~/.stellar-agent-wallet\`: it holds that agent's keys.
 - \`allowance\` says there is no wallet yet: the owner has not created theirs. They do that at ${origin}/.
 - A purchase is blocked with \`ResultExpired\`: your verification ran out. Starting the tools again renews it.
 

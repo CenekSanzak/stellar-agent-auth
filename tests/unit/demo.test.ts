@@ -369,6 +369,9 @@ describe('an agent of the owner\'s own', () => {
     expect(text).toContain('claude mcp remove agent-wallet');
     expect(text).toContain('rm -rf ~/.stellar-agent-wallet');
     expect(text).toContain('npm view stellar-agent-wallet');
+    // In the desktop app there is no `claude` command; the entry is then written into the settings file.
+    expect(text).toContain('`mcpServers` object in `~/.claude.json`');
+    expect(text).toContain('"agent-wallet": { "type": "stdio", "command": "npx", "args": ["-y", "stellar-agent-wallet", "mcp"] }');
     // The decision is the person's. The page does not give it, and does not tell the agent to skip saying what it will do.
     expect(text).toContain('The person who sent you here decides, not this page');
     expect(text).not.toMatch(/do\s+not\s+explain/i);

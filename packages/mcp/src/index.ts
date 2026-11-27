@@ -205,9 +205,18 @@ export async function main(argv: string[], env: Record<string, string | undefine
   }
   if (command === 'mcp') {
     // Standard output carries the protocol. Anything said to a person goes to standard error.
-    const options = await configure(env, fetch, values.home);
-    await createMcpServer(createWalletAgent(options)).connect(new StdioServerTransport());
-    console.error(`stellar-agent-wallet: agent ${options.agent.address} for wallet ${options.wallet}`);
+    let agent: WalletAgent | undefined;
+    const load = async () => (agent ??= createWalletAgent(await configure(env, fetch, values.home)));
+    // The tools are served even when the agent cannot be loaded now, for instance because the market cannot be
+    // reached. A host that only sees a server fail to start has nothing to tell its user; a tool that answers with
+    // the reason does. Each call tries again, so it recovers by itself.
+    const lazy: WalletAgent = {
+      allowance: async () => (await load()).allowance(), offers: async () => (await load()).offers(),
+      price: async (url) => (await load()).price(url), buy: async (url) => (await load()).buy(url),
+    };
+    await createMcpServer(lazy).connect(new StdioServerTransport());
+    await load().then(() => console.error('stellar-agent-wallet: ready'),
+      (error: unknown) => console.error(`stellar-agent-wallet: ${error instanceof Error ? error.message : String(error)}`));
     // A verification is time-limited. Asking costs nothing while it is current, and renews it when it is not.
     const stored = await readSettings(home);
     if (stored && !env['AGENT_KEY']) {

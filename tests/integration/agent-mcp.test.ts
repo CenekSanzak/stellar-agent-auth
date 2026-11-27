@@ -214,6 +214,20 @@ describe('an agent over MCP, paying from a policy-limited wallet on local Stella
     expect((await call('allowance', {}, host)).answer).toMatchObject({ wallet, allowed: false });
   }, TIMEOUT);
 
+  it('still starts when its market cannot be reached, and says why through its tools', async () => {
+    const built = fileURLToPath(new URL('../../packages/mcp/dist/index.js', import.meta.url));
+    const host = new Client({ name: 'test-host', version: '0.0.0' });
+    clients.push(host);
+    // Nothing listens on this port. A server that failed to start would leave its host with nothing to say.
+    await host.connect(new StdioClientTransport({
+      command: process.execPath, args: [built], env: { ...env, AGENT_MARKET: 'http://127.0.0.1:9/', PATH: process.env['PATH'] ?? '' },
+    }));
+    expect((await host.listTools()).tools).toHaveLength(4);
+    const answer = await call('allowance', {}, host);
+    expect(answer.failed).toBe(true);
+    expect(answer.answer['error']).toMatch(/fetch failed|ECONNREFUSED|market/i);
+  }, TIMEOUT);
+
   it('will not start without knowing which key and which wallet', async () => {
     await expect(configure({})).rejects.toThrow('AGENT_KEY');
     await expect(configure({ AGENT_KEY: Keypair.random().secret() })).rejects.toThrow('never a secret key');

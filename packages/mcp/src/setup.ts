@@ -138,7 +138,8 @@ export async function initAgent(options: InitOptions): Promise<InitResult> {
   if (!market.agent_registry || !market.own_agents?.setup) throw new Error(`${base.origin} does not set agents up`);
   const earlier = await readSettings(options.home);
   if (earlier && (earlier.market !== base.href || earlier.passphrase !== market.passphrase)) {
-    throw new Error(`${options.home} already holds an agent for ${earlier.market}. Use --home to keep another one beside it.`);
+    throw new Error(`${options.home} already holds an agent for ${earlier.market}. Use --home <another directory> to keep `
+      + 'a second agent beside it, or delete that directory if the first is no longer wanted: it holds that agent\'s keys.');
   }
 
   await mkdir(options.home, { recursive: true, mode: 0o700 });
