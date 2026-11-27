@@ -140,6 +140,8 @@ One fault was found by looking at the page and fixed: for a few seconds after an
 
 **The page, reorganised**, the same day. The wallet is at the top and the agents under it, with bringing your own and the sample side by side. The browser suite checks that no allowance form is open until an agent is picked, and that a reload of a connected, set-up owner never shows the welcome page or the set-up steps on the way back. Quiet reconnection for Freighter and for wallets through Stellar Wallets Kit is written and was not tried with a wallet: only the guest's was run.
 
+**A reload on Testnet, timed.** With the reorganised page first deployed, a returning guest saw "Looking for your wallet…" for about half a minute. The page read everything in turn and drew once at the end, and its ledger-time read decoded a whole Testnet ledger each time. Reads now go out together and the page draws as they return. Measured in a browser against the hosted server afterwards: the wallet section 0.8 seconds after the reload, the balance at 1.0, and the agents with their allowances at 1.6. Before the allowances have been read, the page says it is reading them; it does not say an agent has none.
+
 ## Not covered
 
 - **Rate limits behind the real proxy.** The hosted server takes the client's address from Fly's header; that two visitors are limited separately was tested with that header locally, not from two networks.
