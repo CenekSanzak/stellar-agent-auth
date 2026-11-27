@@ -122,12 +122,27 @@ Anyone can connect their own AI agent to their wallet ([ADR 0015](decisions/0015
 
 One fault was found by looking at the page and fixed: for a few seconds after any action the record was labelled "Incomplete", with a warning, because the indexer had not yet read the newest entries. A record that trails the wallet by its newest entries is now shown as catching up for up to 45 seconds, and as incomplete only if it stays that way.
 
-Not run: any of this on Testnet or on the hosted server, where the verifier is the real one and fetches the agent's document over HTTPS from the server's own public address; and no model has followed the instructions. Both are the next things to try.
+**On Testnet, against the hosted server**, by hand on 2026-11-27, once the owner had given the server the provider's key. The tool was downloaded from <https://scout-agent-demo.fly.dev/agent/stellar-agent-wallet.mjs> into an empty directory and run for a guest's wallet:
+
+| Step | Result |
+| --- | --- |
+| `init` | Registered agent 2 and had it verified by the hosted verifier, which fetched the agent's document from the server's own public address: `Metadata` and `SignerAccount` passed |
+| The printed link, opened in the guest's browser | The page showed the agent, verified, and its allowance form |
+| An allowance of 2 per purchase and 4 per day, approved in the page | Active |
+| `allowance`, through the downloaded file as an MCP server | 2 per purchase, 4 per day, nothing spent, the wallet's balance |
+| `price` for a digest at 3 | The wallet would refuse |
+| `buy` a brief at 1 | Paid: [`76b80543…09cebb96`](https://stellar.expert/explorer/testnet/tx/76b80543b09ad4c38edce7aabb8b1c6c80a8790c4f96cbfd3dc7987609cebb96) |
+| `buy` a digest at 3 | Blocked by the wallet: `PaymentLimitExceeded` |
+| `buy` the audited report | Declined by the seller: `payee_gate_CheckNotPassed` |
+| The guest's page afterwards | 1 of 4 spent for the agent, Scout's allowance untouched, and the purchase in the wallet's record under the agent's name, verified against the wallet |
+
+Not run: a model following the instructions. Everything a model would do was done by hand or by a test client; whether Claude Code or Codex reads `agent-ready.md` and carries it out as written has not been seen.
 
 ## Not covered
 
 - **Rate limits behind the real proxy.** The hosted server takes the client's address from Fly's header; that two visitors are limited separately was tested with that header locally, not from two networks.
 - **Wallets other than a guest key and Freighter.** The wallet picker opens under the content security policy and lists the wallets; no wallet in it was used to sign. Freighter was last used by hand with the earlier page, on a local network; the code that connects it is unchanged.
 - **Load.** Two visitors at once were tested. The limits are set for a demo that a few reviewers use; the public Testnet RPC's own limits were not measured.
-- **A long-running deployment.** It has been up for minutes, not days. What needs doing over time is listed in [hosting](HOSTING.md).
+- **A model.** No AI agent has run the set-up or used the tools.
+- **A long-running deployment.** It has been up for hours, not days. What needs doing over time is listed in [hosting](HOSTING.md).
 - **A refusal as a transaction on the ledger**, as before: Scout asks the wallet before it signs.
