@@ -80,15 +80,17 @@ export interface OwnerOutcome {
   hash: string | null;
 }
 
-export interface PolicyDraft {
-  perPayment: string;
+/** An allowance as the owner fills it in. Amounts are whole units of the demo asset. */
+export interface AllowanceDraft {
+  perPurchase: string;
   perDay: string;
   /** Empty for no overall cap. */
   total: string;
   days: number;
+  /** IDs of the sellers Scout may pay. */
+  vendors: string[];
   maxRisk: number;
   maxAgeDays: number;
-  allowService: boolean;
 }
 
 export function createChain(config: Config, journal: TransactionJournal) {
@@ -100,7 +102,7 @@ export function createChain(config: Config, journal: TransactionJournal) {
   }));
   // Reads are simulations; any existing account can be named as their source, and its sequence is not used.
   const read = (contractId: string) => ({
-    server, contractId, source: config.roles.recipient, networkPassphrase: config.passphrase,
+    server, contractId, source: config.read_source, networkPassphrase: config.passphrase,
   });
   const missing = (error: unknown) =>
     (error instanceof AgentRegistryError || error instanceof VerificationRegistryError || error instanceof WalletError)
@@ -176,29 +178,33 @@ export function createChain(config: Config, journal: TransactionJournal) {
 
   const exposure = (policies: readonly PolicyView[], now: bigint): Exposure[] => policyExposure(policies, now);
 
-  async function history(wallet: string, indexerUrl: string): Promise<IndexedHistory> {
-    return readIndexedHistory(read(wallet), indexerUrl);
+  async function history(wallet: string, indexer: string): Promise<IndexedHistory> {
+    return readIndexedHistory(read(wallet), indexer);
   }
 
-  /** Build the policy the form describes, for the deployment's agent, provider, asset and recipient. */
-  async function draftPolicy(draft: PolicyDraft): Promise<Policy> {
+  /**
+   * The policy an allowance stands for: this deployment's agent and provider, the demo asset with the owner's
+   * limits, and the chosen sellers' accounts as the only permitted recipients.
+   */
+  async function draftAllowance(draft: AllowanceDraft): Promise<Policy> {
     const now = await ledgerTime();
     const units = (value: string) => toContractUnits(value, config.asset.decimals);
     const id = crypto.getRandomValues(new Uint8Array(32));
     const agent = await readAgent(read(config.agent_registry), BigInt(config.agent.agent_id));
+    const recipients = config.vendors.filter((vendor) => draft.vendors.includes(vendor.id)).map((vendor) => vendor.address);
+    // An empty list would mean any recipient at all, which is the opposite of approving nobody.
+    if (!recipients.length) throw new Error('Approve at least one seller, or Scout has nowhere to buy');
     return canonicalPolicy({
       schema_version: 1, policy_id: id, agent_id: agent.agent_id, revision: agent.revision, signer: agent.signer,
       provider: config.provider.address, required_checks: ['Endpoint', 'Metadata', 'SignerAccount'],
       max_assessment_age: BigInt(draft.maxAgeDays) * 86_400n, max_risk_score: draft.maxRisk,
       assets: [{
-        asset: config.asset.contract, per_transaction: units(draft.perPayment), per_day: units(draft.perDay),
+        asset: config.asset.contract, per_transaction: units(draft.perPurchase), per_day: units(draft.perDay),
         total: draft.total.trim() === '' ? null : units(draft.total),
       }],
-      allowed_recipients: [config.roles.recipient], blocked_recipients: [],
+      allowed_recipients: recipients, blocked_recipients: [],
       valid_after: now - 60n, valid_until: now + BigInt(draft.days) * 86_400n,
-      action_kinds: draft.allowService ? ['ServicePayment', 'Transfer'] : ['Transfer'],
-      service: draft.allowService
-        ? { contract: config.service.contract, service_id: fromHex(config.service.service_id) } : null,
+      action_kinds: ['Transfer'], service: null,
     });
   }
 
@@ -252,7 +258,7 @@ export function createChain(config: Config, journal: TransactionJournal) {
 
   return {
     ledgerTime, accountExists, requestTestXlm, walletExists, readAgentView, readWalletView, readPolicies, exposure,
-    history, draftPolicy, ownerCall, createWallet, hashOf,
+    history, draftAllowance, ownerCall, createWallet, hashOf,
   };
 }
 

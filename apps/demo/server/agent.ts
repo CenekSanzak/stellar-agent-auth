@@ -1,256 +1,196 @@
 import type { rpc } from '@stellar/stellar-sdk';
-import {
-  SimulationRejected, SponsorOutcomeUnknown, SponsorRefused, SubmissionUnsettled, WalletError,
-  accountPaymentAction, accountPaymentInvocation, executeInvocation, fromContractUnits, pipelineLimits,
-  readPaymentCheck, readPolicy, readPolicyState, signForSponsor, sponsoredInvoke, toContractUnits, transferRequest,
-  type AccountPayment, type Hash32, type Invocation, type NetworkContext, type Signer, type SponsorEndpoint,
-  type TransactionJournal,
-} from '@stellar-agent-auth/sdk';
-import { fetchPaying, walletClient } from '@stellar-agent-auth/x402';
+import { WalletError, fromContractUnits, type Hash32, type NetworkContext, type Signer } from '@stellar-agent-auth/sdk';
+import { fetchPaying, quote, walletClient } from '@stellar-agent-auth/x402';
+import { PRODUCTS, productOf, vendorOf, type Content, type Product, type VendorId } from './catalogue.js';
 import type { Deployment } from './deployment.js';
-import { hexToBytes } from './deployment.js';
 
 /**
- * The agent's side of the demo. It holds the agent key and does a fixed set of things with it: each scenario is a
- * payment whose recipient and amount are decided here, from the deployment and from the policy as the wallet stores
- * it. A caller chooses a scenario by name and can choose nothing else, so this process cannot be used to sign an
- * arbitrary payment.
+ * Scout, the agent in the demo. It does research errands for the wallet's owner, and each errand means buying
+ * something from a seller over x402. It holds the agent key and no money: every purchase is paid by the owner's
+ * wallet, if the wallet's policy allows it and the seller accepts the agent.
  *
- * A refusal is found in simulation, before anything is signed for submission, and nothing is submitted for it. That
- * is how a well-behaved agent works; it also means a refusal has no transaction and leaves nothing on the ledger.
+ * What Scout does is fixed here. A caller picks a task by name and can choose nothing else, so this process cannot
+ * be used to sign an arbitrary payment. What happens is not fixed: the wallet and the sellers answer for
+ * themselves, and Scout reports what they said.
+ *
+ * Scout asks the wallet before it signs. A purchase the policy refuses is therefore never sent, has no
+ * transaction and leaves nothing on the ledger; it is recorded as an attempt, beside the audit history.
  */
 
-export interface Scenario {
+export interface Task {
   id: string;
   label: string;
   description: string;
-  /** What the wallet is expected to answer, as a contract error name, or `paid`. */
-  expected: string;
 }
 
-export const SCENARIOS: readonly Scenario[] = [
-  { id: 'allowed', label: 'Pay within the limits', expected: 'paid',
-    description: 'A payment to the approved recipient, inside the per-payment and daily limits.' },
-  { id: 'over-limit', label: 'Pay above the per-payment limit', expected: 'PaymentLimitExceeded',
-    description: 'One unit more than the policy allows in a single payment.' },
-  { id: 'unknown-recipient', label: 'Pay someone not on the list', expected: 'RecipientNotAllowed',
-    description: 'A small payment to an account the policy does not name.' },
-  { id: 'daily-limit', label: 'Spend the daily limit, then one more', expected: 'DailyLimitExceeded',
-    description: 'Real payments up to today\'s limit, then one that would pass it. This spends from the wallet.' },
-  { id: 'account-transfer', label: 'Pay as an account', expected: 'paid',
-    description: 'The wallet authorizes a plain asset transfer itself, signed by the agent key, under the same limits.' },
-  { id: 'service', label: 'Pay the demo service', expected: 'paid',
-    description: 'The service takes its price from the wallet inside its own call. Needs a policy that names the service.' },
-  { id: 'x402', label: 'Buy a report from a paid API (x402)', expected: 'paid',
-    description: 'The API answers 402, the wallet pays through an x402 facilitator, and the API checks the agent before it serves.' },
-  { id: 'x402-strict', label: 'Buy from an API that wants more', expected: 'payee_gate_CheckNotPassed',
-    description: 'This API requires a code check the agent\'s result does not have. The API refuses; the wallet is not charged.' },
+export const TASKS: readonly Task[] = [
+  { id: 'brief', label: 'Get today\'s network brief',
+    description: 'Scout buys the brief from Ledger Wire for 1.' },
+  { id: 'dataset', label: 'Buy the full ledger dataset',
+    description: 'Deep Archive asks 8, which is more than the suggested limit for one purchase.' },
+  { id: 'cheapest', label: 'Find the cheapest headlines',
+    description: 'Scout asks the sellers for their prices and tries the cheapest first, whoever that is.' },
+  { id: 'audited', label: 'Get the audited report',
+    description: 'Audited Sources sells only to agents whose code was audited. Scout\'s was not.' },
+  { id: 'routine', label: 'Catch up on the week',
+    description: 'Scout buys digests at 3 each until the wallet says the day\'s allowance is spent.' },
 ];
 
 export interface Step {
+  vendor: VendorId;
+  product: string;
+  title: string;
+  /** What the seller asked, in whole units; `null` if it could not be asked. */
+  amount: string | null;
+  payee: string | null;
   /**
-   * `execute` is the wallet's own call; `account` and `service` are the account payment path; `x402` is an account
-   * payment asked for by an HTTP API and submitted by an x402 facilitator.
+   * `paid`: bought, with a transaction. `blocked`: the wallet's policy refused, and nothing was sent. `declined`:
+   * the seller refused the agent or the payment, and nothing was paid. `unsettled`: sent, and not known to be final;
+   * never treat it as refused.
    */
-  path: 'execute' | 'account' | 'service' | 'x402';
-  amount: string;
-  recipient: string;
-  /** `unsettled`: submitted or possibly submitted, and not yet known to be final. Never treat it as refused. */
-  status: 'paid' | 'refused' | 'failed' | 'unsettled';
-  /** The contract error that refused or failed it, when the network named one. */
+  status: 'paid' | 'blocked' | 'declined' | 'unsettled';
+  /** The wallet's error name, or the seller's reason, when one was given. */
   error: string | null;
   detail: string | null;
   tx_hash: string | null;
+  content: Content | null;
 }
 
-export interface ScenarioResult {
-  scenario: string;
-  expected: string;
+export interface TaskResult {
+  task: string;
+  /** What Scout did and found, in order, in its own words. Every line states something that happened. */
+  notes: string[];
   steps: Step[];
 }
 
-export class UnknownScenario extends Error {}
+export class UnknownTask extends Error {}
 
-/** Reports something that did not become an audit entry; failures to report are not the caller's problem. */
+/** Records a purchase that did not happen; failing to record one is not the caller's problem. */
 export type AttemptReporter = (attempt: {
-  kind: 'simulation' | 'transaction'; status: string; error: string | null; detail: string | null; tx_hash: string | null;
+  kind: 'simulation'; status: 'blocked' | 'declined'; error: string | null; detail: string;
 }) => Promise<void>;
 
-/** The paid API's routes: one any verified agent may buy from, and one that asks for a check this agent lacks. */
-export const PAID_REPORT = '/x402/report';
-export const PAID_STRICT = '/x402/audited-agents-only';
+const MAX_ROUTINE_PURCHASES = 6;
 
-const UNIT_DECIMALS = 7;
-const MAX_DAILY_STEPS = 12;
-
-export class DemoAgent {
-  private readonly limits = pipelineLimits({ maxFee: 10_000_000n });
-
+export class ScoutAgent {
   constructor(
     private readonly deployment: Deployment, private readonly context: NetworkContext,
     private readonly server: Pick<rpc.Server, 'simulateTransaction' | 'getLatestLedger'>,
-    private readonly agent: Signer, private readonly sponsor: SponsorEndpoint,
-    private readonly journal: TransactionJournal, private readonly report: AttemptReporter,
-    /** Where the paid API is served; known once the server listens. */
-    private readonly paidApi: () => string,
+    private readonly agent: Signer,
+    /** Where the sellers are reached; known once the server listens. */
+    private readonly market: () => string,
   ) {}
 
-  private read(wallet: string) {
-    return {
-      server: this.server, contractId: wallet, source: this.agent.address,
-      networkPassphrase: this.context.networkPassphrase,
-    };
+  private units = (amount: string) => fromContractUnits(BigInt(amount), this.deployment.asset.decimals);
+
+  /** Ask one seller what a product costs. Nothing is signed. */
+  private async price(client: ReturnType<typeof walletClient>, product: Product) {
+    const terms = await quote(client, new URL(product.path, this.market()));
+    const asked = terms?.accepts.find((option) => option.asset === this.deployment.asset.contract) ?? terms?.accepts[0];
+    return asked ? { amount: this.units(asked.amount), payee: asked.payTo } : undefined;
   }
 
-  private units = (value: string) => toContractUnits(value, UNIT_DECIMALS);
-
-  /** Sign for the sponsor and submit; classify whatever comes back without guessing. */
-  private async submit(
-    invocation: Invocation, scope: string, base: Pick<Step, 'path' | 'amount' | 'recipient'>,
-  ): Promise<Step> {
-    const step = (status: Step['status'], rest: Partial<Step> = {}): Step =>
-      ({ ...base, status, error: null, detail: null, tx_hash: null, ...rest });
-    let result: Step;
-    try {
-      const operation = await signForSponsor(this.context, this.sponsor.address, invocation, this.limits);
-      const outcome = await sponsoredInvoke(this.context, this.sponsor, operation, this.journal, scope);
-      result = outcome.status === 'success' ? step('paid', { tx_hash: outcome.hash })
-        : step('failed', { tx_hash: outcome.hash, error: outcome.code ?? null, detail: `The transaction was ${outcome.status}` });
-    } catch (error) {
-      if (error instanceof SimulationRejected) {
-        result = step('refused', { error: error.code ?? null, detail: error.message });
-      } else if (error instanceof SponsorRefused) {
-        result = step('refused', { detail: `The sponsor declined: ${error.message}` });
-      } else if (error instanceof SubmissionUnsettled || error instanceof SponsorOutcomeUnknown) {
-        return step('unsettled', { detail: error.message });
-      } else {
-        throw error;
-      }
-    }
-    if (result.status === 'refused') {
-      await this.report({ kind: 'simulation', status: 'refused', error: result.error, detail: result.detail, tx_hash: null });
-    } else if (result.status === 'failed') {
-      await this.report({ kind: 'transaction', status: 'failed', error: result.error, detail: result.detail, tx_hash: result.tx_hash });
-    }
-    return result;
-  }
-
-  /** A payment through the wallet's `execute`, with the policy's next sequence and a five-minute deadline. */
-  private async execute(wallet: string, policyHash: Hash32, recipient: string, amount: bigint): Promise<Step> {
-    const state = await readPolicyState(this.read(wallet), policyHash);
-    const now = BigInt((await this.server.getLatestLedger()).closeTime);
-    const request = transferRequest({
-      wallet, policyHash, sequence: state.next_sequence, deadline: now + 300n, asset: this.deployment.asset.contract,
-      recipient, amount,
-    });
-    return this.submit(executeInvocation(this.context, request, this.agent), `execute:${wallet}`,
-      { path: 'execute', amount: fromContractUnits(amount, UNIT_DECIMALS), recipient });
-  }
-
-  /** A payment on the account path. The wallet is asked first, because a refusal there has no reason attached. */
-  private async account(wallet: string, policyHash: Hash32, amount: bigint, service: boolean): Promise<Step> {
-    const { asset, service: demoService, roles } = this.deployment;
-    const payment: AccountPayment = {
-      wallet, policyHash, asset: asset.contract, recipient: roles.recipient, amount,
-      ...(service ? { service: { contract: demoService.contract, service_id: hexToBytes(demoService.service_id) } } : {}),
-    };
-    const base = {
-      path: service ? 'service' as const : 'account' as const, amount: fromContractUnits(amount, UNIT_DECIMALS),
-      recipient: roles.recipient,
-    };
-    try {
-      await readPaymentCheck(this.read(wallet), { policy_hash: policyHash, action: accountPaymentAction(payment) });
-    } catch (error) {
-      if (!(error instanceof WalletError)) throw error;
-      const refused: Step = { ...base, status: 'refused', error: error.code, detail: error.message, tx_hash: null };
-      await this.report({ kind: 'simulation', status: 'refused', error: error.code, detail: error.message, tx_hash: null });
-      return refused;
-    }
-    return this.submit(accountPaymentInvocation(this.context, payment, this.agent), `account:${wallet}`, base);
-  }
-
-  /**
-   * Ask a paid API for something and pay what it asks through x402. The wallet can refuse (its policy), and so can
-   * the API (its own check on the agent); either way nothing is paid.
-   */
-  private async x402(wallet: string, policyHash: Hash32, path: string): Promise<Step> {
-    const { asset, roles } = this.deployment;
+  /** Try to buy one product. The wallet can refuse, and so can the seller; either way nothing is paid. */
+  private async buy(wallet: string, policyHash: Hash32, product: Product, report: AttemptReporter): Promise<Step> {
+    const { code } = this.deployment.asset;
+    const vendor = vendorOf(product.vendor);
     const client = walletClient({ wallet, policyHash, agent: this.agent, context: this.context, server: this.server });
-    const base = { path: 'x402' as const, amount: '?', recipient: roles.recipient };
-    const refused = async (error: string | null, detail: string, known: Partial<Step> = {}): Promise<Step> => {
-      await this.report({ kind: 'simulation', status: 'refused', error, detail, tx_hash: null });
-      return { ...base, ...known, status: 'refused', error, detail, tx_hash: null };
+    const asked = await this.price(client, product);
+    const base = {
+      vendor: product.vendor, product: product.id, title: product.title, amount: asked?.amount ?? null,
+      payee: asked?.payee ?? null, tx_hash: null, content: null,
     };
+    const what = `${vendor.name}, ${product.title}${asked ? `, ${asked.amount} ${code}` : ''}`;
+    const refused = async (status: 'blocked' | 'declined', error: string | null, detail: string): Promise<Step> => {
+      await report({ kind: 'simulation', status, error, detail: `${what}. ${detail}` });
+      return { ...base, status, error, detail };
+    };
+
     let paid: Awaited<ReturnType<typeof fetchPaying>>;
     try {
-      paid = await fetchPaying(client, new URL(path, this.paidApi()));
+      paid = await fetchPaying(client, new URL(product.path, this.market()));
     } catch (error) {
-      // The wallet said no before anything was signed for the API.
-      if (error instanceof WalletError) return refused(error.code, error.message);
+      // The wallet said no before anything was signed for the seller.
+      if (error instanceof WalletError) return refused('blocked', error.code, error.message);
       throw error;
     }
-    const asked = paid.required?.accepts.find((option) => option.asset === asset.contract) ?? paid.required?.accepts[0];
-    const known = asked ? { amount: fromContractUnits(BigInt(asked.amount), UNIT_DECIMALS), recipient: asked.payTo } : {};
     if (paid.response.status === 402) {
       const reason = paid.required?.error ?? null;
-      return refused(reason, `The API refused the payment${reason ? `: ${reason}` : ''}`, known);
+      return refused('declined', reason, reason?.startsWith('payee_gate_')
+        ? `${vendor.name} checked the agent and refused to sell.` : `${vendor.name} did not accept the payment.`);
     }
     if (!paid.response.ok || !paid.settlement?.success) {
       // Paid or not is not known from here; the transaction hash, if there is one, says which.
-      return { ...base, ...known, status: 'unsettled', error: paid.settlement?.errorReason ?? null,
-        detail: `The API answered ${paid.response.status}`, tx_hash: paid.settlement?.transaction || null };
+      return {
+        ...base, status: 'unsettled', error: paid.settlement?.errorReason ?? null,
+        detail: `${vendor.name} answered ${paid.response.status}.`, tx_hash: paid.settlement?.transaction || null,
+      };
     }
-    const answer = JSON.stringify(await paid.response.json().catch(() => null));
-    return { ...base, ...known, status: 'paid', error: null, detail: `The API answered ${answer.slice(0, 200)}`,
-      tx_hash: paid.settlement.transaction };
+    const content = await paid.response.json().catch(() => null) as Content | null;
+    return { ...base, status: 'paid', error: null, detail: null, tx_hash: paid.settlement.transaction, content };
   }
 
-  /** Run one scenario against `wallet` under the policy `policyHash`. Amounts follow the policy as stored. */
-  async run(scenarioId: string, wallet: string, policyHash: Hash32): Promise<ScenarioResult> {
-    const scenario = SCENARIOS.find(({ id }) => id === scenarioId);
-    if (!scenario) throw new UnknownScenario(`Unknown scenario ${scenarioId}`);
-    const { asset, roles } = this.deployment;
-    const policy = await readPolicy(this.read(wallet), policyHash);
-    const limit = policy.assets.find((entry) => entry.asset === asset.contract);
-    // A policy without the demo asset still gets an answer: the wallet refuses, and says why.
-    const perPayment = limit?.per_transaction ?? this.units('5');
-    const within = (value: string) => (this.units(value) < perPayment ? this.units(value) : perPayment);
+  /** Run one task for `wallet` under the policy `policyHash`. */
+  async run(taskId: string, wallet: string, policyHash: Hash32, report: AttemptReporter): Promise<TaskResult> {
+    if (!TASKS.some(({ id }) => id === taskId)) throw new UnknownTask(`Unknown task ${taskId}`);
+    const { code } = this.deployment.asset;
+    const notes: string[] = [];
     const steps: Step[] = [];
+    const say = (step: Step) => {
+      const vendor = vendorOf(step.vendor).name;
+      const price = step.amount ? ` for ${step.amount} ${code}` : '';
+      notes.push(step.status === 'paid' ? `Bought "${step.title}" from ${vendor}${price}.`
+        : step.status === 'blocked' ? `The wallet blocked the purchase from ${vendor}${price}: ${step.error ?? 'no reason given'}.`
+          : step.status === 'declined' ? `${vendor} refused to sell: ${step.error ?? 'no reason given'}. Nothing was paid.`
+            : `The purchase from ${vendor} was sent and is not confirmed yet.`);
+    };
+    const attempt = async (productId: string) => {
+      const step = await this.buy(wallet, policyHash, productOf(productId)!, report);
+      steps.push(step);
+      say(step);
+      return step;
+    };
 
-    switch (scenario.id) {
-      case 'allowed':
-        steps.push(await this.execute(wallet, policyHash, roles.recipient, within('3')));
+    switch (taskId) {
+      case 'brief':
+        await attempt('wire-brief');
         break;
-      case 'over-limit':
-        steps.push(await this.execute(wallet, policyHash, roles.recipient, perPayment + this.units('1')));
+      case 'dataset':
+        await attempt('archive-ledgers');
         break;
-      case 'unknown-recipient':
-        steps.push(await this.execute(wallet, policyHash, roles.stranger, within('1')));
+      case 'audited':
+        await attempt('audited-report');
         break;
-      case 'daily-limit': {
-        // Pay the largest allowed amount until the wallet refuses: the last step is the one over today's limit.
-        for (let i = 0; i < MAX_DAILY_STEPS; i++) {
-          const step = await this.execute(wallet, policyHash, roles.recipient, perPayment);
-          steps.push(step);
-          if (step.status !== 'paid') break;
+      case 'cheapest': {
+        // Ask everyone who sells the day's headlines, then start with whoever asks least.
+        const client = walletClient({ wallet, policyHash, agent: this.agent, context: this.context, server: this.server });
+        const offers: { product: Product; amount: string }[] = [];
+        for (const product of PRODUCTS.filter(({ kind }) => kind === 'brief' || kind === 'headlines')) {
+          const asked = await this.price(client, product);
+          if (asked) offers.push({ product, amount: asked.amount });
+        }
+        offers.sort((a, b) => Number(a.amount) - Number(b.amount));
+        notes.push(`Asked ${offers.length} sellers for a price: `
+          + `${offers.map(({ product, amount }) => `${vendorOf(product.vendor).name} ${amount} ${code}`).join(', ')}.`);
+        for (const [index, { product }] of offers.entries()) {
+          const step = await attempt(product.id);
+          if (step.status === 'paid' || step.status === 'unsettled') break;
+          if (index < offers.length - 1) notes.push('Trying the next cheapest.');
         }
         break;
       }
-      case 'account-transfer':
-        steps.push(await this.account(wallet, policyHash, within('1'), false));
+      case 'routine': {
+        for (let bought = 0; bought < MAX_ROUTINE_PURCHASES; bought++) {
+          const step = await attempt('wire-digest');
+          if (step.status !== 'paid') break;
+        }
+        const count = steps.filter(({ status }) => status === 'paid').length;
+        notes.push(`Stopped after ${count} purchase${count === 1 ? '' : 's'}.`);
         break;
-      case 'service':
-        steps.push(await this.account(wallet, policyHash, this.units(this.deployment.service.price), true));
-        break;
-      case 'x402':
-        steps.push(await this.x402(wallet, policyHash, PAID_REPORT));
-        break;
-      case 'x402-strict':
-        steps.push(await this.x402(wallet, policyHash, PAID_STRICT));
-        break;
+      }
       default:
-        throw new UnknownScenario(`Unknown scenario ${scenarioId}`);
+        throw new UnknownTask(`Unknown task ${taskId}`);
     }
-    return { scenario: scenario.id, expected: scenario.expected, steps };
+    return { task: taskId, notes, steps };
   }
 }

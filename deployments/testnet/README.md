@@ -12,3 +12,20 @@ node deployments/testnet/checkpoint.ts assess
 ```
 
 The metadata document must follow the v1 schema in [verification coverage](../../docs/VERIFICATION_COVERAGE.md) and be served unchanged between `register` and `assess`.
+
+## The demo's deployment
+
+[`demo.json`](demo.json) records the deployment the hosted demo runs against: both registries, a `Live` provider, the agent Scout with a real limited assessment, the test asset tUSD, the installed wallet code, and the accounts the demo's sellers are paid at. It holds public addresses only. There is no wallet in it; every owner creates their own from the wallet code and the salt it names.
+
+Scout's metadata is [`scout-metadata.json`](scout-metadata.json), registered at the address of this file at a fixed commit, so that the bytes the verifier fetches cannot change under the registered hash.
+
+It was made with the demo's setup, which also wrote the keys to the git-ignored `.local/testnet-demo/`:
+
+```sh
+npm run build:contracts && npm run build
+STELLAR_NETWORK=testnet DEMO_DIRECTORY=.local/testnet-demo npm run demo:setup -- \
+  --metadata-uri https://raw.githubusercontent.com/CenekSanzak/stellar-agent-auth/<commit>/deployments/testnet/scout-metadata.json \
+  --public-record deployments/testnet/demo.json
+```
+
+See [the demo](../../apps/demo/README.md) and [hosting](../../docs/HOSTING.md).

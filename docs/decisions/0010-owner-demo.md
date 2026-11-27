@@ -1,5 +1,7 @@
 # ADR 0010 · The owner demo
 
+> The page and the server were rebuilt on 2026-11-27 as a hosted, multi-visitor demo: see [ADR 0013](0013-hosted-demo.md). What this ADR decides about the owner signing in the browser, and about showing only what was read from the network, still holds.
+
 Decided on 2026-11-25, in P7.
 
 ## Problem

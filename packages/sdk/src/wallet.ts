@@ -1,4 +1,4 @@
-import { Address, Contract, StrKey, authorizeEntry, scValToNative, type xdr } from '@stellar/stellar-sdk';
+import { Address, Contract, StrKey, authorizeEntry, scValToNative, type rpc, type xdr } from '@stellar/stellar-sdk';
 import { assertAuthWindow } from './actions.js';
 import { assertInvocationTree, signInvocation, simulateRead, type ContractRead } from './contract-call.js';
 import { signingAddress } from './credentials.js';
@@ -169,6 +169,20 @@ export async function readPaymentCheck(wallet: WalletRead, args: WalletArgs['che
     throw new Error('Smart wallet returned the state of a different policy');
   }
   return state;
+}
+
+/**
+ * The hex hash of the code a contract runs; `undefined` if it is not a WASM contract or does not exist. Only a
+ * contract running known wallet code can be believed about its policies and its history.
+ */
+export async function contractCodeHash(
+  server: Pick<rpc.Server, 'getLedgerEntries'>, contractId: string,
+): Promise<string | undefined> {
+  const { entries } = await server.getLedgerEntries(new Contract(contractId).getFootprint());
+  const data = entries[0]?.val;
+  if (data?.type !== 'contractData' || data.contractData.val.type !== 'scvContractInstance') return undefined;
+  const { executable } = data.contractData.val.instance;
+  return executable.type === 'contractExecutableWasm' ? executable.wasmHash.toXdr('hex') : undefined;
 }
 
 export async function readWalletOwner(wallet: WalletRead): Promise<string> {

@@ -65,8 +65,10 @@ jobs:
       - run: npm run build
       - run: npm run dev
       - run: npm run test:integration
-      # The owner demo in the runner's own Chrome; nothing is downloaded.
+      # The demo in the runner's own Chrome; nothing is downloaded.
       - run: npm run test:browser
+      # The image the hosted demo runs from must keep building.
+      - run: docker build -t scout-demo .
       - if: failure()
         run: docker compose logs --tail=100
       - if: always()

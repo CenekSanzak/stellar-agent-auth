@@ -8,53 +8,84 @@ import { loadDeployment } from './deployment.js';
 import { demoDirectory, recordPath } from './setup.js';
 import { isMainModule } from '@stellar-agent-auth/sdk/node';
 
-export { createBackend, type BackendOptions } from './backend.js';
-export { DemoAgent, SCENARIOS, type Scenario, type ScenarioResult, type Step } from './agent.js';
+export { createBackend, rateLimiter, DEFAULT_LIMITS, type BackendOptions, type Limits } from './backend.js';
+export { ScoutAgent, TASKS, type Task, type TaskResult, type Step } from './agent.js';
+export {
+  LedgerWatch, PRODUCTS, VENDORS, VENDOR_IDS, backfill, observe, produce,
+  type Content, type LedgerSample, type Product, type Vendor, type VendorId,
+} from './catalogue.js';
 export { assertDeployment, loadDeployment, saveDeployment, type Deployment } from './deployment.js';
 export { setupDeployment, demoDirectory, recordPath, FIXTURE_LABEL, type SetupOptions } from './setup.js';
 
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
+
 /**
- * Start the demo's server side from the deployment record the setup wrote. It serves the built web app too, so
- * after `npm run build` the whole demo is one address. During development, run Vite beside it (`npm run dev -w
- * @stellar-agent-auth/demo`), which proxies `/v1` here.
+ * Start the demo's server side from a deployment record. It serves the built web app too, so after `npm run build`
+ * the whole demo is one address. During development, run Vite beside it (`npm run dev -w @stellar-agent-auth/demo`),
+ * which proxies `/v1` and `/indexer` here.
+ *
+ * By default it listens on loopback. To host it, set `DEMO_HOST` to the address to listen on and `DEMO_PUBLIC_URL`
+ * to the address visitors use; it then expects to sit behind a proxy that terminates TLS and names the client.
  */
 export async function startDemo(
   env: Record<string, string | undefined>,
 ): Promise<{ server: Server; url: string; stop: () => Promise<void> }> {
-  const port = Number(env['DEMO_PORT'] || '8790');
+  const port = Number(env['DEMO_PORT'] || env['PORT'] || '8790');
   if (!Number.isInteger(port) || port < 0 || port > 65_535) throw new Error('DEMO_PORT must be 0-65535');
+  const host = env['DEMO_HOST'] || '127.0.0.1';
+  const publicUrl = env['DEMO_PUBLIC_URL'] || undefined;
+  if (publicUrl !== undefined && !/^https?:\/\/[^/]+\/?$/.test(publicUrl)) {
+    throw new Error('DEMO_PUBLIC_URL must be an origin, such as https://scout.example');
+  }
+  // This process signs as the agent and hands out the test asset. Beyond loopback it must know its public name, so
+  // that it accepts requests for that name only and limits visitors by their own address.
+  if (!LOOPBACK_HOSTS.has(host) && !publicUrl) throw new Error('Listening beyond loopback requires DEMO_PUBLIC_URL');
   const deployment = await loadDeployment(env['DEMO_DEPLOYMENT'] ?? recordPath(env));
   const webRoot = fileURLToPath(new URL('../web', import.meta.url));
   const built = await stat(join(webRoot, 'index.html')).then((info) => info.isFile(), () => false);
   const backend = await createBackend({
-    deployment, directory: join(demoDirectory(env), 'state', deployment.epoch), env,
-    ...(built ? { webRoot } : {}),
-    allowedOrigins: (env['DEMO_ALLOWED_ORIGINS'] ?? 'http://localhost:5173,http://127.0.0.1:5173').split(',')
+    deployment, directory: env['DEMO_STATE_DIRECTORY'] ?? join(demoDirectory(env), 'state', deployment.epoch), env,
+    ...(built ? { webRoot } : {}), ...(publicUrl ? { publicUrl } : {}),
+    allowedOrigins: (env['DEMO_ALLOWED_ORIGINS'] ?? (publicUrl ? '' : 'http://localhost:5173,http://127.0.0.1:5173')).split(',')
       .map((origin) => origin.trim()).filter(Boolean),
   });
   const server = createServer((request, response) => { void backend.handler(request, response); });
-  // A scenario can make several payments, each waiting for a ledger.
+  // A task can make several purchases, each waiting for a ledger.
   server.requestTimeout = 180_000;
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    // Loopback only: this process signs as the agent and hands out the test asset to whoever asks.
-    server.listen(port, '127.0.0.1', () => resolve());
-  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(port, host, () => resolve());
+    });
+  } catch (error) {
+    await backend.stop();
+    throw error;
+  }
   const address = server.address();
   const bound = typeof address === 'object' && address ? address.port : port;
+  // Scout reaches the sellers on this machine, whatever name visitors use.
   backend.listening(`http://127.0.0.1:${bound}/`);
   return {
-    server, url: `http://127.0.0.1:${bound}/`,
+    server, url: publicUrl ?? `http://127.0.0.1:${bound}/`,
     async stop() {
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+        server.closeAllConnections();
+      });
       await backend.stop();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
     },
   };
 }
 
 if (isMainModule(import.meta.url)) {
-  startDemo(process.env).then(({ url }) => {
+  startDemo(process.env).then(({ url, stop }) => {
     console.log(JSON.stringify({ status: 'listening', url }));
+    // A host stops a container with a signal; closing in order leaves the indexer's database clean.
+    for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+      process.once(signal, () => {
+        void stop().finally(() => process.exit(0));
+      });
+    }
   }, (error: unknown) => {
     console.error(`demo: ${error instanceof Error ? error.message : String(error)}`);
     process.exitCode = 1;

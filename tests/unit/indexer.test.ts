@@ -4,13 +4,13 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { xdr } from '@stellar/stellar-sdk';
+import { Contract, xdr } from '@stellar/stellar-sdk';
 import { afterEach, describe, expect, it } from 'vitest';
 import { readIndexedHistory } from '../../packages/sdk/src/history.js';
 import type { AuditHead } from '../../packages/sdk/src/types.js';
 import { createHandler, type IndexerState } from '../../services/indexer/src/api.js';
 import { verifyStored, verifyWallet } from '../../services/indexer/src/audit.js';
-import { ingest, networkIdOf, type StreamConfig } from '../../services/indexer/src/events.js';
+import { codeAdmission, ingest, networkIdOf, type StreamConfig } from '../../services/indexer/src/events.js';
 import { indexerConfig } from '../../services/indexer/src/index.js';
 import { HistoryStore, type StoredAuditEntry, type Stream } from '../../services/indexer/src/storage.js';
 import { contract, passphrase, wallet } from '../fixtures/abi-v1.js';
@@ -346,6 +346,116 @@ describe('audit verification (A27)', () => {
   });
 });
 
+describe('wallets followed by the code they run', () => {
+  const CODE = 'ab'.repeat(32);
+  const mine = contract(70);
+  const another = contract(71);
+  const foreign = contract(72);
+  const byCode = (overrides: Partial<StreamConfig> = {}) => config({ wallets: [], walletCode: [CODE], ...overrides });
+  const admit = async (id: string) => id === mine || id === another;
+
+  /** What an RPC answers for a contract instance, as far as the code hash is read from it. */
+  function ledger(codeOf: Record<string, string | undefined>) {
+    const asked: string[] = [];
+    const getLedgerEntries = async (key: { toXdr(format: 'base64'): string }) => {
+      const id = Object.keys(codeOf).find((candidate) =>
+        new Contract(candidate).getFootprint().toXdr('base64') === key.toXdr('base64'))!;
+      asked.push(id);
+      const hash = codeOf[id];
+      return {
+        entries: hash === undefined ? [] : [{ val: { type: 'contractData', contractData: { val: {
+          type: 'scvContractInstance', instance: { executable: { type: 'contractExecutableWasm', wasmHash: { toXdr: () => hash } } },
+        } } } }],
+      };
+    };
+    return { asked, server: { getLedgerEntries } as unknown as Parameters<typeof codeAdmission>[0] };
+  }
+
+  it('keeps the history of every wallet that runs the code, and nothing from other contracts', async () => {
+    const store = memory();
+    const source = new FakeEvents();
+    const first = auditChain(mine, 3, 10);
+    const second = auditChain(another, 2, 20);
+    const theirs = auditChain(foreign, 2, 30);
+    source.add(...[...first, ...second, ...theirs].map((link) => link.event),
+      event(40, registry, 'identity_v1', xdr.ScVal.scvU32(1)));
+    const report = await ingest(store, source, byCode(), { admit });
+    expect(report).toMatchObject({ events: 6, audit: 5, quarantined: 0, ignored: 2 });
+    expect(report.touched.sort()).toEqual([mine, another].sort());
+    expect(store.auditEntries(STREAM, mine)).toHaveLength(3);
+    expect(store.auditEntries(STREAM, foreign)).toHaveLength(0);
+    expect(store.events(STREAM, { contract: foreign })).toHaveLength(0);
+    // One filter reads audit events from the whole network; the named contracts keep their own.
+    expect(source.requests[0]!.filters).toEqual([
+      { type: 'contract', topics: [[xdr.ScVal.scvSymbol('audit_v1').toXdr('base64'), '*']] },
+      { type: 'contract', contractIds: [registry] },
+    ]);
+    expect(verifyWallet(store, STREAM, passphrase, mine, headOf(first)).status).toBe('verified');
+    expect((await ingest(store, source, byCode(), { admit })).touched).toEqual([]);
+  });
+
+  it('stores nothing from a page it could not decide about, and reads it again', async () => {
+    const store = memory();
+    const source = new FakeEvents().add(...auditChain(mine, 2).map((link) => link.event));
+    let fail = true;
+    const flaky = async (id: string) => {
+      if (fail) throw new Error('RPC unreachable');
+      return admit(id);
+    };
+    await expect(ingest(store, source, byCode(), { admit: flaky })).rejects.toThrow('RPC unreachable');
+    expect(store.counts(STREAM)).toMatchObject({ events: 0, audit: 0 });
+    fail = false;
+    expect(await ingest(store, source, byCode(), { admit: flaky })).toMatchObject({ audit: 2, touched: [mine] });
+  });
+
+  it('needs a way to read code, and leaves room for the network-wide filter', async () => {
+    const source = new FakeEvents();
+    await expect(ingest(memory(), source, byCode())).rejects.toThrow('needs a way to read');
+    await expect(ingest(memory(), source, byCode({ contracts: Array.from({ length: 21 }, (_, i) => contract(100 + i)) }), { admit }))
+      .rejects.toThrow('At most 20');
+    await expect(ingest(memory(), source, config({ wallets: [], contracts: [] }))).rejects.toThrow('Nothing to index');
+  });
+
+  it('admits by code hash and asks about each contract once', async () => {
+    const { asked, server } = ledger({ [mine]: CODE, [foreign]: 'cd'.repeat(32), [another]: undefined });
+    const admission = codeAdmission(server, [CODE]);
+    expect([await admission(mine), await admission(foreign), await admission(another)]).toEqual([true, false, false]);
+    expect([await admission(mine), await admission(foreign)]).toEqual([true, false]);
+    expect(asked).toEqual([mine, foreign, another]);
+  });
+
+  it('answers for any contract address, and records attempts only with the token', async () => {
+    const store = memory();
+    const source = new FakeEvents().add(...auditChain(mine, 2).map((link) => link.event));
+    const state: IndexerState = { audit: new Map() };
+    state.ingestion = await ingest(store, source, byCode(), { admit });
+    const token = 't'.repeat(40);
+    const serve = async (options: { token?: string }) => {
+      const server: Server = createServer(createHandler({
+        store, streamId: STREAM, network: 'local', wallets: [], walletCode: [CODE], state, token: options.token,
+      }));
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      cleanups.push(() => new Promise<void>((resolve) => server.close(() => resolve())));
+      const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+      return async (path: string, init?: RequestInit) => {
+        const response = await fetch(new URL(path, base), init);
+        return { status: response.status, body: await response.json() as Record<string, any> };
+      };
+    };
+    const call = await serve({ token });
+    expect((await call(`v1/wallets/${mine}/history`)).body.entries).toHaveLength(2);
+    expect((await call(`v1/wallets/${contract(99)}/history`)).body).toMatchObject({ entries: [], audit: null });
+    expect((await call('v1/wallets/short/history')).status).toBe(404);
+    expect((await call('v1/health')).body).toMatchObject({ wallets: [], wallet_code: [CODE] });
+    const attempt = { method: 'POST', body: JSON.stringify({ kind: 'simulation', status: 'refused' }) };
+    expect((await call(`v1/wallets/${mine}/attempts`, attempt)).status).toBe(401);
+    expect((await call(`v1/wallets/${mine}/attempts`, { ...attempt, headers: { authorization: `Bearer ${token}` } })).status).toBe(201);
+    // Without a token a local caller could write to anyone's wallet, so nobody may.
+    const open = await serve({});
+    expect((await open(`v1/wallets/${mine}/attempts`, attempt)).status).toBe(401);
+  });
+});
+
 describe('read API', () => {
   const chain = auditChain(wallet, 5);
 
@@ -561,6 +671,16 @@ describe('configuration', () => {
     expect(() => indexerConfig({ ...env, WALLET_ID: undefined })).toThrow('INDEXER_WALLETS');
     expect(() => indexerConfig({ ...env, INDEXER_WALLETS: 'GABC' })).toThrow('not a contract address');
     expect(() => indexerConfig({ ...env, INDEXER_PORT: '70000' })).toThrow('INDEXER_PORT');
+  });
+
+  it('follows wallets by code when told which code, with or without named wallets', () => {
+    const code = 'AB'.repeat(32);
+    expect(indexerConfig({ ...env, WALLET_ID: undefined, INDEXER_WALLET_CODE: code }).stream)
+      .toMatchObject({ wallets: [], walletCode: [code.toLowerCase()] });
+    expect(indexerConfig({ ...env, INDEXER_WALLET_CODE: `${code}, ${'cd'.repeat(32)}` }).stream)
+      .toMatchObject({ wallets: [wallet], walletCode: [code.toLowerCase(), 'cd'.repeat(32)] });
+    expect(indexerConfig(env).stream.walletCode).toBeUndefined();
+    expect(() => indexerConfig({ ...env, INDEXER_WALLET_CODE: 'abc' })).toThrow('INDEXER_WALLET_CODE');
   });
 
   it('keeps the token file out of reach of other users', async () => {

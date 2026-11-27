@@ -1,0 +1,16 @@
+**/node_modules
+**/dist
+target
+.local
+.git
+.github
+.claude
+coverage
+tests
+docs
+contracts
+examples
+scripts
+*.pdf
+.env
+.env.*

@@ -33,6 +33,7 @@
     "test:browser": "vitest run --project browser",
     "demo:setup": "node apps/demo/dist/server/setup.js",
     "demo": "node apps/demo/dist/server/index.js",
+    "demo:assess": "node apps/demo/dist/server/setup.js assess",
     "check:service-packages": "node scripts/check-service-packages.mjs"
   },
   "devDependencies": {

@@ -1,10 +1,12 @@
-# Demo
+# Scout, the demo
 
-An owner funds a wallet, lets one verified agent pay within limits, watches what it does, and stops it. The page is a small Vite and TypeScript app with no framework; behind it runs a server that plays the parts the owner does not. The design is in [ADR 0010](../../docs/decisions/0010-owner-demo.md) and what was tested in [P7 validation](../../docs/P7_VALIDATION.md).
+Scout is a research agent. It buys briefs and datasets from sellers over x402 and pays from its owner's wallet, inside an allowance the owner sets: how much per purchase, per day and in total, which sellers, and until when. The owner can freeze it or end the allowance at any time.
 
-It runs on the local network. The Testnet deployment, with a real assessment in place of the fixture, is P8.
+It is hosted at **<https://scout-agent-demo.fly.dev/>**, on Stellar Testnet, and can be tried there as a guest with nothing installed.
 
-## Run it
+The page is a small Vite and TypeScript app with no framework. Behind it runs one server that plays every part the owner does not. It runs on a local network and on Testnet, and it can be hosted so that anyone can try it. The design is in [ADR 0013](../../docs/decisions/0013-hosted-demo.md), what was tested in [the validation record](../../docs/HOSTED_DEMO_VALIDATION.md), and how to host it in [hosting](../../docs/HOSTING.md).
+
+## Run it on a local network
 
 From the repository root, with Docker running:
 
@@ -12,105 +14,108 @@ From the repository root, with Docker running:
 npm run build:contracts     # once, and after a contract changes
 npm run build
 npm run dev                 # starts the local Stellar network
-npm run demo:setup          # deploys everything except your wallet
+npm run demo:setup          # deploys everything except the owners' wallets
 npm run demo                # http://127.0.0.1:8790/
 ```
 
 `demo:setup` writes `.local/demo/deployment.json`, a record of public addresses, and puts one key per role in a directory beside it. Run it again whenever the local network has been restarted: a fresh network has none of the contracts.
 
-While working on the page itself, run `npm run dev -w @stellar-agent-auth/demo` next to `npm run demo` and open `http://127.0.0.1:5173/`. Vite serves the page and passes `/v1` to the demo server.
+While working on the page itself, run `npm run dev -w @stellar-agent-auth/demo` next to `npm run demo` and open `http://127.0.0.1:5173/`. Vite serves the page and passes `/v1` and `/indexer` to the demo server.
+
+To connect Freighter to the local network, start the network with `npm run dev:horizon` instead of `npm run dev`; Freighter needs Horizon.
+
+## Run it against Testnet
+
+The Testnet deployment is recorded in [`deployments/testnet/demo.json`](../../deployments/testnet/demo.json). Its keys are on the machine that made it. To make a deployment of your own:
+
+```sh
+STELLAR_NETWORK=testnet DEMO_DIRECTORY=.local/testnet-demo npm run demo:setup -- \
+  --metadata-uri https://<public host>/scout-metadata.json \
+  --public-record deployments/testnet/demo.json
+DEMO_DIRECTORY=.local/testnet-demo npm run demo
+```
+
+On Testnet the agent is assessed for real. The metadata document must be served at a public HTTPS address and follow the v1 schema in [verification coverage](../../docs/VERIFICATION_COVERAGE.md); [`scout-metadata.json`](../../deployments/testnet/scout-metadata.json) is the one in use, served from this repository at a fixed commit. The project's verifier fetches it, runs its checks and publishes the result, which is valid for 30 days unless `--validity-days` says otherwise. To publish a new result before the old one expires:
+
+```sh
+DEMO_DIRECTORY=.local/testnet-demo npm run demo:assess
+```
 
 ## What you do in the page
 
-1. **Connect as the owner.** With Freighter, or on the local network with a key generated in the tab. The page never asks for a secret key.
-2. **Create your wallet.** You sign the deployment; the wallet is yours and is bound to this deployment's registries.
-3. **Add test funds.** The faucet's funder pays in 100 DEMO. That is the funder's signature, not yours.
-4. **Approve a policy.** The form starts at 5 per payment, 20 per UTC day, seven days, to one recipient.
-5. **Ask the agent to pay.** Eight buttons, each a fixed scenario: a payment within the limits, one above the per-payment limit, one to an unlisted recipient, payments up to the daily limit and one past it, a payment as an account, a payment to the demo service, a purchase from a paid API over x402, and a purchase from a stricter API that refuses the agent.
-6. **Pause, resume, revoke.** Then ask the agent again and watch it be refused.
-7. **Read the history.** Entries on the ledger are verified in the page against the wallet's stored head. Refusals are listed separately: they left nothing on the ledger.
+1. **Come in.** As a guest, with Freighter, or with any wallet [Stellar Wallets Kit](https://stellarwalletskit.dev/) knows (xBull, Albedo, Lobstr, Rabet, Hana and others). A guest is a key generated in the browser; the page never asks for a secret key.
+2. **Set up your wallet.** One button: Friendbot funds your account, you create your wallet, and the faucet adds 100 tUSD. A guest's steps need no approval; a wallet asks you once, for the wallet's creation.
+3. **Set Scout's allowance.** The form starts at 5 per purchase, 6 per day, 20 in total, for seven days, with three of the four sellers ticked.
+4. **Ask Scout.** Five tasks. With the suggested allowance: the brief is bought; the dataset costs 8 and is blocked by your wallet; the audited report is refused by its seller; the cheapest headlines are blocked at the unapproved seller and bought from the next; and the weekly catch-up buys until the day's limit stops it.
+5. **Freeze, unfreeze, end.** Then ask Scout again and watch the wallet refuse.
+6. **Read the wallet's record.** Entries on the ledger are verified in the page against the wallet's stored head. Refusals are listed separately: they left nothing on the ledger.
+
+What happens is not scripted. Change the allowance and the outcomes change with it: allow 10 per purchase and the dataset is bought; tick Bargain Data and Scout buys the cheapest headlines there.
+
+## The sellers
+
+Four sellers stand for other people's businesses. Each has its own account, its own price and its own rule about which agents it sells to. They are ordinary x402 resources under `/x402/`: they answer 402, are paid by whoever asks, and check the paying agent before they sell (see [ADR 0012](../../docs/decisions/0012-x402-and-payee-gate.md)). What they sell is read from the network when it is bought.
+
+| Seller | Sells | Price, tUSD | Sells to |
+| --- | --- | --- | --- |
+| Ledger Wire | Network brief; close-time digest | 1; 3 | Any agent with a current verification |
+| Deep Archive | Recent ledgers dataset | 8 | Any agent with a current verification |
+| Audited Sources | Audited fee report | 2 | Only agents with a passed `Code` check, which the project's verifier does not perform |
+| Bargain Data | Headlines | 0.5 | Any agent with a current verification; not ticked in the suggested allowance |
 
 ## Who signs what
 
 | Role | Where its key is | What it signs |
 | --- | --- | --- |
-| Owner | Your wallet extension, or the tab on the local network | Wallet creation, policies, pause, resume, revocation, withdrawals |
-| Agent | The demo server | Payment requests, for the named scenarios only |
-| Sponsor | The demo server, as the submitter | Transaction envelopes; it pays fees and authorizes nothing |
-| Funder | The demo server | Faucet payments into the wallet |
+| Owner | Your wallet, or your browser as a guest | Wallet creation, allowances, freezing, ending, withdrawals |
+| Agent (Scout) | The demo server | Authorization entries for purchases, for the named tasks only |
 | Facilitator | The demo server | Envelopes of x402 payments; it pays their fees and authorizes nothing |
-| Admin, provider, controller, issuer | Used by the setup only | Deployment, provider approval, registration, the result, the asset |
+| Funder | The demo server | Faucet payments into wallets |
+| Admin, provider, controller, issuer, sellers | Used by the setup only | Deployment, provider approval, registration, the result, the asset, trustlines |
 
-The page reads balances, policies, the agent's identity and its verification result from the network itself, through the RPC. It takes only the deployment's addresses and the scenario list from the demo server.
+The page reads balances, allowances, the agent's identity and its verification from the network itself, through the RPC. It takes only the deployment's addresses, the sellers and the task list from the demo server.
 
 ## The demo server
 
-`apps/demo/server`. It listens on loopback only.
+`apps/demo/server`. It serves many visitors at once and keeps no accounts: a visitor is known by their account address, and their wallet's address is derived from it.
 
 | Route | What it does |
 | --- | --- |
-| `GET /v1/config` | The deployment's public addresses and the scenarios |
-| `POST /v1/session { owner }` | Names the owner's wallet address. Once the wallet exists on the network, starts the sponsor and the indexer for it |
-| `POST /v1/fund` | The funder sends 100 DEMO to the session's wallet, unless it already holds 1,000 or more |
-| `POST /v1/payments { scenario, policy_hash }` | The agent runs one named scenario under that policy |
+| `GET /v1/config` | The deployment's public addresses, the sellers and the tasks |
+| `POST /v1/session { owner }` | Names the owner's wallet address and says whether the wallet exists |
+| `POST /v1/fund { owner }` | The funder sends 100 tUSD to that owner's wallet, unless it already holds 200 or more |
+| `POST /v1/tasks { owner, task, policy_hash }` | Scout runs one named task for that owner's wallet under that allowance |
+| `GET /indexer/v1/...` | The indexer's read routes for a wallet, passed through |
+| `GET /x402/<seller>/<product>` | A seller. 402 until paid |
+| `GET /healthz` | For a host's health check |
 
-It also serves a paid API, which stands for someone else's service and takes no part in the session:
+One indexer follows every wallet that runs the deployment's wallet code (`INDEXER_WALLET_CODE`; see the [indexer](../../services/indexer/README.md)).
 
-| Route | What it does |
-| --- | --- |
-| `GET /x402/report` | Answers 402 with a price of 1 DEMO. Paid through x402, it checks that the payer is a known wallet whose agent has a current result covering its metadata and signer account, then answers with the latest ledger |
-| `GET /x402/audited-agents-only` | The same, but it also requires a code check. The demo's agent has none, so it is refused and not charged |
+What protects it:
 
-The agent buys from it with the wallet ([ADR 0012](../../docs/decisions/0012-x402-and-payee-gate.md)). On the local network the facilitator is this project's own; the published x402 code does not know a local network.
+- It refuses any host name but loopback and its configured public name, and any origin but its own.
+- Bodies must be JSON, which a cross-site form cannot send.
+- Scout signs for five named tasks and nothing else. The recipient and the amount come from the sellers, not from the request.
+- One task runs per wallet at a time, and six at once in all.
+- Everything that costs the server something is rate limited by client address: tasks, faucet payments, requests to the sellers, and requests in general. The faucet also has a ceiling per wallet and per day.
+- The page is served with a content security policy that lets it run only its own scripts.
 
-A caller chooses a scenario and a policy and nothing else. Amounts and recipients are decided in the server from the policy as the wallet stores it, so the server cannot be used to sign an arbitrary payment. It accepts JSON bodies only and checks the request's origin, so another page open in the same browser cannot drive the agent.
+What it does not protect: anyone may name any owner, so anyone can have Scout run a task for someone else's wallet. That spends only what that wallet's owner allowed, where the owner allowed it, and it is test money. A demo with no sign-up cannot tell the visitors apart any better.
 
-The sponsor is the same code as `services/submitter` and the indexer the same as `services/indexer`. The demo server starts both in its own process, because the wallet they serve is not known until the owner creates it. A deployment whose wallet is known in advance runs them as separate processes.
-
-| Variable | Default | Meaning |
+| Setting | Default | Meaning |
 | --- | --- | --- |
-| `DEMO_DIRECTORY` | `.local/demo` | Where the setup writes keys and the record, and the server keeps per-wallet state |
-| `DEMO_DEPLOYMENT` | `<DEMO_DIRECTORY>/deployment.json` | The deployment record to serve |
-| `DEMO_PORT` | `8790` | Port on `127.0.0.1` |
-| `DEMO_ALLOWED_ORIGINS` | the Vite dev server | Other origins a browser may call from |
+| `DEMO_PORT` (or `PORT`) | `8790` | Port to listen on |
+| `DEMO_HOST` | `127.0.0.1` | Address to listen on. Anything beyond loopback requires `DEMO_PUBLIC_URL` |
+| `DEMO_PUBLIC_URL` | none | The origin visitors use, such as `https://scout.example`. With it the server accepts that host name and reads client addresses from the proxy's headers |
+| `DEMO_DEPLOYMENT` | `.local/demo/deployment.json` | The deployment record |
+| `DEMO_DIRECTORY` | `.local/demo` | Where the setup writes, and where the record and state are looked for |
+| `DEMO_STATE_DIRECTORY` | `<DEMO_DIRECTORY>/state/<epoch>` | The indexer's database and the facilitator's journal |
+| `DEMO_AGENT_KEY`, `DEMO_FUNDER_KEY`, `DEMO_FACILITATOR_KEY` | `agent`, `funder`, `facilitator` | Key references: a name in the record's key directory, `file:<path>`, or `env:<NAME>` |
+| `DEMO_ALLOWED_ORIGINS` | the Vite dev server, on loopback only | More origins a browser may call from |
 
 ## What it does not show
 
-- **The result is simulated.** On the local network the provider is a fixture provider and the page says so wherever the result appears. A local network cannot reach a public metadata URL, which a real assessment needs.
-- **A refusal has no transaction.** The agent finds a refusal in simulation and submits nothing, as an agent should. The page shows the wallet's reason and no transaction link. A payment signed before a revocation and submitted after it, which fails on the ledger, is shown by `examples/payment-flow.ts`, not here.
-- **Freighter is not covered by the automated tests.** They run in a browser without the extension and use the local demo key. It was tried by hand on the local network; see below and [P7 validation](../../docs/P7_VALIDATION.md). Signing through Freighter goes through the SDK's wallet adapter, which checks every signature it gets back.
-- **One owner at a time.** A second owner connecting replaces the first one's session in the server.
-- **The paid API uses a facilitator that accepts the wallet.** A service whose facilitator runs the published x402 code as it is would refuse the wallet's payment.
-
-## Trying it with Freighter
-
-Freighter accepts a custom network only with a Horizon address, and the default local network runs the RPC alone. Start it with Horizon instead:
-
-```sh
-npm run local:down
-npm run dev:horizon
-npm run demo:setup
-npm run demo
-```
-
-In Freighter, add a custom network and select it:
-
-| Field | Value |
-| --- | --- |
-| Horizon URL | `http://localhost:8000` |
-| Soroban RPC URL | `http://localhost:8000/rpc` |
-| Passphrase | `Standalone Network ; February 2017` |
-| Friendbot URL | `http://localhost:8000/friendbot` |
-| Allow HTTP | on |
-
-Open `http://localhost:8790/` in the browser that has the extension and choose "Connect Freighter". Every owner action then opens Freighter's signing window. With Freighter switched to another network, connecting is refused with a message that names both networks.
-
-## Tests
-
-```sh
-npx vitest run --project unit tests/unit/demo.test.ts                  # the wording of every state
-npx vitest run --project local tests/integration/demo-backend.test.ts  # the server on the local network
-npm run test:browser                                                   # the page in Chrome on the local network
-```
-
-The browser test uses the Chrome installed on the machine, through `playwright-core`. Set `DEMO_BROWSER_CHANNEL` to use another installed browser, such as `msedge`.
+- **A refusal on the ledger.** Scout asks the wallet before it signs, so a refused purchase is never sent. What the wallet does with a refused payment that is submitted anyway is covered by the contract and integration tests.
+- **The wallet's own `execute` call and a service that pulls its payment.** Every purchase here is an x402 payment on the account path. The other paths are in the [payment flow example](../../examples/payment-flow.ts) and the CLI.
+- **A real agent.** Scout's tasks are fixed code, not a model deciding what to buy. What is real is everything the tasks meet: the wallet, the allowance, the sellers and the network.
+- **Wallets other than a guest key and Freighter, tested.** The other wallets go through Stellar Wallets Kit and need only transaction signing, which every wallet does; none of them was tried here by hand.

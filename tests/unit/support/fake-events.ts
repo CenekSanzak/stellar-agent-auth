@@ -96,10 +96,13 @@ export class FakeEvents {
       throw new Error(`startLedger must be within the ledger range: ${this.oldestLedger} - ${this.latestLedger}`);
     }
     const end = Math.min(start + this.scanLimit, this.latestLedger + 1);
-    const contracts = new Set(request.filters.flatMap((filter) => filter.contractIds ?? []));
+    // A filter matches by contract, by first topic, or both; an event is returned once however many filters match.
+    const matches = (item: rpc.Api.EventResponse) => request.filters.some((filter) =>
+      (!filter.contractIds?.length || filter.contractIds.includes(item.contractId!.toString()))
+      && (!filter.topics?.length || filter.topics.some((topics) => topics[0] === item.topic[0]!.toXdr('base64'))));
     const limit = request.limit ?? 100;
     const matched = this.events.filter((item) => item.ledger >= start && item.ledger < end
-      && (cursor === undefined || item.id > cursor) && contracts.has(item.contractId!.toString()));
+      && (cursor === undefined || item.id > cursor) && matches(item));
     const page = matched.slice(0, limit);
     return {
       events: page, cursor: page.length === limit ? page.at(-1)!.id : endOf(end - 1),

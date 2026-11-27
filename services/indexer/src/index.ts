@@ -7,7 +7,7 @@ import { loadConfig, readAuditHead, type Environment } from '@stellar-agent-auth
 import { isMainModule } from '@stellar-agent-auth/sdk/node';
 import { createHandler, type IndexerState } from './api.js';
 import { verifyWallet, type AuditReport } from './audit.js';
-import { ingest, networkIdOf, type IngestReport, type StreamConfig } from './events.js';
+import { codeAdmission, ingest, networkIdOf, type Admission, type IngestReport, type StreamConfig } from './events.js';
 import { HistoryStore } from './storage.js';
 
 /**
@@ -20,11 +20,14 @@ import { HistoryStore } from './storage.js';
  */
 
 export { HistoryStore } from './storage.js';
-export { ingest, networkIdOf, KNOWN_TOPICS, type EventSource, type IngestReport, type StreamConfig } from './events.js';
+export {
+  codeAdmission, ingest, networkIdOf, KNOWN_TOPICS, type Admission, type EventSource, type IngestReport, type StreamConfig,
+} from './events.js';
 export { verifyStored, verifyWallet, type AuditReport, type AuditStatus } from './audit.js';
 export { createHandler, type ApiOptions, type IndexerState } from './api.js';
 
 const LOOPBACK = new Set(['127.0.0.1', '::1', 'localhost']);
+const MAX_AUDIT_REPORTS = 2_000;
 
 export interface IndexerConfig {
   network: string;
@@ -55,7 +58,15 @@ export function indexerConfig(env: Environment): IndexerConfig {
     ...list('INDEXER_CONTRACTS'),
     ...[config.contracts.AGENT_REGISTRY_ID, config.contracts.VERIFICATION_REGISTRY_ID].filter((id): id is string => !!id),
   ];
-  if (!wallets.length) throw new Error('Set INDEXER_WALLETS (or WALLET_ID) to the wallet contract addresses to follow');
+  // Wallets are followed by name, or by the code they run when each owner creates their own.
+  const walletCode = list('INDEXER_WALLET_CODE').map((hash) => hash.toLowerCase());
+  if (walletCode.some((hash) => !/^[0-9a-f]{64}$/.test(hash))) {
+    throw new Error('INDEXER_WALLET_CODE must be 64-character hex code hashes, separated by commas');
+  }
+  if (!wallets.length && !walletCode.length) {
+    throw new Error('Set INDEXER_WALLETS (or WALLET_ID) to the wallet contract addresses to follow, or '
+      + 'INDEXER_WALLET_CODE to follow every wallet that runs that code');
+  }
   for (const id of [...wallets, ...contracts]) {
     if (!StrKey.isValidContract(id)) throw new Error(`${id} is not a contract address`);
   }
@@ -65,6 +76,7 @@ export function indexerConfig(env: Environment): IndexerConfig {
     stream: {
       id: `${config.network}:${config.deploymentEpoch ?? 'default'}`, networkPassphrase: config.passphrase, wallets,
       contracts: [...new Set(contracts)].filter((id) => !wallets.includes(id)),
+      ...(walletCode.length ? { walletCode } : {}),
       // There is no safe default: starting late silently drops the beginning of the history.
       startLedger: integer('INDEXER_START_LEDGER', undefined, 1, 0xffff_ffff),
     },
@@ -92,19 +104,27 @@ export interface Cycle {
  * head that is ahead of the stored entries is reported as syncing, not as a mismatch.
  */
 export async function runCycle(
-  store: HistoryStore, server: rpc.Server, stream: StreamConfig, state: IndexerState,
+  store: HistoryStore, server: rpc.Server, stream: StreamConfig, state: IndexerState, admit?: Admission,
 ): Promise<Cycle> {
   try {
-    const ingestion = await ingest(store, server, stream);
+    const ingestion = await ingest(store, server, stream, admit ? { admit } : {});
     state.ingestion = ingestion;
     delete state.ingestionError;
     const source = Keypair.random().publicKey();
     const audit: AuditReport[] = [];
-    for (const wallet of stream.wallets) {
+    // Named wallets are checked every pass. Wallets followed by code are checked when they change: there can be
+    // many, and a reader verifies the chain against the wallet's head itself in any case.
+    for (const wallet of new Set([...stream.wallets, ...ingestion.touched])) {
       const head = await readAuditHead({ server, contractId: wallet, source, networkPassphrase: stream.networkPassphrase });
       const report = verifyWallet(store, stream.id, stream.networkPassphrase, wallet, head);
+      state.audit.delete(wallet);
       state.audit.set(wallet, report);
       audit.push(report);
+    }
+    // Keep the most recently checked; with wallets followed by code the map would otherwise grow without bound.
+    for (const wallet of state.audit.keys()) {
+      if (state.audit.size <= MAX_AUDIT_REPORTS) break;
+      if (!stream.wallets.includes(wallet)) state.audit.delete(wallet);
     }
     return { ingestion, audit };
   } catch (error) {
@@ -118,7 +138,7 @@ export interface RunningIndexer {
   url: string;
   store: HistoryStore;
   state: IndexerState;
-  /** Run one ingestion and verification pass now. */
+  /** Run one ingestion and verification pass now, after any pass already under way. */
   cycle(): Promise<Cycle>;
   stop(): Promise<void>;
 }
@@ -127,9 +147,12 @@ export interface RunningIndexer {
  * Start the service: one pass first, so the API never answers from an empty state, then a pass every
  * `pollSeconds`. A failed pass is logged and reported by `/v1/health`; the next pass starts from the stored cursor.
  */
-export async function startIndexer(env: Environment, options: { poll?: boolean } = {}): Promise<RunningIndexer> {
+export async function startIndexer(
+  env: Environment, options: { poll?: boolean; /** Used instead of `INDEXER_TOKEN_FILE` by a process that embeds the indexer. */ token?: string } = {},
+): Promise<RunningIndexer> {
   const config = indexerConfig(env);
-  const token = config.tokenFile ? await readToken(config.tokenFile) : undefined;
+  const token = options.token ?? (config.tokenFile ? await readToken(config.tokenFile) : undefined);
+  if (token !== undefined && token.length < 32) throw new Error('The indexer token must hold at least 32 characters');
   if (!LOOPBACK.has(config.host) && !token) {
     throw new Error('An indexer listening beyond loopback requires INDEXER_TOKEN_FILE for recording attempts');
   }
@@ -138,9 +161,11 @@ export async function startIndexer(env: Environment, options: { poll?: boolean }
   if (network.passphrase !== config.passphrase) throw new Error('RPC server is on a different network');
   const store = new HistoryStore(config.databasePath);
   const state: IndexerState = { audit: new Map() };
-  const cycle = () => runCycle(store, rpcServer, config.stream, state);
+  const admit = config.stream.walletCode ? codeAdmission(rpcServer, config.stream.walletCode) : undefined;
+  const cycle = () => runCycle(store, rpcServer, config.stream, state, admit);
   const http = createServer(createHandler({
     store, streamId: config.stream.id, network: config.network, wallets: config.stream.wallets, state, token,
+    ...(config.stream.walletCode ? { walletCode: config.stream.walletCode } : {}),
   }));
   try {
     // A stream opened with another network or start ledger is a configuration error, not something to retry.
@@ -154,9 +179,15 @@ export async function startIndexer(env: Environment, options: { poll?: boolean }
     store.close();
     throw error;
   }
+  // Passes run one at a time, whoever asks for them: the timer, or a caller that wants the store current now.
   let running: Promise<unknown> = Promise.resolve();
+  const next = () => {
+    const pass = running.then(cycle);
+    running = pass.catch(() => undefined);
+    return pass;
+  };
   const timer = options.poll === false ? undefined : setInterval(() => {
-    running = running.then(() => cycle()).catch((error: unknown) => console.error('indexer: pass failed:', error));
+    next().catch((error: unknown) => console.error('indexer: pass failed:', error));
   }, config.pollSeconds * 1_000);
   timer?.unref();
 
@@ -164,7 +195,7 @@ export async function startIndexer(env: Environment, options: { poll?: boolean }
   const port = typeof address === 'object' && address ? address.port : config.port;
   const host = config.host.includes(':') ? `[${config.host}]` : config.host;
   return {
-    server: http, url: `http://${host}:${port}/`, store, state, cycle,
+    server: http, url: `http://${host}:${port}/`, store, state, cycle: next,
     async stop() {
       if (timer) clearInterval(timer);
       await running;

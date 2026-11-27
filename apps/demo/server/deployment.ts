@@ -1,11 +1,14 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { StrKey } from '@stellar/stellar-sdk';
+import { VENDOR_IDS, type VendorId } from './catalogue.js';
 
 /**
- * What the demo runs against: one deployment of the registries, a registered and assessed agent, a test asset and
- * the accounts that play each role. Everything here is public. Keys are kept apart, in `key_directory`, and are
- * referenced by role name.
+ * What the demo runs against: one deployment of the registries, a registered and assessed agent, a test asset, and
+ * the accounts the sellers are paid at. Everything here is public, and a record for a public network can be kept
+ * in the repository. Keys are kept apart and are named by reference when the server starts.
+ *
+ * There is no wallet in it: every owner creates their own, from the installed wallet code and the shared salt.
  */
 export interface Deployment {
   network: 'local' | 'testnet';
@@ -23,11 +26,12 @@ export interface Deployment {
   wallet_salt: string;
   agent: { agent_id: string; revision: string; signer: string; controller: string; metadata_uri: string };
   provider: { address: string; mode: 'Live' | 'Fixture' };
-  /** A service that pulls its price from the paying wallet in its own call. */
-  service: { contract: string; service_id: string; price: string };
-  /** `facilitator` pays the fees of x402 payments; like the sponsor it authorizes nothing. */
-  roles: { recipient: string; stranger: string; funder: string; sponsor: string; facilitator: string };
-  key_directory: string;
+  /** The account each seller is paid at. Each holds a trustline to the asset and nothing else of interest. */
+  vendors: Record<VendorId, string>;
+  /** `funder` hands out the test asset; `facilitator` pays the fees of x402 payments and authorizes nothing. */
+  roles: { funder: string; facilitator: string };
+  /** Where the setup wrote the role keys, when they are on this machine. A hosted server names its keys itself. */
+  key_directory?: string;
   created_at: string;
 }
 
@@ -49,10 +53,11 @@ export function assertDeployment(value: unknown): asserts value is Deployment {
     && /^\d+$/.test(record.agent?.agent_id) && /^\d+$/.test(record.agent?.revision)
     && account(record.agent?.signer) && account(record.agent?.controller)
     && account(record.provider?.address) && (record.provider?.mode === 'Live' || record.provider?.mode === 'Fixture')
-    && contract(record.service?.contract) && HEX32.test(record.service?.service_id)
-    && typeof record.service?.price === 'string'
-    && account(record.roles?.recipient) && account(record.roles?.stranger) && account(record.roles?.funder)
-    && account(record.roles?.sponsor) && account(record.roles?.facilitator) && typeof record.key_directory === 'string';
+    && typeof record.vendors === 'object' && record.vendors !== null
+    && VENDOR_IDS.every((id) => account(record.vendors[id]))
+    && new Set(VENDOR_IDS.map((id) => record.vendors[id])).size === VENDOR_IDS.length
+    && account(record.roles?.funder) && account(record.roles?.facilitator)
+    && (record.key_directory === undefined || typeof record.key_directory === 'string');
   if (!ok) throw new Error('The deployment record is incomplete or malformed; run the demo setup again');
 }
 

@@ -267,6 +267,14 @@ export function tolerantUpstreamFacilitator(
       && emitter(event) === payer));
     return published.call(this, kept, payer, ...rest);
   };
+  // One fee payer orders its own transactions: two settlements at once would use the same sequence number.
+  const settle = scheme.settle.bind(scheme);
+  let tail: Promise<unknown> = Promise.resolve();
+  scheme.settle = (payload, requirements) => {
+    const run = tail.then(() => settle(payload, requirements));
+    tail = run.catch(() => undefined);
+    return run;
+  };
   return scheme;
 }
 

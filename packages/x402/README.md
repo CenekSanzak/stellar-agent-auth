@@ -6,7 +6,7 @@ It uses x402's own packages, `@x402/core` and `@x402/stellar`, and adds what the
 
 | Part | What it is |
 | --- | --- |
-| `walletClient`, `WalletExactScheme`, `fetchPaying` | The paying side. An x402 client whose payer is the wallet |
+| `walletClient`, `WalletExactScheme`, `fetchPaying`, `quote` | The paying side. An x402 client whose payer is the wallet; `quote` asks what a resource costs and signs nothing |
 | `StellarExactFacilitator` | A facilitator for any network, including a local one |
 | `tolerantUpstreamFacilitator` | The published facilitator, accepting a wallet as payer; Testnet and mainnet |
 | `payeeGate`, `checkPayer` | A payee's own check on the paying agent |

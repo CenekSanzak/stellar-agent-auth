@@ -1,5 +1,5 @@
-import type { rpc, xdr } from '@stellar/stellar-sdk';
-import { cursorLedger, decodeAuditEvent, networkIdOf } from '@stellar-agent-auth/sdk';
+import { xdr, type rpc } from '@stellar/stellar-sdk';
+import { contractCodeHash, cursorLedger, decodeAuditEvent, networkIdOf } from '@stellar-agent-auth/sdk';
 import type { HistoryStore, PageCounts, Quarantined, StoredAuditEntry, StoredEvent, Stream } from './storage.js';
 
 /**
@@ -21,10 +21,39 @@ export interface StreamConfig {
   wallets: readonly string[];
   /** Other contracts whose events are kept as raw events, such as the registries and a service. */
   contracts: readonly string[];
+  /**
+   * Hex hashes of smart wallet code. When set, every contract that runs one of them is followed as a wallet without
+   * being named, which is how a deployment where each owner creates their own wallet is indexed. `audit_v1` events
+   * are then read from the whole network and kept only for contracts `admit` accepts.
+   */
+  walletCode?: readonly string[];
   /** The ledger the deployment was created in, or earlier. */
   startLedger: number;
   pageSize?: number;
 }
+
+/** Decides whether a contract that published an `audit_v1` event is a wallet to follow. */
+export type Admission = (contract: string) => Promise<boolean>;
+
+/**
+ * Admission by code: a contract is a wallet when it runs one of `hashes`. Answers are remembered for the life of
+ * the process; a failed read is not an answer, and is thrown so the page is read again later.
+ */
+export function codeAdmission(server: Pick<rpc.Server, 'getLedgerEntries'>, hashes: readonly string[], remember = 50_000): Admission {
+  const known = new Map<string, boolean>();
+  const accepted = new Set(hashes);
+  return async (contract) => {
+    const cached = known.get(contract);
+    if (cached !== undefined) return cached;
+    const code = await contractCodeHash(server, contract);
+    const answer = code !== undefined && accepted.has(code);
+    if (known.size >= remember) known.clear();
+    known.set(contract, answer);
+    return answer;
+  };
+}
+
+const AUDIT_TOPIC = xdr.ScVal.scvSymbol('audit_v1').toXdr('base64');
 
 /** First topics this indexer understands. Anything else from a watched contract is quarantined, not guessed at. */
 export const KNOWN_TOPICS: ReadonlySet<string> = new Set([
@@ -39,6 +68,10 @@ export interface IngestReport extends PageCounts {
   latest_ledger: number;
   /** Set when this run found ledgers it could not read. */
   gap?: { from: number; to: number };
+  /** Wallets that gained audit entries in this run. */
+  touched: string[];
+  /** Events from contracts that are not followed, seen only because wallets are followed by code. */
+  ignored: number;
 }
 
 export { networkIdOf };
@@ -48,7 +81,7 @@ function symbolOf(topic: xdr.ScVal | undefined): string {
 }
 
 /** Split one RPC event into what the store keeps: the raw event, an audit entry if it is one, or a quarantine note. */
-function classify(event: rpc.Api.EventResponse, wallets: ReadonlySet<string>) {
+function classify(event: rpc.Api.EventResponse, isWallet: boolean) {
   const contract = event.contractId?.toString() ?? '';
   const topic = symbolOf(event.topic[0]);
   const stored: StoredEvent = {
@@ -59,7 +92,7 @@ function classify(event: rpc.Api.EventResponse, wallets: ReadonlySet<string>) {
   if (!KNOWN_TOPICS.has(topic)) {
     return { stored, quarantined: quarantine(topic ? `Unknown event schema ${topic}` : 'Event has no schema topic') };
   }
-  if (topic !== 'audit_v1' || !wallets.has(contract)) return { stored };
+  if (topic !== 'audit_v1' || !isWallet) return { stored };
   try {
     const { entry, hash: published } = decodeAuditEvent(event.value);
     if (entry.sequence > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('Audit sequence is out of range');
@@ -81,21 +114,30 @@ function classify(event: rpc.Api.EventResponse, wallets: ReadonlySet<string>) {
  * middle of an earlier call: it continues from the stored cursor, and a page stored twice adds nothing.
  */
 export async function ingest(
-  store: HistoryStore, source: EventSource, config: StreamConfig, options: { maxPages?: number } = {},
+  store: HistoryStore, source: EventSource, config: StreamConfig, options: { maxPages?: number; admit?: Admission } = {},
 ): Promise<IngestReport> {
   const limit = config.pageSize ?? 200;
   const wallets = new Set(config.wallets);
-  const watched = [...new Set([...config.wallets, ...config.contracts])];
-  if (!watched.length) throw new Error('Nothing to index: name at least one contract');
-  // The RPC takes at most five contract IDs per filter.
+  const named = new Set([...config.wallets, ...config.contracts]);
+  const watched = [...named];
+  const byCode = (config.walletCode?.length ?? 0) > 0;
+  if (byCode && !options.admit) throw new Error('Following wallets by code needs a way to read a contract\'s code');
+  if (!watched.length && !byCode) throw new Error('Nothing to index: name at least one contract');
+  // The RPC takes at most five contract IDs per filter, and five filters per request.
   const filters: rpc.Api.EventFilter[] = [];
+  // Audit events have two topics: the schema name and the entry's sequence.
+  if (byCode) filters.push({ type: 'contract', topics: [[AUDIT_TOPIC, '*']] });
   for (let i = 0; i < watched.length; i += 5) filters.push({ type: 'contract', contractIds: watched.slice(i, i + 5) });
-  if (filters.length > 5) throw new Error('At most 25 contracts can be indexed in one stream');
+  if (filters.length > 5) {
+    throw new Error(`At most ${byCode ? 20 : 25} named contracts can be indexed in one stream`);
+  }
 
   let stream: Stream = store.ensureStream(config.id, networkIdOf(config.networkPassphrase), config.startLedger);
   const report: IngestReport = {
     events: 0, audit: 0, quarantined: 0, pages: 0, ingested_ledger: stream.ingested_ledger, latest_ledger: 0,
+    touched: [], ignored: 0,
   };
+  const touched = new Set<string>();
 
   // What the RPC still retains decides where reading can resume.
   const health = await source.getHealth();
@@ -115,8 +157,16 @@ export async function ingest(
     const events: StoredEvent[] = [];
     const audit: StoredAuditEntry[] = [];
     const quarantined: Quarantined[] = [];
+    let ignored = 0;
     for (const event of page.events) {
-      const result = classify(event, wallets);
+      const contract = event.contractId?.toString() ?? '';
+      const isWallet = wallets.has(contract) || (byCode && !named.has(contract) && await options.admit!(contract));
+      // The network-wide filter also returns other people's events; only followed contracts are kept.
+      if (!isWallet && !named.has(contract)) {
+        ignored += 1;
+        continue;
+      }
+      const result = classify(event, isWallet);
       events.push(result.stored);
       if (result.audit) audit.push(result.audit);
       if (result.quarantined) quarantined.push(result.quarantined);
@@ -132,6 +182,8 @@ export async function ingest(
     report.events += counts.events;
     report.audit += counts.audit;
     report.quarantined += counts.quarantined;
+    report.ignored += ignored;
+    for (const entry of audit) touched.add(entry.wallet);
     report.pages += 1;
     report.latest_ledger = page.latestLedger;
 
@@ -142,6 +194,7 @@ export async function ingest(
     request = { cursor: page.cursor, filters, limit };
   }
   report.ingested_ledger = store.stream(config.id)!.ingested_ledger;
+  report.touched = [...touched];
   if (!report.latest_ledger) report.latest_ledger = health.latestLedger;
   return report;
 }
