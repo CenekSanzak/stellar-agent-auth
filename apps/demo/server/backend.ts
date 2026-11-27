@@ -16,6 +16,7 @@ import {
   type PayeeTerms,
 } from '@stellar-agent-auth/x402';
 import { ScoutAgent, TASKS, UnknownTask } from './agent.js';
+import { AgentServiceError, createAgentService } from './agents.js';
 import { LedgerWatch, PRODUCTS, VENDORS, backfill, observe, produce, vendorOf } from './catalogue.js';
 import { hexToBytes, type Deployment } from './deployment.js';
 
@@ -56,11 +57,16 @@ export interface Limits {
   marketPerClientPerMinute: number;
   /** Every other request, per client address and minute. */
   requestsPerClientPerMinute: number;
+  /** Agent set-up requests (metadata, verification, linking) one client address may make in an hour. */
+  agentSetupPerClientPerHour: number;
+  /** Verifications this server publishes in a day, for everyone together. */
+  verificationsPerDay: number;
 }
 
 export const DEFAULT_LIMITS: Limits = {
   faucetAmount: '100', faucetCeiling: '200', faucetPerClientPerHour: 6, faucetPerDay: 400,
   tasksPerClientPerMinute: 12, tasksAtOnce: 6, marketPerClientPerMinute: 60, requestsPerClientPerMinute: 600,
+  agentSetupPerClientPerHour: 30, verificationsPerDay: 500,
 };
 
 class Rejected extends Error {
@@ -131,6 +137,16 @@ export async function createBackend(options: BackendOptions) {
     throw new Error('The agent, funder or facilitator key is not the one this deployment names');
   }
   const journal = new MemoryJournal();
+  // The provider's key is optional: with it this server can verify agents that people bring, and keep its own
+  // agent's verification current. It is used when named, or when the setup left it beside the other keys.
+  const providerReference = options.env['DEMO_PROVIDER_KEY'] || (deployment.key_directory ? 'provider' : undefined);
+  const providerKey = providerReference ? await loadKeypair(providerReference, keyEnv).catch((error: unknown) => {
+    if (options.env['DEMO_PROVIDER_KEY']) throw error;
+    return undefined;
+  }) : undefined;
+  if (providerKey && providerKey.publicKey() !== deployment.provider.address) {
+    throw new Error('The provider key is not the one this deployment names');
+  }
 
   // The sellers. The published x402 code knows Testnet and mainnet only, and refuses a payer that publishes its own
   // events. On those networks it is used with that one allowance; on a local network this project's facilitator
@@ -175,6 +191,21 @@ export async function createBackend(options: BackendOptions) {
     INDEXER_POLL_SECONDS: options.env['DEMO_INDEXER_POLL_SECONDS'] || '5', INDEXER_TOKEN_FILE: undefined,
     DEPLOYMENT_EPOCH: deployment.epoch,
   }, { token: indexerToken });
+
+  const publicOrigin = options.publicUrl ? new URL(options.publicUrl).origin : undefined;
+  const verificationsToday = rateLimiter(limits.verificationsPerDay, 86_400_000);
+  const agentService = createAgentService({
+    deployment, server, context, directory: options.directory, journal, allowPublish: () => verificationsToday('all'),
+    ...(publicOrigin ? { publicOrigin } : {}), ...(providerKey ? { provider: providerKey } : {}),
+  });
+  // The built-in agent's verification is time-limited like anyone's; renew it before it runs out.
+  const renewOwn = () => {
+    if (!providerKey) return;
+    void agentService.verify(deployment.agent.agent_id).catch((error: unknown) => console.error('demo: could not renew the agent\'s verification:', error));
+  };
+  renewOwn();
+  const renewing = setInterval(renewOwn, 3_600_000);
+  renewing.unref();
 
   let marketUrl: string | undefined;
   const agent = new ScoutAgent(deployment, context, server, agentKey, () => {
@@ -287,6 +318,8 @@ export async function createBackend(options: BackendOptions) {
     // The path is where the product is sold over x402, for a buyer that is not this page.
     products: PRODUCTS.map(({ id, vendor, kind, title, price, path }) => ({ id, vendor, kind, title, price, path })),
     tasks: TASKS, faucet_amount: limits.faucetAmount, indexer_path: '/indexer/',
+    // Whether someone can bring an agent of their own here, and whether this server can verify it.
+    own_agents: agentService.capabilities(), public_url: publicOrigin ?? null,
     // Reads are simulations and need the name of an account that exists; this one always does.
     read_source: deployment.roles.facilitator,
     explorer: deployment.network === 'testnet' ? 'https://stellar.expert/explorer/testnet' : null,
@@ -405,7 +438,9 @@ export async function createBackend(options: BackendOptions) {
     market: rateLimiter(limits.marketPerClientPerMinute, 60_000),
     tasks: rateLimiter(limits.tasksPerClientPerMinute, 60_000),
     faucet: rateLimiter(limits.faucetPerClientPerHour, 3_600_000),
+    agents: rateLimiter(limits.agentSetupPerClientPerHour, 3_600_000),
   };
+
   const limited = (bucket: keyof typeof allow, client: string) => {
     if (!allow[bucket](client)) throw new Rejected(429, 'Too many requests; wait a little and try again');
   };
@@ -425,6 +460,15 @@ export async function createBackend(options: BackendOptions) {
         return json(response, 404, { error: 'Not found' });
       }
       limited('any', client);
+      // An agent's metadata document, at the address its identity names. It is public by nature: the verifier and
+      // anyone checking the agent fetch it by this address.
+      const metadataRoute = /^\/agents\/(G[A-Z2-7]{55})\.json$/.exec(url.pathname);
+      if (request.method === 'GET' && metadataRoute) {
+        const bytes = await agentService.document(metadataRoute[1]!);
+        if (!bytes) return json(response, 404, { error: 'Not found' });
+        response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...SECURITY_HEADERS });
+        return response.end(bytes);
+      }
       if (url.pathname.startsWith('/v1/') || url.pathname.startsWith('/indexer/')) {
         checkOrigin(request);
         if (request.method === 'GET' && url.pathname.startsWith('/indexer/') && await passToIndexer(url, response)) return undefined;
@@ -436,6 +480,19 @@ export async function createBackend(options: BackendOptions) {
           }
           const wallet = walletOf(owner);
           return json(response, 200, { wallet, deployed: await deployed(owner, wallet) });
+        }
+        if (request.method === 'GET' && url.pathname === '/v1/agents') {
+          const owner = url.searchParams.get('owner') ?? '';
+          if (!StrKey.isValidEd25519PublicKey(owner)) throw new Rejected(400, 'Expected ?owner= with a G... account address');
+          return json(response, 200, { agents: await agentService.linked(owner) });
+        }
+        if (request.method === 'POST' && url.pathname.startsWith('/v1/agents/')) {
+          const body = await readBody(request);
+          limited('agents', client);
+          if (url.pathname === '/v1/agents/metadata') return json(response, 200, await agentService.metadata(body));
+          if (url.pathname === '/v1/agents/link') return json(response, 200, await agentService.link(body));
+          if (url.pathname === '/v1/agents/verify') return json(response, 200, await agentService.verify(body['agent_id']));
+          return json(response, 404, { error: 'Not found' });
         }
         if (request.method === 'POST' && url.pathname === '/v1/fund') {
           const body = await readBody(request);
@@ -454,7 +511,7 @@ export async function createBackend(options: BackendOptions) {
       if (request.method === 'GET' && await serveStatic(url.pathname, response)) return undefined;
       return json(response, 404, { error: 'Not found' });
     } catch (error) {
-      if (error instanceof Rejected) return json(response, error.status, { error: error.message });
+      if (error instanceof Rejected || error instanceof AgentServiceError) return json(response, error.status, { error: error.message });
       console.error('demo:', error);
       // What went wrong inside is for the log, not for whoever asked.
       return json(response, 500, { error: publicUrl ? 'Something went wrong on the demo server' : error instanceof Error ? error.message : 'Internal error' });
@@ -465,6 +522,7 @@ export async function createBackend(options: BackendOptions) {
     handler, walletOf, indexer,
     async stop() {
       clearInterval(watching);
+      clearInterval(renewing);
       await indexer.stop();
     },
     /** Tell the server where it is reachable, once it listens; Scout buys from the sellers at this address. */

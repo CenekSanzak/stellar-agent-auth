@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { realpathSync } from 'node:fs';
+import { parseArgs } from 'node:util';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StrKey, rpc } from '@stellar/stellar-sdk';
@@ -6,8 +8,10 @@ import { deployedAddress, loadConfig, networkContext, type Hash32 } from '@stell
 import { isMainModule, loadKey } from '@stellar-agent-auth/sdk/node';
 import { z } from 'zod';
 import { createWalletAgent, type AgentOptions, type Offer, type WalletAgent } from './agent.js';
+import { agentHome, initAgent, keyReference, marketBase, readMarket, readSettings, type InitResult } from './setup.js';
 
 export { createWalletAgent, type AgentOptions, type Offer, type WalletAgent } from './agent.js';
+export { agentHome, initAgent, readSettings, type AgentSettings, type InitOptions, type InitResult } from './setup.js';
 
 /**
  * An MCP server that makes an AI agent, such as Claude Code or Codex, the agent of a policy-limited wallet. The
@@ -74,30 +78,9 @@ export function createMcpServer(agent: WalletAgent): McpServer {
   return server;
 }
 
-/** What a market says about itself: the demo server's `GET /v1/config`, as far as it is used here. */
-interface Market {
-  rpc_url: string;
-  passphrase: string;
-  network: string;
-  wallet_salt: string;
-  agent?: { signer?: string };
-  asset?: { code?: string };
-  vendors?: { id: string; name: string }[];
-  products?: { vendor: string; title: string; price: string; path?: string }[];
-}
-
-async function readMarket(base: URL, fetcher: typeof fetch): Promise<Market> {
-  const response = await fetcher(new URL('v1/config', base));
-  if (!response.ok) throw new Error(`The market at ${base.origin} answered ${response.status}`);
-  const market = await response.json() as Market;
-  if (typeof market.rpc_url !== 'string' || typeof market.passphrase !== 'string' || !/^[0-9a-f]{64}$/.test(market.wallet_salt ?? '')) {
-    throw new Error(`The market at ${base.origin} did not describe its deployment`);
-  }
-  return market;
-}
-
 /**
- * Read the agent's settings from the environment:
+ * Read the agent's settings. After `init` there is nothing to set: the key, the market and the owner are read from
+ * the agent's home directory. Each can also be given in the environment, which then wins:
  *
  * - `AGENT_KEY`: a reference to the agent's key (`file:<path>`, `env:<NAME>` or a name in the key directory). Never
  *   the key itself.
@@ -107,11 +90,19 @@ async function readMarket(base: URL, fetcher: typeof fetch): Promise<Market> {
  *   address is derived.
  * - `AGENT_POLICY`: pay under this policy only. Without it the newest policy in force for this key is used.
  */
-export async function configure(env: Record<string, string | undefined>, fetcher: typeof fetch = fetch): Promise<AgentOptions> {
+export async function configure(given: Record<string, string | undefined>, fetcher: typeof fetch = fetch, home?: string): Promise<AgentOptions> {
+  // What `init` left, unless the environment names a key of its own.
+  const stored = given['AGENT_KEY'] ? undefined : await readSettings(agentHome(given, home));
+  const env = stored ? {
+    ...given, AGENT_KEY: keyReference(agentHome(given, home), 'agent'), AGENT_MARKET: given['AGENT_MARKET'] ?? stored.market,
+    ...(given['AGENT_WALLET'] ? {} : { AGENT_OWNER: given['AGENT_OWNER'] ?? stored.owner }),
+  } : given;
   const reference = env['AGENT_KEY'];
-  if (!reference) throw new Error('Set AGENT_KEY to a reference to the agent\'s key, such as file:/path/to/agent.key');
+  if (!reference) {
+    throw new Error('This agent has not been set up. Run `init --market <address> --owner <G...>` first, or set AGENT_KEY to a reference to its key.');
+  }
   const agent = await loadKey(reference, env);
-  const base = env['AGENT_MARKET'] ? new URL(env['AGENT_MARKET'].endsWith('/') ? env['AGENT_MARKET'] : `${env['AGENT_MARKET']}/`) : undefined;
+  const base = env['AGENT_MARKET'] ? marketBase(env['AGENT_MARKET']) : undefined;
   const market = base ? await readMarket(base, fetcher) : undefined;
   const settings = market ? { rpcUrl: market.rpc_url, passphrase: market.passphrase, local: market.network === 'local' }
     : (({ rpcUrl, passphrase, network }) => ({ rpcUrl, passphrase, local: network === 'local' }))(loadConfig(env));
@@ -146,11 +137,90 @@ export async function configure(env: Record<string, string | undefined>, fetcher
   };
 }
 
-if (isMainModule(import.meta.url)) {
-  // Standard output carries the protocol. Anything said to a person goes to standard error.
-  configure(process.env).then(async (options) => {
+const USAGE = `Usage:
+  stellar-agent-wallet init --market <address> --owner <G...> [--name <text>] [--description <text>] [--home <dir>] [--json]
+      Create this machine's agent, register and verify it, and tell the owner it would like an allowance.
+  stellar-agent-wallet status [--home <dir>]
+      Show what the owner allows this agent to spend.
+  stellar-agent-wallet mcp [--home <dir>]
+      Serve the agent's tools to an agent host, over standard input and output. This is what a host starts.`;
+
+function describe(result: InitResult, script: string): string {
+  const verified = 'error' in result.verification ? `not verified yet: ${result.verification.error}`
+    : `${result.verification.status === 'current' ? 'already verified' : 'verified'}; ${(result.verification.checks ?? [])
+      .filter((check) => check.outcome === 'Passed').map((check) => check.kind).join(', ') || 'no checks'} passed`;
+  return [
+    `Agent ${result.agent_id} is ${result.registered === 'now' ? 'registered' : 'already registered'}, and ${verified}.`,
+    `  Agent key      ${result.signer}   (kept in ${result.home}; never share the key files)`,
+    `  Owner's wallet ${result.wallet}`,
+    '',
+    'It cannot spend anything yet. Two things are left:',
+    '',
+    `1. The owner approves an allowance for it, in their own wallet, at:`,
+    `     ${result.approve_at}`,
+    '',
+    '2. The agent host is told how to start its tools:',
+    `     Claude Code:  claude mcp add agent-wallet -- node ${script} mcp`,
+    `     Codex:        codex mcp add agent-wallet -- node ${script} mcp`,
+    `     Any other:    command "node", arguments ["${script}", "mcp"]`,
+    '',
+    'Then ask the agent to call its `allowance` tool.',
+  ].join('\n');
+}
+
+/** Run the command line. Returns the process exit code. */
+export async function main(argv: string[], env: Record<string, string | undefined>, out: (line: string) => void = console.log): Promise<number> {
+  const { positionals, values } = parseArgs({
+    args: argv, allowPositionals: true,
+    options: {
+      market: { type: 'string' }, owner: { type: 'string' }, name: { type: 'string' }, description: { type: 'string' },
+      home: { type: 'string' }, json: { type: 'boolean', default: false }, help: { type: 'boolean', default: false },
+    },
+  });
+  const command = positionals[0] ?? 'mcp';
+  if (values.help || positionals.length > 1) {
+    out(USAGE);
+    return values.help ? 0 : 2;
+  }
+  const home = agentHome(env, values.home);
+  if (command === 'init') {
+    if (!values.market || !values.owner) {
+      out(USAGE);
+      return 2;
+    }
+    const result = await initAgent({
+      market: values.market, owner: values.owner, home, log: (line) => console.error(line),
+      ...(values.name ? { name: values.name } : {}), ...(values.description ? { description: values.description } : {}),
+    });
+    out(values.json ? JSON.stringify(result, null, 2) : describe(result, realpathSync(process.argv[1] ?? 'stellar-agent-wallet')));
+    return 0;
+  }
+  if (command === 'status') {
+    out(JSON.stringify(await createWalletAgent(await configure(env, fetch, values.home)).allowance(), null, 2));
+    return 0;
+  }
+  if (command === 'mcp') {
+    // Standard output carries the protocol. Anything said to a person goes to standard error.
+    const options = await configure(env, fetch, values.home);
     await createMcpServer(createWalletAgent(options)).connect(new StdioServerTransport());
     console.error(`stellar-agent-wallet: agent ${options.agent.address} for wallet ${options.wallet}`);
+    // A verification is time-limited. Asking costs nothing while it is current, and renews it when it is not.
+    const stored = await readSettings(home);
+    if (stored && !env['AGENT_KEY']) {
+      void fetch(new URL('v1/agents/verify', stored.market), {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ agent_id: stored.agent_id }),
+      }).catch(() => undefined);
+    }
+    return -1;
+  }
+  out(USAGE);
+  return 2;
+}
+
+if (isMainModule(import.meta.url)) {
+  main(process.argv.slice(2), process.env).then((code) => {
+    // The MCP server keeps running until its host closes it.
+    if (code >= 0) process.exitCode = code;
   }, (error: unknown) => {
     console.error(`stellar-agent-wallet: ${error instanceof Error ? error.message : String(error)}`);
     process.exitCode = 1;
