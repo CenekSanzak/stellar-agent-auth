@@ -98,6 +98,16 @@ Two faults appeared only here, and both were fixed:
 
 The second fault is the kind the local network cannot show: its ledgers are empty. Anything that reads ledgers, transactions or events in bulk should be tried on Testnet before it is believed.
 
+## An outside agent over MCP
+
+[`packages/mcp`](../packages/mcp/README.md) lets an AI agent's host be the wallet's agent ([ADR 0014](decisions/0014-agent-over-mcp.md)). It was tested by an MCP client calling the tools a model would call.
+
+On the local network (`tests/integration/agent-mcp.test.ts`, 10 tests): the four tools are offered with instructions that say whose money it is; nothing can be bought before the owner has a wallet and an allowance; the allowance is read in the owner's numbers; `price` reports what the wallet would pay and what it would refuse, and spends nothing; a purchase inside the allowance is paid and returns what was bought; a purchase above the limit and one to an unapproved seller are blocked by the wallet, and one is declined by its seller, all without moving money; an address that is not `https` is a failed call; freezing blocks, and after the allowance is ended an agent that keeps the ended policy is refused by the wallet with `Revoked`; the purchase is in the wallet's record, which verifies; and the built server runs as a child process over standard input and output.
+
+Against the hosted demo on Testnet, run by hand on 2026-11-27 with Scout's key and a guest's wallet: `allowance` reported 10 per purchase, 20 per day and 8.5 spent; `sellers` listed the five products with their addresses; `price` for the digest answered 3 tUSD and that the wallet would pay; `buy` paid it ([`391a35e9…20dbd7af`](https://stellar.expert/explorer/testnet/tx/391a35e956c4c79b595d315effeffe23d8ca8cd2edcc280f1b74283820dbd7af)) and returned the digest; `buy` at Audited Sources was declined with `payee_gate_CheckNotPassed`; and `allowance` then reported 11.5 spent. The guest's page, open in a browser, showed the purchase as entry 10 of the wallet's record within seconds, verified against the wallet.
+
+No model took part. The machine this was built on has no agent harness with a command-line mode, so what a model does with these tools has not been observed.
+
 ## Not covered
 
 - **Rate limits behind the real proxy.** The hosted server takes the client's address from Fly's header; that two visitors are limited separately was tested with that header locally, not from two networks.
