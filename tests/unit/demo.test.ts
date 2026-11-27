@@ -1,19 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import { StorageJournal } from '../../apps/demo/src/chain.js';
-import { addr, duration, esc, short, utc } from '../../apps/demo/src/format.js';
+import { addr, clock, duration, esc, money, short, tx, utc } from '../../apps/demo/src/format.js';
 import {
-  coverage, describeOutcome, explainRefusal, networkProblem, policyBudget, policySentences, policyStatus, stageVerdict,
+  allowanceView, coverage, describeOutcome, explainRefusal, explainStep, networkProblem, policyStatus, stageVerdict,
   verificationVerdict,
 } from '../../apps/demo/src/model.js';
-import { connectLocalKey } from '../../apps/demo/src/owner.js';
-import { initialState, type State } from '../../apps/demo/src/state.js';
-import { renderAgent } from '../../apps/demo/src/views/agents.js';
-import { renderActivity, renderConnection, renderHistory, renderNotice } from '../../apps/demo/src/views/history.js';
-import { renderPolicies, renderPolicyForm } from '../../apps/demo/src/views/policies.js';
-import { renderWallet } from '../../apps/demo/src/views/wallet.js';
-import type { Config } from '../../apps/demo/src/backend.js';
+import { connectGuest, forgetGuest } from '../../apps/demo/src/owner.js';
+import { currentAllowance, initialState, phaseOf, taskAllowance, type Activity, type State } from '../../apps/demo/src/state.js';
+import { renderScout, renderSellers } from '../../apps/demo/src/views/market.js';
+import { renderDetails, renderRecord } from '../../apps/demo/src/views/record.js';
+import { renderAllowance, renderAllowanceForm, renderWallet } from '../../apps/demo/src/views/wallet.js';
+import { renderAccount, renderNetwork, renderNotice, renderSetup, renderWelcome } from '../../apps/demo/src/views/welcome.js';
+import { renderActivity, renderTasks } from '../../apps/demo/src/views/work.js';
+import type { Config, Step } from '../../apps/demo/src/backend.js';
+import { TASKS } from '../../apps/demo/server/agent.js';
+import { rateLimiter } from '../../apps/demo/server/backend.js';
+import { PRODUCTS, VENDORS, VENDOR_IDS, produce, type ContentSource } from '../../apps/demo/server/catalogue.js';
 import { assertDeployment } from '../../apps/demo/server/deployment.js';
-import { SCENARIOS } from '../../apps/demo/server/agent.js';
 import type {
   AgentIdentity, Policy, PolicyState, TransactionRecord, VerificationResult,
 } from '../../packages/sdk/src/index.js';
@@ -21,18 +24,21 @@ import { account, bytes, contract } from '../fixtures/abi-v1.js';
 
 const NOW = 1_800_000_000n;
 const UNIT = 10_000_000n;
-const asset = { contract: contract(3), code: 'DEMO', issuer: account(4), decimals: 7 };
+const asset = { contract: contract(3), code: 'tUSD', issuer: account(4), decimals: 7 };
 const wallet = contract(11);
+const payee = Object.fromEntries(VENDOR_IDS.map((id, index) => [id, account(30 + index)]));
 
 const config: Config = {
   network: 'local', rpc_url: 'http://localhost:8000/rpc', passphrase: 'Standalone Network ; February 2017',
   agent_registry: contract(1), verification_registry: contract(2), asset, wallet_wasm_hash: 'ab'.repeat(32),
   wallet_salt: 'cd'.repeat(32),
   agent: { agent_id: '1', revision: '1', signer: account(5), controller: account(6), metadata_uri: 'https://agent.example.test/a.json' },
-  provider: { address: account(7), mode: 'Fixture' }, service: { contract: contract(8), service_id: 'ef'.repeat(32), price: '1' },
-  roles: { recipient: account(9), stranger: account(10), sponsor: account(12) },
-  scenarios: [...SCENARIOS], faucet_amount: '100', explorer: null,
+  provider: { address: account(7), mode: 'Fixture' },
+  vendors: VENDORS.map((vendor) => ({ ...vendor, requires: [...vendor.requires], address: payee[vendor.id]! })),
+  products: PRODUCTS.map(({ id, vendor, kind, title, price }) => ({ id, vendor, kind, title, price })),
+  tasks: [...TASKS], faucet_amount: '100', indexer_path: '/indexer/', read_source: account(12), explorer: null,
 };
+const testnet: Config = { ...config, network: 'testnet', explorer: 'https://explorer.example/testnet', provider: { ...config.provider, mode: 'Live' } };
 
 const identity: AgentIdentity = {
   agent_id: 1n, controller: account(6), signer: account(5), metadata_uri: 'https://agent.example.test/a.json',
@@ -62,11 +68,17 @@ const policyState = (overrides: Partial<PolicyState> = {}): PolicyState => ({
   ...overrides,
 });
 
+const approved = ['ledger-wire', 'deep-archive', 'audited-sources'].map((id) => payee[id]!);
+const allowance: Policy = { ...policy, assets: [{ asset: asset.contract, per_transaction: 5n * UNIT, per_day: 6n * UNIT, total: 20n * UNIT }], allowed_recipients: approved };
+const view = (overrides: Partial<Policy> = {}, state: Partial<PolicyState> = {}, hash = 'aa'.repeat(32)) =>
+  ({ hash, policy: { ...allowance, ...overrides }, state: policyState(state) });
+
 const ready = (overrides: Partial<State> = {}): State => ({
-  ...initialState(), config, now: NOW, owner: { kind: 'local', address: account(20) }, accountFunded: true,
-  session: { wallet, deployed: true, indexer_url: 'http://127.0.0.1:9/' },
+  ...initialState(), config, now: NOW, owner: { kind: 'guest', label: 'Guest', address: account(20) }, accountFunded: true,
+  session: { wallet, deployed: true },
   agent: { identity, result, provider },
   wallet: { balance: 97n * UNIT, paused: false, head: { sequence: 2n, hash: bytes(9) } },
+  policies: [view()],
   ...overrides,
 });
 
@@ -97,207 +109,390 @@ describe('verification wording', () => {
     expect(coverage(result)).toEqual({ passed: ['Endpoint', 'Metadata'], failed: [], inconclusive: ['SignerHistory'], notChecked: ['Code'] });
   });
 
-  it('labels a fixture result as simulated and shows an expired one as expired', () => {
-    const html = renderAgent(ready());
-    expect(html).toContain('data-testid="fixture-label"');
-    expect(html).toContain('Simulated result');
-    expect(html).toContain('Not checked');
-    const expired = renderAgent(ready({ now: result.expires_at + 10n }));
-    expect(expired).toMatch(/data-testid="verification-status">Expired</);
-    const live = renderAgent(ready({
-      config: { ...config, provider: { ...config.provider, mode: 'Live' } }, agent: { identity, provider, result: { ...result, mode: 'Live' } },
-    }));
-    expect(live).not.toContain('fixture-label');
+  it('labels a fixture result as simulated, and a live one not', () => {
+    const html = renderScout(ready());
+    expect(html).toContain('data-testid="fixture"');
+    expect(html).toContain('SIMULATED');
+    expect(html).toMatch(/data-testid="verification">Verified</);
+    expect(html).toContain('<dt>Not checked</dt><dd>Code</dd>');
+    expect(renderScout(ready({ now: result.expires_at + 10n }))).toMatch(/data-testid="verification">Expired</);
+    expect(renderScout(ready({ config: testnet }))).not.toContain('data-testid="fixture"');
+    expect(renderScout(ready({ agent: null }))).toContain('Reading the agent registry');
   });
 });
 
-describe('policy wording', () => {
-  it('states the permission in plain sentences', () => {
-    const lines = policySentences(policy, asset, NOW);
-    expect(lines[0]).toBe('Agent 1 may pay up to 5 DEMO at a time and 20 DEMO per UTC day, with no overall cap.');
-    expect(lines).toContain('Valid until 2027-01-22 08:00 UTC, 7 days from now.');
-    expect(lines.join(' ')).toContain('no older than 30 days, with a risk score of at most 10, covering Endpoint, Metadata, SignerAccount');
-    const capped = policySentences({
-      ...policy, assets: [{ ...policy.assets[0]!, total: 100n * UNIT }], blocked_recipients: [account(10)],
-      service: { contract: contract(8), service_id: bytes(4) },
-    }, asset, NOW);
-    expect(capped[0]).toContain('and 100 DEMO in total');
-    expect(capped.join(' ')).toMatch(/Never to G.+…/);
-    expect(capped.join(' ')).toContain('in the service\'s own call');
-    expect(policySentences({ ...policy, assets: [] }, asset, NOW)[0]).toBe('Agent 1 may not pay in DEMO under this policy.');
-    expect(policySentences(policy, asset, policy.valid_until + 1n).join(' ')).toContain('It ended on');
+describe('where the visitor is', () => {
+  it('goes from loading to welcome to setup to ready', () => {
+    expect(phaseOf(initialState())).toBe('loading');
+    expect(phaseOf({ ...initialState(), config })).toBe('welcome');
+    expect(phaseOf(ready({ session: null }))).toBe('setup');
+    expect(phaseOf(ready({ session: { wallet, deployed: false } }))).toBe('setup');
+    expect(phaseOf(ready())).toBe('ready');
   });
 
-  it('reports status and what is left today', () => {
-    expect(policyStatus(policy, policyState(), NOW)).toBe('active');
-    expect(policyStatus(policy, policyState({ revoked: true }), NOW)).toBe('revoked');
-    expect(policyStatus(policy, policyState(), policy.valid_until)).toBe('expired');
-    expect(policyStatus(policy, policyState(), policy.valid_after - 1n)).toBe('not-yet-valid');
-    expect(policyBudget(policy, policyState(), asset)).toMatchObject({ spentToday: 3n * UNIT, leftToday: 17n * UNIT, share: 15, total: null });
-    expect(policyBudget(policy, policyState({ daily_spend: [{ asset: asset.contract, amount: 25n * UNIT }] }), asset))
-      .toMatchObject({ leftToday: 0n, share: 100 });
-    expect(policyBudget({ ...policy, assets: [] }, policyState(), asset)).toBeUndefined();
+  it('offers a guest, Freighter and other wallets, and says the money is not real', () => {
+    const html = renderWelcome({ ...initialState(), config });
+    for (const action of ['connect-guest', 'connect-freighter', 'connect-kit']) expect(html).toContain(`data-action="${action}"`);
+    expect(html).toContain('nothing real at stake');
+    expect(html).not.toMatch(/secret|seed phrase/i);
+    expect(renderWelcome({ ...initialState(), config, connectError: 'Freighter was not found' })).toContain('data-testid="connect-error"');
+    expect(renderWelcome(ready())).toBe('');
+    expect(renderNetwork({ ...initialState(), config })).toContain('Local network · test money only');
+    expect(renderNetwork({ ...initialState(), config: testnet })).toContain('Testnet demo · test money only');
   });
 
-  it('offers revocation only for an active policy and the agent scenarios for every policy', () => {
-    const hash = 'aa'.repeat(32);
-    const active = renderPolicies(ready({ policies: [{ hash, policy, state: policyState() }] }));
-    expect(active).toContain('data-action="revoke"');
-    expect(active).toContain('data-status="active"');
-    expect(active.match(/data-action="scenario"/g)).toHaveLength(SCENARIOS.length);
-    const revoked = renderPolicies(ready({ policies: [{ hash, policy, state: policyState({ revoked: true }) }] }));
-    expect(revoked).not.toContain('data-action="revoke"');
-    expect(revoked).toContain('the wallet should refuse each of them');
-    expect(renderPolicies(ready())).toContain('Without one, the agent can do nothing');
-    expect(renderPolicyForm(ready())).toContain('value="5"');
-    expect(renderPolicyForm(ready({ session: { wallet, deployed: false, indexer_url: null } }))).toBe('');
-  });
-});
-
-describe('wallet view', () => {
-  it('walks the owner from no connection to a wallet', () => {
-    expect(renderWallet(ready({ owner: null }))).toContain('Connect as the owner');
-    expect(renderWallet(ready({ accountFunded: false }))).toContain('data-action="test-xlm"');
-    expect(renderWallet(ready({ session: { wallet, deployed: false, indexer_url: null } }))).toContain('data-action="create-wallet"');
-    const html = renderWallet(ready());
-    expect(html).toMatch(/data-testid="wallet-balance">97</);
-    expect(html).toContain('test asset, no value');
-    expect(html).toContain('No active policy: no agent can move anything.');
-    expect(html).toContain('data-action="pause"');
-  });
-
-  it('shows a pause plainly and the combined exposure across policies', () => {
-    const paused = renderWallet(ready({ wallet: { balance: 0n, paused: true, head: { sequence: 0n, hash: bytes(0) } } }));
-    expect(paused).toMatch(/data-testid="wallet-status">Paused</);
-    expect(paused).toContain('data-action="resume"');
-    expect(paused).not.toContain('data-action="pause"');
-    const exposed = renderWallet(ready({
-      exposure: [{ asset: asset.contract, daily_cap: 40n * UNIT, spent_today: 3n * UNIT, remaining_today: 37n * UNIT,
-        largest_transfer: 5n * UNIT, remaining_total: null, policies: 2 }],
-    }));
-    expect(exposed).toContain('Across 2 active policies');
-    expect(exposed).toContain('<strong>37 DEMO</strong> today');
-    expect(exposed).toContain('No overall cap');
-  });
-});
-
-describe('history view', () => {
-  const entry = (sequence: bigint, outcome: Parameters<typeof describeOutcome>[0]) => ({
-    entry: { schema_version: 1, wallet, sequence, previous_hash: bytes(0), ledger: 10, timestamp: NOW, actor: account(5), outcome },
-    hash: bytes(1), ledger: 10, transaction: 'ab'.repeat(32), event_id: `${sequence}`,
-  });
-  const transfer = { asset: asset.contract, recipient: account(9), amount: 3n * UNIT };
-
-  it('describes each kind of entry', () => {
-    expect(describeOutcome({ kind: 'Executed', policy_hash: bytes(1), action_hash: bytes(2), action: { kind: 'Transfer', transfer } }, asset))
-      .toMatchObject({ title: 'Agent payment', detail: expect.stringMatching(/^3 DEMO to G/) });
-    expect(describeOutcome({ kind: 'AccountPayment', policy_hash: bytes(1), authorization: bytes(2),
-      action: { kind: 'ServicePayment', service: { contract: contract(8), service_id: bytes(4) }, payment: transfer } }, asset))
-      .toMatchObject({ title: 'Service payment', detail: expect.stringContaining('through service') });
-    expect(describeOutcome({ kind: 'AccountPayment', policy_hash: bytes(1), authorization: bytes(2), action: { kind: 'Transfer', transfer } }, asset).title)
-      .toBe('Account payment');
-    expect(describeOutcome({ kind: 'PauseChanged', paused: true }, asset).title).toBe('Wallet paused');
-    expect(describeOutcome({ kind: 'PauseChanged', paused: false }, asset).title).toBe('Wallet resumed');
-    expect(describeOutcome({ kind: 'PolicyRevoked', policy_hash: bytes(1) }, asset).title).toBe('Policy revoked');
-    expect(describeOutcome({ kind: 'OwnerWithdrawal', transfer: { ...transfer, asset: contract(50) } }, asset).detail).toContain('units of');
-  });
-
-  it('says whether the list is the whole history, and keeps refusals apart', () => {
-    const history = {
-      status: 'verified' as const, detail: '2 entries from genesis match the stored head', head: { sequence: 2n, hash: bytes(1) },
-      indexer: { status: 'verified', detail: 'ok' },
-      entries: [entry(1n, { kind: 'PolicyCreated', policy_hash: bytes(1) }),
-        entry(2n, { kind: 'Executed', policy_hash: bytes(1), action_hash: bytes(2), action: { kind: 'Transfer', transfer } })],
-    };
-    const attempts = [
-      { id: 1, kind: 'simulation' as const, status: 'refused', error: 'PaymentLimitExceeded', detail: null, tx_hash: null, recorded_at: '2026-11-25T15:00:00.000Z' },
-      { id: 2, kind: 'transaction' as const, status: 'failed', error: null, detail: null, tx_hash: 'cd'.repeat(32), recorded_at: '2026-11-25T15:01:00.000Z' },
-    ];
-    const html = renderHistory(ready({ history, attempts }));
-    expect(html).toMatch(/data-testid="history-status">Complete and verified</);
-    expect(html.indexOf('Agent payment')).toBeLessThan(html.indexOf('Policy approved'));
-    expect(html).toContain('These are not on the ledger');
-    expect(html).toContain('PaymentLimitExceeded:');
-    expect(html).toContain('The network gave no reason.');
-    expect(html).not.toContain('Do not treat this list');
-
-    const partial = renderHistory(ready({ history: { ...history, status: 'incomplete', detail: 'Entries after 2 are not yet visible' } }));
-    expect(partial).toMatch(/data-testid="history-status">Incomplete</);
-    expect(partial).toContain('Do not treat this list as the whole history');
-    expect(renderHistory(ready({ history: { ...history, status: 'mismatch', detail: 'Entry 2 does not hash' } })))
-      .toMatch(/history-status">Does not match the wallet</);
-    expect(renderHistory(ready({ historyError: 'offline' }))).toContain('The history could not be read: offline');
-  });
-
-  it('links to an explorer only where there is one', () => {
-    const history = {
-      status: 'verified' as const, detail: 'ok', head: { sequence: 1n, hash: bytes(1) }, indexer: null,
-      entries: [entry(1n, { kind: 'PauseChanged', paused: true })],
-    };
-    expect(renderHistory(ready({ history }))).not.toContain('<a href');
-    expect(renderHistory(ready({ history, config: { ...config, network: 'testnet', explorer: 'https://stellar.expert/explorer/testnet' } })))
-      .toContain(`href="https://stellar.expert/explorer/testnet/tx/${'ab'.repeat(32)}"`);
-  });
-});
-
-describe('progress and failure states', () => {
-  it('never shows a submitted or unsettled action as done', () => {
-    expect(stageVerdict('submitted')).toMatchObject({ tone: 'warn', label: 'Submitted, not confirmed' });
-    expect(stageVerdict('unsettled')).toMatchObject({ tone: 'warn', detail: expect.stringContaining('Do not repeat it') });
-    expect(stageVerdict('confirmed').tone).toBe('good');
-    expect(stageVerdict('refused').detail).toBe('Nothing was submitted.');
-    const html = renderActivity(ready({
-      busy: 'Revoking', activity: [
-        { id: 2, title: 'Revoke the policy', stage: 'submitted', detail: '', hash: 'ab'.repeat(32) },
-        { id: 1, title: 'Agent: Pay above the per-payment limit', stage: 'refused', detail: '', hash: null, expected: 'PaymentLimitExceeded',
-          steps: [{ path: 'execute', amount: '6', recipient: account(9), status: 'refused', error: 'PaymentLimitExceeded', detail: null, tx_hash: null }] },
-      ],
-    }));
-    expect(html).toContain('Submitted, not confirmed');
-    expect(html).toContain('It has not taken effect yet.');
-    expect(html).toContain('data-testid="busy"');
-    expect(html).toContain('Expected: refused with PaymentLimitExceeded.');
-    expect(html).toContain('data-error="PaymentLimitExceeded"');
-  });
-
-  it('explains a refusal, and says so when the network gave no reason', () => {
-    expect(explainRefusal('Revoked')).toMatch(/^Revoked: /);
-    expect(explainRefusal(null)).toBe('The network gave no reason.');
-    expect(explainRefusal('SomethingNew')).toBe('SomethingNew');
-    // A paid API's own refusal is told apart from the wallet's.
-    expect(explainRefusal('payee_gate_CheckNotPassed')).toMatch(/^The API's own check refused the agent, and nothing was paid\. CheckNotPassed: /);
-    expect(explainRefusal('payee_gate_unknown_payer')).toContain('unknown payer');
-  });
-
-  it('refuses a wallet on another network', () => {
-    expect(networkProblem(config.passphrase, config.passphrase)).toBeNull();
-    expect(networkProblem(config.passphrase, 'Public Global Stellar Network ; September 2015')).toContain('Switch it to');
-    expect(networkProblem(config.passphrase, undefined)).toContain('did not say which network');
+  it('walks a connected owner through setting up, one button for all of it', () => {
+    const html = renderSetup(ready({ session: { wallet, deployed: false }, accountFunded: false }));
+    expect(html).toContain('data-action="setup"');
+    expect(html).toContain('Friendbot');
+    expect(html).not.toContain('class="done"');
+    expect(renderSetup(ready({ session: { wallet, deployed: false } }))).toContain('class="done"');
+    // Nothing can be started before the page knows the account and the wallet address.
+    expect(renderSetup(ready({ session: null, accountFunded: null }))).toMatch(/data-action="setup" disabled/);
+    expect(renderSetup(ready({ session: { wallet, deployed: false }, owner: { kind: 'freighter', label: 'Freighter', address: account(20) } })))
+      .toContain('Your wallet asks you to approve it');
+    expect(renderSetup(ready())).toBe('');
+    expect(renderAccount(ready())).toMatch(/data-kind="guest"[\s\S]*Guest[\s\S]*data-action="disconnect"/);
   });
 
   it('shows loading, a missing server and a failed read', () => {
     expect(renderNotice(initialState())).toContain('data-testid="loading"');
     expect(renderNotice({ ...initialState(), fatal: 'The demo server could not be reached' })).toContain('data-testid="fatal"');
-    expect(renderNotice(ready({ readError: 'timeout' }))).toContain('may be out of date: timeout');
+    expect(renderNotice(ready({ readError: 'RPC timed out' }))).toContain('may be out of date: RPC timed out');
     expect(renderNotice(ready())).toBe('');
   });
+});
 
-  it('offers a demo key on the local network only, and never asks for a secret', () => {
-    expect(renderConnection(ready({ owner: null }))).toContain('data-action="connect-local"');
-    const testnet = renderConnection(ready({ owner: null, config: { ...config, network: 'testnet' } }));
-    expect(testnet).not.toContain('connect-local');
-    expect(testnet).toContain('data-action="connect-freighter"');
-    expect(renderConnection(ready({ owner: null, connectError: 'Freighter was not found' }))).toContain('data-testid="connect-error"');
-    expect(renderConnection(ready())).toContain('local demo key');
+describe('the allowance', () => {
+  it('is the newest active policy, and tasks fall back to the last one there was', () => {
+    const ended = view({}, { revoked: true }, 'bb'.repeat(32));
+    const expired = view({ valid_until: NOW - 1n }, {}, 'cc'.repeat(32));
+    expect(currentAllowance(ready())?.hash).toBe('aa'.repeat(32));
+    expect(currentAllowance(ready({ policies: [ended, view()] }))?.hash).toBe('aa'.repeat(32));
+    expect(currentAllowance(ready({ policies: [ended, expired] }))).toBeUndefined();
+    // Trying under an ended allowance is how the wallet's refusal is seen.
+    expect(taskAllowance(ready({ policies: [ended, expired] }))?.hash).toBe('bb'.repeat(32));
+    expect(taskAllowance(ready({ policies: [] }))).toBeUndefined();
+    expect(policyStatus(allowance, policyState({ revoked: true }), NOW)).toBe('revoked');
+    expect(policyStatus(allowance, policyState(), allowance.valid_until)).toBe('expired');
+    expect(policyStatus(allowance, policyState(), allowance.valid_after - 1n)).toBe('not-yet-valid');
+  });
 
-    const stored = new Map<string, string>();
-    const storage = { getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => { stored.set(key, value); } };
-    const first = connectLocalKey('local', storage);
-    expect(connectLocalKey('local', storage).address).toBe(first.address);
-    expect(() => connectLocalKey('testnet', storage)).toThrow('local network only');
-    for (const html of [renderWallet(ready()), renderPolicyForm(ready()), renderConnection(ready({ owner: null }))]) {
-      expect(html).not.toMatch(/type="password"|secret|seed/i);
-    }
+  it('is told in the owner\'s numbers: spent, left, and how long it lasts', () => {
+    expect(allowanceView(allowance, policyState(), asset, NOW)).toMatchObject({
+      status: 'active', perPurchase: '5', perDay: '6', total: '20', spentToday: '3', spentEver: '3', leftToday: '3', share: 50,
+      endsIn: 7n * 86_400n,
+    });
+    // What is left today cannot be more than what is left of the whole allowance.
+    const nearlySpent = policyState({ daily_spend: [{ asset: asset.contract, amount: 1n * UNIT }], total_spend: [{ asset: asset.contract, amount: 19n * UNIT }] });
+    expect(allowanceView(allowance, nearlySpent, asset, NOW).leftToday).toBe('1');
+    expect(allowanceView({ ...allowance, assets: [] }, policyState(), asset, NOW)).toMatchObject({ perDay: '0', share: 0, leftToday: '0' });
+    expect(allowanceView({ ...allowance, assets: [{ ...allowance.assets[0]!, total: null }] }, policyState(), asset, NOW).total).toBeNull();
+    expect(allowanceView(allowance, policyState(), asset, allowance.valid_until + 5n).endsIn).toBe(0n);
+  });
+
+  it('shows the meter, the limits and the owner\'s two stops', () => {
+    const html = renderAllowance(ready());
+    expect(html).toMatch(/data-testid="allowance-status">Active</);
+    expect(html).toMatch(/<strong>3<\/strong> of 6 tUSD spent today/);
+    expect(html).toContain('width:50%');
+    expect(html).toContain('3 / 20');
+    expect(html).toContain('data-action="freeze"');
+    expect(html).toMatch(/data-action="end" data-policy="a{64}"/);
+    const frozen = renderAllowance(ready({ wallet: { balance: 1n, paused: true, head: { sequence: 2n, hash: bytes(9) } } }));
+    expect(frozen).toMatch(/data-testid="allowance-status">Frozen</);
+    expect(frozen).toContain('data-action="unfreeze"');
+    expect(frozen).not.toContain('data-action="freeze"');
+  });
+
+  it('says there is none, before the first and after the last, and offers the form', () => {
+    expect(renderAllowance(ready({ policies: [] }))).toContain('Scout cannot spend anything yet');
+    expect(renderAllowance(ready({ policies: [view({}, { revoked: true })] }))).toContain('The last allowance has ended');
+    const form = renderAllowanceForm(ready({ policies: [] }));
+    expect(form).toContain('data-form="allowance"');
+    // Three sellers are ticked to begin with; the cheapest is left for the owner to decide.
+    expect(form.match(/name="vendor" value="[a-z-]+" checked/g)).toHaveLength(3);
+    expect(form).toMatch(/value="bargain-data"\s+\/>/);
+    expect(form).toContain('Recent ledgers dataset 8');
+  });
+
+  it('marks each seller approved or not under the current allowance', () => {
+    const html = renderSellers(ready());
+    const approvedOf = (id: string) => new RegExp(`data-vendor="${id}" data-approved="(true|false)"`).exec(html)?.[1];
+    expect(VENDOR_IDS.map(approvedOf)).toEqual(['true', 'true', 'true', 'false']);
+    expect(html).toContain('only agents whose code was audited');
+    expect(renderSellers(ready({ policies: [] }))).not.toContain('data-approved="true"');
+  });
+
+  it('shows the balance and warns when there is nothing to spend', () => {
+    const html = renderWallet(ready());
+    expect(html).toMatch(/data-testid="wallet-balance">97</);
+    expect(html).toContain('Add 100 tUSD');
+    expect(html).not.toContain('The wallet is empty');
+    expect(renderWallet(ready({ wallet: { balance: 0n, paused: false, head: { sequence: 0n, hash: bytes(0) } } }))).toContain('The wallet is empty');
+    expect(renderWallet(ready({ wallet: null }))).toContain('Reading the wallet');
+  });
+});
+
+describe('what became of a purchase', () => {
+  const context = { vendor: 'Deep Archive', code: 'tUSD', allowance: { perPurchase: '5', perDay: '6', total: '20' } };
+  const blocked = (error: string | null) => explainStep({ status: 'blocked', error }, context);
+
+  it('names the owner\'s own limit when the wallet says no', () => {
+    expect(blocked('PaymentLimitExceeded')).toEqual({
+      tone: 'warn', label: 'Blocked by your wallet',
+      detail: 'That is more than your limit of 5 tUSD for one purchase. Nothing was sent to the seller.',
+    });
+    expect(blocked('DailyLimitExceeded').detail).toContain('today\'s limit of 6 tUSD');
+    expect(blocked('TotalLimitExceeded').detail).toContain('overall limit of 20 tUSD');
+    expect(blocked('RecipientNotAllowed').detail).toContain('Deep Archive is not one of the sellers you approved');
+    expect(blocked('Paused').detail).toContain('You froze Scout');
+    expect(blocked('Revoked').detail).toContain('You ended this allowance');
+    // Without the allowance at hand the sentence still stands, without the number.
+    expect(explainStep({ status: 'blocked', error: 'PaymentLimitExceeded' }, { vendor: 'x', code: 'tUSD' }).detail)
+      .toContain('more than your limit for one purchase');
+    // Anything without a sentence of its own falls back to the contract's description, never to nothing.
+    expect(blocked('RiskTooHigh').detail).toContain('risk score');
+    expect(blocked('SomethingNew').detail).toContain('SomethingNew');
+    expect(blocked(null).detail).toContain('The network gave no reason');
+  });
+
+  it('keeps a seller\'s refusal apart from the wallet\'s, and never calls an open payment refused', () => {
+    expect(explainStep({ status: 'declined', error: 'payee_gate_CheckNotPassed' }, context)).toMatchObject({
+      tone: 'bad', label: 'Refused by the seller', detail: expect.stringContaining('requires a check that Scout\'s verification does not include'),
+    });
+    expect(explainStep({ status: 'declined', error: 'payee_gate_unknown_payer' }, context).detail).toContain('does not recognise this wallet');
+    expect(explainStep({ status: 'declined', error: 'payee_gate_ResultExpired' }, context).detail).toContain('expired');
+    expect(explainStep({ status: 'declined', error: null }, context).detail).toBe('Deep Archive did not accept the payment. Nothing was paid.');
+    expect(explainStep({ status: 'paid', error: null }, context)).toMatchObject({ tone: 'good', label: 'Paid' });
+    expect(explainStep({ status: 'unsettled', error: null }, context)).toMatchObject({ tone: 'warn', label: 'Not confirmed yet' });
+  });
+
+  it('shows a task with what Scout did, what was bought and why the rest was not', () => {
+    const step = (overrides: Partial<Step>): Step => ({
+      vendor: 'ledger-wire', product: 'wire-brief', title: 'Network brief', amount: '1', payee: payee['ledger-wire']!,
+      status: 'paid', error: null, detail: null, tx_hash: 'ab'.repeat(32), content: null, ...overrides,
+    });
+    const rows = Array.from({ length: 8 }, (_, i) => [String(100 - i), '10:00:00 UTC', 'f'.repeat(64)]);
+    const item: Activity = {
+      id: 3, at: '2026-11-27T14:02:11.000Z', kind: 'task', title: 'Find the cheapest headlines', stage: 'confirmed', detail: '', hash: null,
+      policy: 'aa'.repeat(32),
+      result: {
+        task: 'cheapest', notes: ['Asked 2 sellers for a price: Bargain Data 0.5 tUSD, Ledger Wire 1 tUSD.', 'Trying the next cheapest.'],
+        steps: [
+          step({ vendor: 'bargain-data', title: 'Headlines', amount: '0.5', status: 'blocked', error: 'RecipientNotAllowed', tx_hash: null }),
+          step({ content: { title: 'Network brief · ledger 100', summary: 'Ledger 100 closed.', facts: [{ label: 'Protocol', value: '29' }],
+            table: { columns: ['Ledger', 'Closed at', 'Hash'], rows }, as_of_ledger: 100, source: 'Ledger Wire, from the local Stellar network' } }),
+        ],
+      },
+    };
+    const html = renderActivity(ready({ activity: [item] }));
+    expect(html).toContain('1 of 2 bought');
+    expect(html).toContain('14:02');
+    expect(html).toContain('Asked 2 sellers for a price');
+    expect(html).toMatch(/data-status="blocked" data-error="RecipientNotAllowed" data-vendor="bargain-data"/);
+    expect(html).toContain('Bargain Data is not one of the sellers you approved');
+    expect(html).toContain('Network brief · ledger 100');
+    expect(html).toContain('<dt>Protocol</dt><dd>29</dd>');
+    // A long table is cut until asked for, and a hash is shortened with the whole of it on hover.
+    expect(html.match(/<tr><td>/g)).toHaveLength(5);
+    expect(html).toContain('Show all 8 rows');
+    expect(renderActivity(ready({ activity: [item], ui: { ...initialState().ui, tables: [301] } })).match(/<tr><td>/g)).toHaveLength(8);
+    expect(html).not.toContain(`>${'f'.repeat(64)}<`);
+    expect(renderActivity(ready())).toContain('Nothing yet');
+  });
+
+  it('never shows a submitted or unsettled owner action as done', () => {
+    expect(stageVerdict('submitted')).toMatchObject({ tone: 'warn', label: 'Submitted, not confirmed' });
+    expect(stageVerdict('unsettled').detail).toContain('Do not repeat it');
+    expect(stageVerdict('confirmed').tone).toBe('good');
+    const pending: Activity = { id: 1, at: '2026-11-27T10:00:00.000Z', kind: 'owner', title: 'Freeze Scout', stage: 'submitted', detail: '', hash: 'ab'.repeat(32) };
+    const html = renderActivity(ready({ activity: [pending] }));
+    expect(html).toMatch(/data-stage="submitted"/);
+    expect(html).toContain('Submitted, not confirmed');
+    expect(html).not.toContain('>Confirmed<');
+  });
+
+  it('lists the tasks, and holds them back until there is an allowance to try them under', () => {
+    const html = renderTasks(ready());
+    for (const task of TASKS) expect(html).toContain(`data-task="${task.id}"`);
+    expect(html).not.toContain('disabled');
+    expect(renderTasks(ready({ policies: [] }))).toMatch(/data-task="brief" disabled/);
+    // After the allowance is ended the tasks stay, so that the wallet's refusal can be seen.
+    expect(renderTasks(ready({ policies: [view({}, { revoked: true })] }))).not.toContain('disabled');
+    expect(renderTasks(ready({ busy: 'Scout is working: Get today\'s network brief' }))).toContain('data-testid="busy"');
+  });
+});
+
+describe('the wallet\'s record', () => {
+  const entry = (sequence: bigint, outcome: Parameters<typeof describeOutcome>[0]) => ({
+    entry: { schema_version: 1, wallet, sequence, previous_hash: bytes(0), ledger: 10, timestamp: NOW, actor: account(5), outcome },
+    hash: bytes(1), ledger: 10, transaction: 'ab'.repeat(32), event_id: `${sequence}`,
+  });
+  const transfer = { asset: asset.contract, recipient: payee['ledger-wire']!, amount: 3n * UNIT };
+  const names = { [payee['ledger-wire']!]: 'Ledger Wire' };
+  const history = {
+    status: 'verified' as const, detail: '2 entries from genesis match the stored head', head: { sequence: 2n, hash: bytes(1) },
+    indexer: { status: 'verified', detail: 'ok' },
+    entries: [entry(1n, { kind: 'PolicyCreated', policy_hash: bytes(1) }),
+      entry(2n, { kind: 'AccountPayment', policy_hash: bytes(1), authorization: bytes(2), action: { kind: 'Transfer', transfer } })],
+  };
+  const attempts = [
+    { id: 1, kind: 'simulation' as const, status: 'blocked', error: 'PaymentLimitExceeded', detail: 'Deep Archive, Recent ledgers dataset, 8 tUSD. Too much.', tx_hash: null, recorded_at: '2026-11-25T15:00:00.000Z' },
+    { id: 2, kind: 'simulation' as const, status: 'declined', error: 'payee_gate_CheckNotPassed', detail: 'Audited Sources, Audited fee report, 2 tUSD. Refused.', tx_hash: null, recorded_at: '2026-11-25T15:01:00.000Z' },
+  ];
+  const open = { ...initialState().ui, record: true };
+
+  it('describes each kind of entry, calling sellers by name', () => {
+    expect(describeOutcome({ kind: 'AccountPayment', policy_hash: bytes(1), authorization: bytes(2), action: { kind: 'Transfer', transfer } }, asset, names))
+      .toMatchObject({ title: 'Purchase', detail: '3 tUSD to Ledger Wire' });
+    expect(describeOutcome({ kind: 'Executed', policy_hash: bytes(1), action_hash: bytes(2), action: { kind: 'Transfer', transfer } }, asset))
+      .toMatchObject({ title: 'Agent payment', detail: expect.stringMatching(/^3 tUSD to G/) });
+    expect(describeOutcome({ kind: 'PauseChanged', paused: true }, asset).title).toBe('Agent frozen');
+    expect(describeOutcome({ kind: 'PauseChanged', paused: false }, asset).title).toBe('Agent unfrozen');
+    expect(describeOutcome({ kind: 'PolicyCreated', policy_hash: bytes(1) }, asset).title).toBe('Allowance approved');
+    expect(describeOutcome({ kind: 'PolicyRevoked', policy_hash: bytes(1) }, asset).title).toBe('Allowance ended');
+    expect(describeOutcome({ kind: 'OwnerWithdrawal', transfer: { ...transfer, asset: contract(50) } }, asset).detail).toContain('units of');
+  });
+
+  it('says whether the list is the whole record, and keeps refusals apart', () => {
+    const closed = renderRecord(ready({ history, attempts }));
+    expect(closed).toMatch(/data-testid="history-status">Verified against the wallet</);
+    expect(closed).toContain('Show the record (2 on the ledger, 2 refused)');
+    expect(closed).not.toContain('data-testid="entries"');
+    const html = renderRecord(ready({ history, attempts, ui: open }));
+    expect(html.indexOf('Purchase')).toBeLessThan(html.indexOf('Allowance approved'));
+    expect(html).toContain('3 tUSD to Ledger Wire');
+    expect(html).toContain('These are not on the ledger');
+    expect(html).toMatch(/data-error="payee_gate_CheckNotPassed" data-status="declined"[\s\S]*Refused by the seller[\s\S]*Audited Sources, Audited fee report, 2 tUSD/);
+    expect(html).toContain('PaymentLimitExceeded:');
+    expect(html).not.toContain('Do not treat this list');
+
+    const partial = renderRecord(ready({ history: { ...history, status: 'incomplete', detail: 'Entries after 2 are not yet visible' } }));
+    expect(partial).toMatch(/data-testid="history-status">Incomplete</);
+    expect(partial).toContain('Do not treat this list as the whole record');
+    expect(renderRecord(ready({ history: { ...history, status: 'mismatch', detail: 'Entry 2 does not hash' } })))
+      .toMatch(/history-status">Does not match the wallet</);
+    expect(renderRecord(ready({ historyError: 'offline' }))).toContain('The record could not be read: offline');
+  });
+
+  it('explains a recorded refusal in the contract\'s terms', () => {
+    expect(explainRefusal('PaymentLimitExceeded')).toMatch(/^PaymentLimitExceeded: The amount is above/);
+    expect(explainRefusal('payee_gate_CheckNotPassed')).toContain('The seller\'s own check refused the agent. CheckNotPassed:');
+    expect(explainRefusal('payee_gate_unknown_payer')).toContain('unknown payer');
+    expect(explainRefusal(null)).toBe('No reason was given.');
+    expect(explainRefusal('SomethingNew')).toBe('SomethingNew');
+  });
+
+  it('links to an explorer only where there is one', () => {
+    const hash = 'ab'.repeat(32);
+    expect(tx(hash, null, 'View the transaction')).not.toContain('<a ');
+    expect(tx(hash, null, 'View the transaction')).not.toContain('View the transaction');
+    expect(tx(hash, testnet.explorer, 'View the transaction')).toContain(`href="https://explorer.example/testnet/tx/${hash}"`);
+    expect(addr(wallet, testnet.explorer)).toContain(`/contract/${wallet}`);
+    expect(addr(account(9), testnet.explorer)).toContain(`/account/${account(9)}`);
+    expect(renderRecord(ready({ config: testnet, history, ui: open }))).toContain('target="_blank" rel="noreferrer"');
+  });
+
+  it('shows the addresses and the exact rules to anyone who asks', () => {
+    expect(renderDetails(ready())).not.toContain('Agent registry');
+    const html = renderDetails(ready({ ui: { ...initialState().ui, details: true } }));
+    expect(html).toContain('Agent registry');
+    expect(html).toContain('Ledger Wire is paid at');
+    expect(html).toMatch(/data-testid="policy" data-status="active"/);
+    expect(html).toContain('may pay up to 5 tUSD at a time and 6 tUSD per UTC day, and 20 tUSD in total');
+  });
+});
+
+describe('the guest', () => {
+  const store = () => {
+    const values = new Map<string, string>();
+    return {
+      values, getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value); }, removeItem: (key: string) => { values.delete(key); },
+    };
+  };
+
+  it('is the same guest on return, a different one per network, and gone when forgotten', () => {
+    const storage = store();
+    const first = connectGuest('Test SDF Network ; September 2015', storage);
+    expect(first).toMatchObject({ kind: 'guest', label: 'Guest', address: expect.stringMatching(/^G[A-Z2-7]{55}$/) });
+    expect(connectGuest('Test SDF Network ; September 2015', storage).address).toBe(first.address);
+    expect(connectGuest('Standalone Network ; February 2017', storage).address).not.toBe(first.address);
+    forgetGuest('Test SDF Network ; September 2015', storage);
+    expect(connectGuest('Test SDF Network ; September 2015', storage).address).not.toBe(first.address);
+  });
+
+  it('survives a store that holds rubbish or cannot be written', () => {
+    const storage = store();
+    storage.values.set('scout-demo:guest:x', 'not a key');
+    expect(connectGuest('x', storage).address).toMatch(/^G/);
+    const sealed = { getItem: () => null, setItem: () => { throw new Error('denied'); } };
+    expect(connectGuest('x', sealed).address).toMatch(/^G/);
+  });
+
+  it('refuses a wallet on another network', () => {
+    expect(networkProblem('Test SDF Network ; September 2015', 'Test SDF Network ; September 2015')).toBeNull();
+    expect(networkProblem('Test SDF Network ; September 2015', 'Public Global Stellar Network ; September 2015')).toContain('Switch it to');
+    expect(networkProblem('x', undefined)).toContain('did not say');
+  });
+});
+
+describe('what the sellers sell', () => {
+  const ledgers = Array.from({ length: 200 }, (_, i) => ({ sequence: 801 + i, ledgerCloseTime: String(1_800_000_000 + i * 5 + (i === 150 ? 4 : 0)), hash: `${i}`.padStart(64, '0') }));
+  const source = (overrides: Partial<ContentSource> = {}): ContentSource => ({
+    getLatestLedger: async () => ({ sequence: 1_000, closeTime: '1800001000', protocolVersion: '30' }) as never,
+    getFeeStats: async () => ({
+      sorobanInclusionFee: { p50: '100', p99: '2500', transactionCount: '1234', ledgerCount: 50 },
+      inclusionFee: { p50: '100', p99: '200', transactionCount: '10', ledgerCount: 50 }, latestLedger: 1_000,
+    }) as never,
+    getLedgers: async ({ startLedger, pagination }: { startLedger: number; pagination?: { limit?: number } }) => ({
+      ledgers: ledgers.filter((ledger) => ledger.sequence >= startLedger).slice(0, pagination?.limit ?? 100),
+    }) as never,
+    ...overrides,
+  });
+  const product = (id: string) => PRODUCTS.find((item) => item.id === id)!;
+
+  it('is read from the network when it is bought', async () => {
+    const brief = await produce(product('wire-brief'), source(), 'Stellar Testnet');
+    expect(brief).toMatchObject({ title: 'Network brief · ledger 1,000', as_of_ledger: 1_000, source: 'Ledger Wire, from the Stellar Testnet network' });
+    expect(brief.summary).toContain('1,234 contract transactions paid a median inclusion fee of 100 stroops');
+    expect(brief.facts).toContainEqual({ label: 'Contract fee, 99th percentile', value: '2,500 stroops' });
+    const digest = await produce(product('wire-digest'), source(), 'Stellar Testnet');
+    expect(digest.title).toBe('Close-time digest · 120 ledgers');
+    expect(digest.facts).toContainEqual({ label: 'Slowest', value: '9 s' });
+    const dataset = await produce(product('archive-ledgers'), source(), 'Stellar Testnet');
+    expect(dataset.table).toMatchObject({ columns: ['Ledger', 'Closed at', 'Hash'] });
+    expect(dataset.table!.rows).toHaveLength(40);
+    expect(dataset.table!.rows[0]![0]).toBe('1000');
+    expect((await produce(product('bargain-headlines'), source(), 'x')).facts).toHaveLength(2);
+  });
+
+  it('still has something to sell when the network can tell it less', async () => {
+    const quiet = await produce(product('wire-brief'), source({ getFeeStats: async () => { throw new Error('unsupported'); } }), 'x');
+    expect(quiet.summary).toContain('too light to report');
+    expect(quiet.facts).toHaveLength(3);
+    const young = await produce(product('wire-digest'), source({ getLedgers: async () => { throw new Error('out of range'); } }), 'x');
+    expect(young.summary).toContain('not enough history');
+  });
+
+  it('prices every product and gives every seller an account of its own', () => {
+    expect(PRODUCTS.every((item) => Number(item.price) > 0 && item.path.startsWith(`/x402/${item.vendor}/`))).toBe(true);
+    expect(new Set(PRODUCTS.map((item) => item.path)).size).toBe(PRODUCTS.length);
+    expect(VENDORS.map((vendor) => vendor.id)).toEqual([...VENDOR_IDS]);
+    expect(VENDORS.filter((vendor) => vendor.suggested).map((vendor) => vendor.id)).toEqual(['ledger-wire', 'deep-archive', 'audited-sources']);
+  });
+});
+
+describe('rate limits', () => {
+  it('counts per client in a window, and starts again when the window has passed', () => {
+    let now = 0;
+    const allow = rateLimiter(2, 1_000, () => now);
+    expect([allow('a'), allow('a'), allow('a'), allow('b')]).toEqual([true, true, false, true]);
+    now = 999;
+    expect(allow('a')).toBe(false);
+    now = 1_000;
+    expect(allow('a')).toBe(true);
   });
 });
 
@@ -305,17 +500,21 @@ describe('formatting and storage', () => {
   it('escapes everything it renders', () => {
     expect(esc('<img src=x onerror="a">&\'')).toBe('&lt;img src=x onerror=&quot;a&quot;&gt;&amp;&#39;');
     expect(addr('G<b>')).toContain('&lt;b&gt;');
-    const html = renderAgent(ready({ agent: { identity: { ...identity, metadata_uri: 'https://x.test/<script>alert(1)</script>' }, result, provider } }));
+    const hostile: Activity = { id: 1, at: '2026-11-27T10:00:00.000Z', kind: 'owner', title: '<script>alert(1)</script>', stage: 'error', detail: '<img onerror=x>', hash: null };
+    const html = renderActivity(ready({ activity: [hostile] }));
     expect(html).not.toContain('<script>');
+    expect(html).not.toContain('<img');
   });
 
-  it('formats addresses, spans and times', () => {
+  it('formats addresses, spans, times and amounts', () => {
     expect(short(account(9))).toMatch(/^G.{3}….{4}$/);
     expect(duration(30)).toBe('30 seconds');
     expect(duration(60 * 60 * 3)).toBe('3 hours');
     expect(duration(7n * 86_400n - 20n)).toBe('7 days');
     expect(duration(86_400n * 2n)).toBe('2 days');
     expect(utc(1_800_000_000n)).toBe('2027-01-15 08:00 UTC');
+    expect(clock('2026-11-27T14:02:11.000Z')).toBe('14:02');
+    expect([money('97.0000000'), money('0.5000000'), money('12.25'), money('8')]).toEqual(['97', '0.5', '12.25', '8']);
   });
 
   it('keeps an unsettled transaction across a reload and drops nothing that is pending', async () => {
@@ -341,15 +540,20 @@ describe('formatting and storage', () => {
 describe('deployment record', () => {
   it('is refused when a field is missing or malformed', () => {
     const record = {
-      network: 'local', rpc_url: 'http://localhost:8000/rpc', passphrase: 'x', epoch: 'demo-1', start_ledger: 5,
+      network: 'testnet', rpc_url: 'https://rpc.example', passphrase: 'x', epoch: 'demo-1', start_ledger: 5,
       agent_registry: contract(1), verification_registry: contract(2), asset, wallet_wasm_hash: 'ab'.repeat(32),
-      wallet_salt: 'cd'.repeat(32), agent: config.agent, provider: config.provider, service: config.service,
-      roles: { ...config.roles, funder: account(13), facilitator: account(14) }, key_directory: '/tmp/keys', created_at: 'now',
+      wallet_salt: 'cd'.repeat(32), agent: config.agent, provider: config.provider, vendors: payee,
+      roles: { funder: account(13), facilitator: account(14) }, created_at: 'now',
     };
+    // A record kept in a repository names no key directory; one written by the setup on this machine does.
     expect(() => assertDeployment(record)).not.toThrow();
+    expect(() => assertDeployment({ ...record, key_directory: '/tmp/keys' })).not.toThrow();
     expect(() => assertDeployment({ ...record, agent_registry: 'C-not-an-address' })).toThrow('malformed');
     expect(() => assertDeployment({ ...record, wallet_salt: 'short' })).toThrow('malformed');
     expect(() => assertDeployment({ ...record, roles: { ...record.roles, funder: undefined } })).toThrow('malformed');
+    expect(() => assertDeployment({ ...record, vendors: { ...payee, 'bargain-data': undefined } })).toThrow('malformed');
+    // Two sellers paid at one account could not be told apart by a policy.
+    expect(() => assertDeployment({ ...record, vendors: { ...payee, 'bargain-data': payee['ledger-wire'] } })).toThrow('malformed');
     expect(() => assertDeployment(null)).toThrow('malformed');
   });
 });

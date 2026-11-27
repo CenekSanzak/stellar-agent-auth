@@ -117,18 +117,20 @@ export function policyBudget(policy: Policy, state: PolicyState, asset: AssetInf
   };
 }
 
-/** One audit entry as a title and a detail line. */
-export function describeOutcome(outcome: AuditOutcome, asset: AssetInfo): { title: string; detail: string; tone: Tone } {
+/** One audit entry as a title and a detail line. Recipients that are sellers are called by name. */
+export function describeOutcome(
+  outcome: AuditOutcome, asset: AssetInfo, names: Readonly<Record<string, string>> = {},
+): { title: string; detail: string; tone: Tone } {
   const pay = (transfer: { asset: string; recipient: string; amount: bigint }) =>
-    `${transfer.asset === asset.contract ? amount(transfer.amount, asset) : `${transfer.amount} units of ${short(transfer.asset)}`} to ${short(transfer.recipient)}`;
+    `${transfer.asset === asset.contract ? amount(transfer.amount, asset) : `${transfer.amount} units of ${short(transfer.asset)}`} to ${names[transfer.recipient] ?? short(transfer.recipient)}`;
   switch (outcome.kind) {
     case 'PolicyCreated':
-      return { title: 'Policy approved', detail: `Policy ${toHex(outcome.policy_hash).slice(0, 12)}…`, tone: 'muted' };
+      return { title: 'Allowance approved', detail: `Policy ${toHex(outcome.policy_hash).slice(0, 12)}…`, tone: 'muted' };
     case 'PolicyRevoked':
-      return { title: 'Policy revoked', detail: `Policy ${toHex(outcome.policy_hash).slice(0, 12)}…`, tone: 'warn' };
+      return { title: 'Allowance ended', detail: `Policy ${toHex(outcome.policy_hash).slice(0, 12)}…`, tone: 'warn' };
     case 'PauseChanged':
-      return outcome.paused ? { title: 'Wallet paused', detail: 'No agent can pay until it is resumed.', tone: 'warn' }
-        : { title: 'Wallet resumed', detail: 'Agents can pay again under their policies.', tone: 'muted' };
+      return outcome.paused ? { title: 'Agent frozen', detail: 'No agent can pay until the owner unfreezes.', tone: 'warn' }
+        : { title: 'Agent unfrozen', detail: 'Agents can pay again under their allowances.', tone: 'muted' };
     case 'OwnerWithdrawal':
       return { title: 'Owner withdrawal', detail: pay(outcome.transfer), tone: 'muted' };
     case 'Executed':
@@ -136,7 +138,7 @@ export function describeOutcome(outcome: AuditOutcome, asset: AssetInfo): { titl
       const { action } = outcome;
       const transfer = action.kind === 'Transfer' ? action.transfer : action.payment;
       const how = outcome.kind === 'Executed' ? 'Agent payment'
-        : action.kind === 'ServicePayment' ? 'Service payment' : 'Account payment';
+        : action.kind === 'ServicePayment' ? 'Service payment' : 'Purchase';
       return {
         title: how, tone: 'good',
         detail: `${pay(transfer)}${action.kind === 'ServicePayment' ? `, through service ${short(action.service.contract)}` : ''}`,
@@ -145,15 +147,85 @@ export function describeOutcome(outcome: AuditOutcome, asset: AssetInfo): { titl
   }
 }
 
-/** Why the wallet said no. An unknown reason is said to be unknown: the public RPC often gives none. */
-export function explainRefusal(error: string | null): string {
-  if (error === null) return 'The network gave no reason.';
+/** An allowance in the owner's terms: what Scout may spend, what it has spent, and how long it lasts. */
+export function allowanceView(policy: Policy, state: PolicyState, asset: AssetInfo, now: bigint) {
+  const limit = policy.assets.find((entry) => entry.asset === asset.contract);
+  const of = (rows: PolicyState['daily_spend']) => rows.find((entry) => entry.asset === asset.contract)?.amount ?? 0n;
+  const spentToday = of(state.daily_spend);
+  const spentEver = of(state.total_spend);
+  const perDay = limit?.per_day ?? 0n;
+  const total = limit?.total ?? null;
+  const text = (units: bigint) => fromContractUnits(units, asset.decimals);
+  const leftToday = perDay > spentToday ? perDay - spentToday : 0n;
+  const leftEver = total === null ? null : total > spentEver ? total - spentEver : 0n;
+  return {
+    status: policyStatus(policy, state, now),
+    perPurchase: text(limit?.per_transaction ?? 0n), perDay: text(perDay), total: total === null ? null : text(total),
+    spentToday: text(spentToday), spentEver: text(spentEver),
+    // What Scout can still spend today: the day's remainder, or the overall remainder when that is smaller.
+    leftToday: text(leftEver !== null && leftEver < leftToday ? leftEver : leftToday),
+    share: perDay === 0n ? 0 : Math.min(100, Number((spentToday * 100n) / perDay)),
+    endsIn: policy.valid_until > now ? policy.valid_until - now : 0n,
+    recipients: policy.allowed_recipients,
+  };
+}
+
+export type Allowance = ReturnType<typeof allowanceView>;
+
+export interface StepLike {
+  status: 'paid' | 'blocked' | 'declined' | 'unsettled';
+  error: string | null;
+}
+
+/**
+ * What became of one purchase, in the owner's words. The wallet's limits are named with their numbers when the
+ * allowance is known; anything this page has no plain sentence for falls back to the contract's own description.
+ */
+export function explainStep(
+  step: StepLike, context: { vendor: string; code: string; allowance?: Pick<Allowance, 'perPurchase' | 'perDay' | 'total'> | undefined },
+): Verdict {
+  const { vendor, code, allowance } = context;
+  if (step.status === 'paid') return { tone: 'good', label: 'Paid', detail: '' };
+  if (step.status === 'unsettled') {
+    return { tone: 'warn', label: 'Not confirmed yet', detail: 'The payment was sent and its outcome is not known yet. It may still go through.' };
+  }
   const help = (name: string) => (CONTRACT_ERROR_HELP as Record<string, string | undefined>)[name as ContractErrorName];
-  // A paid API's own check on the agent, made before it takes the payment.
+  if (step.status === 'declined') {
+    const gate = /^payee_gate_(.+)$/.exec(step.error ?? '')?.[1];
+    const reason = gate === 'CheckNotPassed' ? `${vendor} requires a check that Scout's verification does not include.`
+      : gate === 'unknown_payer' ? `${vendor} does not recognise this wallet.`
+        : gate ? `${vendor}'s own check on the agent failed (${help(gate) ?? gate.replaceAll('_', ' ')}).`
+          : step.error ? `${vendor} did not accept the payment (${step.error}).` : `${vendor} did not accept the payment.`;
+    return { tone: 'bad', label: 'Refused by the seller', detail: `${reason} Nothing was paid.` };
+  }
+  const of = (value: string | undefined | null) => (value ? ` of ${value} ${code}` : '');
+  const reasons: Record<string, string> = {
+    PaymentLimitExceeded: `That is more than your limit${of(allowance?.perPurchase)} for one purchase.`,
+    DailyLimitExceeded: `That would pass today's limit${of(allowance?.perDay)}. It resets at midnight UTC.`,
+    TotalLimitExceeded: `That would pass the allowance's overall limit${of(allowance?.total)}.`,
+    RecipientNotAllowed: `${vendor} is not one of the sellers you approved.`,
+    Paused: 'You froze Scout. Nothing can be paid until you unfreeze it.',
+    Revoked: 'You ended this allowance. Scout can spend nothing until you approve a new one.',
+    Expired: 'This allowance has run out of time. Approve a new one to let Scout buy again.',
+    TransferFailed: 'The wallet does not hold enough to pay for this.',
+    ResultExpired: 'Scout\'s verification has expired, so your wallet will not pay for it until it is renewed.',
+  };
+  const known = step.error ? reasons[step.error] ?? help(step.error) : undefined;
+  return {
+    tone: 'warn', label: 'Blocked by your wallet',
+    detail: `${known ?? (step.error ? step.error : 'The network gave no reason.')} Nothing was sent to the seller.`,
+  };
+}
+
+/** A recorded refusal, for the wallet's record: who refused, and the reason in the contract's terms. */
+export function explainRefusal(error: string | null): string {
+  if (error === null) return 'No reason was given.';
+  const help = (name: string) => (CONTRACT_ERROR_HELP as Record<string, string | undefined>)[name as ContractErrorName];
+  // A seller's own check on the agent, made before it takes the payment.
   const gate = /^payee_gate_(.+)$/.exec(error)?.[1];
   if (gate) {
     const reason = help(gate);
-    return `The API's own check refused the agent, and nothing was paid. ${reason ? `${gate}: ${reason}` : gate.replaceAll('_', ' ')}`;
+    return `The seller's own check refused the agent. ${reason ? `${gate}: ${reason}` : gate.replaceAll('_', ' ')}`;
   }
   const known = help(error);
   return known ? `${error}: ${known}` : error;
@@ -179,7 +251,7 @@ export type Stage = 'preparing' | 'signing' | 'submitted' | 'confirmed' | 'faile
  */
 export function stageVerdict(stage: Stage): Verdict {
   switch (stage) {
-    case 'preparing': return { tone: 'muted', label: 'Preparing', detail: 'Simulating the call on the network.' };
+    case 'preparing': return { tone: 'muted', label: 'Preparing', detail: 'Checking it against the network.' };
     case 'signing': return { tone: 'muted', label: 'Waiting for your signature', detail: 'Approve it in your wallet.' };
     case 'submitted': return { tone: 'warn', label: 'Submitted, not confirmed', detail: 'It has not taken effect yet.' };
     case 'confirmed': return { tone: 'good', label: 'Confirmed', detail: 'It is on the ledger.' };

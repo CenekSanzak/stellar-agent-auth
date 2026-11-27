@@ -18,10 +18,11 @@
     "@stellar-agent-auth/sdk": "0.0.0",
     "@stellar-agent-auth/verifier": "0.0.0",
     "@stellar-agent-auth/x402": "0.0.0",
-    "@stellar/freighter-api": "6.0.1",
     "@stellar/stellar-sdk": "17.4.0"
   },
   "devDependencies": {
+    "@creit.tech/stellar-wallets-kit": "2.8.0",
+    "@stellar/freighter-api": "6.0.1",
     "vite": "8.3.5"
   }
 }

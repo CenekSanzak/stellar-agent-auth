@@ -45,7 +45,7 @@ describe('demo backend on local Stellar', () => {
     readonly key = Keypair.random();
     readonly signer = keypairSigner(this.key);
     wallet = '';
-    policy = new Uint8Array(32);
+    policy: Uint8Array = new Uint8Array(32);
 
     get owner() {
       return this.key.publicKey();

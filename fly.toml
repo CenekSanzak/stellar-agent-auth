@@ -1,0 +1,35 @@
+# Fly.io configuration for the hosted demo. See docs/HOSTING.md.
+#
+# `app` must be unique on Fly, and DEMO_PUBLIC_URL must be the address visitors use: change both together.
+app = "scout-agent-demo"
+primary_region = "fra"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  DEMO_PUBLIC_URL = "https://scout-agent-demo.fly.dev"
+
+# The indexer's database. RPC servers keep only a window of recent events, so this file is the history.
+[mounts]
+  source = "scout_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # One small machine that stays up: the indexer keeps reading, and a visitor never waits for a start.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/healthz"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "30s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

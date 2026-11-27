@@ -1,10 +1,31 @@
 /** The demo server, as the page sees it. Types mirror `apps/demo/server`. */
 
-export interface Scenario {
+export interface Vendor {
+  id: string;
+  name: string;
+  tagline: string;
+  /** The checks this seller requires of a paying agent. */
+  requires: string[];
+  sells_to: string;
+  /** Whether the allowance form ticks this seller to begin with. */
+  suggested: boolean;
+  /** The account it is paid at. */
+  address: string;
+}
+
+export interface Product {
+  id: string;
+  vendor: string;
+  kind: string;
+  title: string;
+  /** Whole units of the demo asset. */
+  price: string;
+}
+
+export interface Task {
   id: string;
   label: string;
   description: string;
-  expected: string;
 }
 
 export interface Config {
@@ -18,32 +39,49 @@ export interface Config {
   wallet_salt: string;
   agent: { agent_id: string; revision: string; signer: string; controller: string; metadata_uri: string };
   provider: { address: string; mode: 'Live' | 'Fixture' };
-  service: { contract: string; service_id: string; price: string };
-  roles: { recipient: string; stranger: string; sponsor: string };
-  scenarios: Scenario[];
+  vendors: Vendor[];
+  products: Product[];
+  tasks: Task[];
   faucet_amount: string;
+  /** Where the indexer's read routes are, relative to this page. */
+  indexer_path: string;
+  /** An account that exists, to name as the source of read-only simulations. */
+  read_source: string;
   explorer: string | null;
 }
 
 export interface Session {
   wallet: string;
   deployed: boolean;
-  indexer_url: string | null;
+}
+
+/** What a purchase returned: something the seller read from the network when it was bought. */
+export interface Content {
+  title: string;
+  summary: string;
+  facts: { label: string; value: string }[];
+  table?: { columns: string[]; rows: string[][] };
+  as_of_ledger: number;
+  source: string;
 }
 
 export interface Step {
-  path: 'execute' | 'account' | 'service' | 'x402';
-  amount: string;
-  recipient: string;
-  status: 'paid' | 'refused' | 'failed' | 'unsettled';
+  vendor: string;
+  product: string;
+  title: string;
+  amount: string | null;
+  payee: string | null;
+  /** `blocked`: the wallet refused. `declined`: the seller refused. Neither moved any money. */
+  status: 'paid' | 'blocked' | 'declined' | 'unsettled';
   error: string | null;
   detail: string | null;
   tx_hash: string | null;
+  content: Content | null;
 }
 
-export interface ScenarioResult {
-  scenario: string;
-  expected: string;
+export interface TaskResult {
+  task: string;
+  notes: string[];
   steps: Step[];
 }
 
@@ -69,13 +107,17 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
 export const demoServer = {
   config: () => call<Config>('/v1/config'),
   session: (owner: string) => call<Session>('/v1/session', { owner }),
-  fund: () => call<{ status: string; tx_hash: string; amount: string; asset: string }>('/v1/fund', {}),
-  pay: (scenario: string, policyHash: string) => call<ScenarioResult>('/v1/payments', { scenario, policy_hash: policyHash }),
+  fund: (owner: string) => call<{ status: string; tx_hash: string; amount: string; asset: string }>('/v1/fund', { owner }),
+  task: (owner: string, task: string, policyHash: string) =>
+    call<TaskResult>('/v1/tasks', { owner, task, policy_hash: policyHash }),
 };
 
-/** Attempts the indexer was told about: refusals and failures, which are never part of the audit chain. */
-export async function readAttempts(indexerUrl: string, wallet: string): Promise<Attempt[]> {
-  const response = await fetch(new URL(`v1/wallets/${wallet}/attempts?limit=200`, indexerUrl));
+/** Where the indexer is, as an absolute address the SDK can build requests on. */
+export const indexerUrl = (config: Config, origin: string = location.origin) => new URL(config.indexer_path, origin).href;
+
+/** Purchases that did not happen: refusals, which are never part of the audit chain. */
+export async function readAttempts(indexer: string, wallet: string): Promise<Attempt[]> {
+  const response = await fetch(new URL(`v1/wallets/${wallet}/attempts?limit=200`, indexer));
   if (!response.ok) throw new Error(`The indexer answered ${response.status}`);
   return ((await response.json()) as { attempts: Attempt[] }).attempts;
 }

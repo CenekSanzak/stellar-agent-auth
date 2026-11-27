@@ -1,0 +1,8 @@
+{
+  "schema": "stellar-agent-auth/agent-metadata/v1",
+  "name": "Scout",
+  "description": "A research agent in the stellar-agent-auth demo. It buys briefs and datasets from the demo's sellers over x402, paying from an owner's policy-limited wallet on Stellar Testnet.\nIt holds no assets of value and has no secrets.",
+  "endpoints": [
+    { "name": "repository", "url": "https://github.com/CenekSanzak/stellar-agent-auth" }
+  ]
+}

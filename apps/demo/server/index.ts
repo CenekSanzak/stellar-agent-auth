@@ -75,8 +75,14 @@ export async function startDemo(
 }
 
 if (isMainModule(import.meta.url)) {
-  startDemo(process.env).then(({ url }) => {
+  startDemo(process.env).then(({ url, stop }) => {
     console.log(JSON.stringify({ status: 'listening', url }));
+    // A host stops a container with a signal; closing in order leaves the indexer's database clean.
+    for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+      process.once(signal, () => {
+        void stop().finally(() => process.exit(0));
+      });
+    }
   }, (error: unknown) => {
     console.error(`demo: ${error instanceof Error ? error.message : String(error)}`);
     process.exitCode = 1;
