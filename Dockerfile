@@ -43,7 +43,9 @@ ENV DEMO_HOST=0.0.0.0 \
     DEMO_PORT=8080 \
     DEMO_DEPLOYMENT=/app/deployments/testnet/demo.json \
     DEMO_STATE_DIRECTORY=/data
+COPY deployments/docker/entrypoint.sh /usr/local/bin/demo-entrypoint
 RUN mkdir -p /data && chown node:node /data
-USER node
 EXPOSE 8080
+# The entrypoint hands the mounted state directory to the `node` user and runs the server as that user.
+ENTRYPOINT ["demo-entrypoint"]
 CMD ["node", "apps/demo/dist/server/index.js"]
