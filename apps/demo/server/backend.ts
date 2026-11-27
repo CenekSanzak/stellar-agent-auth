@@ -144,7 +144,11 @@ export async function createBackend(options: BackendOptions) {
   // agent's verification current. It is used when named, or when the setup left it beside the other keys.
   const providerReference = options.env['DEMO_PROVIDER_KEY'] || (deployment.key_directory ? 'provider' : undefined);
   const providerKey = providerReference ? await loadKeypair(providerReference, keyEnv).catch((error: unknown) => {
-    if (options.env['DEMO_PROVIDER_KEY']) throw error;
+    // A key that is named and not there is said, not fatal: the server then runs without verifying anyone, which
+    // is how it ran before it could. A key that is there and unusable is a mistake, and stops it.
+    const absent = error instanceof Error && /is not set|not found/i.test(error.message);
+    if (options.env['DEMO_PROVIDER_KEY'] && !absent) throw error;
+    if (options.env['DEMO_PROVIDER_KEY']) console.error(`demo: no provider key (${(error as Error).message}); agents will not be verified here`);
     return undefined;
   }) : undefined;
   if (providerKey && providerKey.publicKey() !== deployment.provider.address) {
