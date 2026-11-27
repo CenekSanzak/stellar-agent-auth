@@ -145,7 +145,9 @@ const USAGE = `Usage:
   stellar-agent-wallet mcp [--home <dir>]
       Serve the agent's tools to an agent host, over standard input and output. This is what a host starts.`;
 
-function describe(result: InitResult, script: string): string {
+function describe(result: InitResult, tool: string, defaultHome: string): string {
+  // An agent kept somewhere other than the usual place has to be started with the same place named.
+  const script = result.home === defaultHome ? tool : `${tool} --home ${result.home}`;
   const verified = 'error' in result.verification ? `not verified yet: ${result.verification.error}`
     : `${result.verification.status === 'current' ? 'already verified' : 'verified'}; ${(result.verification.checks ?? [])
       .filter((check) => check.outcome === 'Passed').map((check) => check.kind).join(', ') || 'no checks'} passed`;
@@ -162,7 +164,7 @@ function describe(result: InitResult, script: string): string {
     '2. The agent host is told how to start its tools:',
     `     Claude Code:  claude mcp add agent-wallet -- node ${script} mcp`,
     `     Codex:        codex mcp add agent-wallet -- node ${script} mcp`,
-    `     Any other:    command "node", arguments ["${script}", "mcp"]`,
+    `     Any other:    the command "node" with the arguments: ${script} mcp`,
     '',
     'Then ask the agent to call its `allowance` tool.',
   ].join('\n');
@@ -192,7 +194,7 @@ export async function main(argv: string[], env: Record<string, string | undefine
       market: values.market, owner: values.owner, home, log: (line) => console.error(line),
       ...(values.name ? { name: values.name } : {}), ...(values.description ? { description: values.description } : {}),
     });
-    out(values.json ? JSON.stringify(result, null, 2) : describe(result, realpathSync(process.argv[1] ?? 'stellar-agent-wallet')));
+    out(values.json ? JSON.stringify(result, null, 2) : describe(result, realpathSync(process.argv[1] ?? 'stellar-agent-wallet'), agentHome(env)));
     return 0;
   }
   if (command === 'status') {

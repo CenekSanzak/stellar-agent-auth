@@ -42,6 +42,11 @@ export interface State {
   exposure: Exposure[];
   history: IndexedHistory | null;
   historyError: string | null;
+  /**
+   * Whether the record is merely a few seconds behind the wallet. The indexer reads the network every few seconds,
+   * so right after an action its copy lacks the newest entries; that is not a fault unless it lasts.
+   */
+  catchingUp: boolean;
   attempts: Attempt[];
   activity: Activity[];
   /** The action in progress, if any. One at a time. */
@@ -64,7 +69,7 @@ export interface OwnAgent extends LinkedAgent {
 
 export const initialState = (): State => ({
   fatal: null, config: null, owner: null, connectError: null, accountFunded: null, session: null, now: 0n,
-  agent: null, own: [], wallet: null, policies: [], exposure: [], history: null, historyError: null, attempts: [],
+  agent: null, own: [], wallet: null, policies: [], exposure: [], history: null, historyError: null, catchingUp: false, attempts: [],
   activity: [], busy: null, readError: null,
   ui: { record: false, details: false, withdraw: false, form: false, tables: [], formAgent: null, copied: false },
 });

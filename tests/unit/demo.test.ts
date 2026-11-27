@@ -326,6 +326,10 @@ describe('an agent of the owner\'s own', () => {
     expect(text).toContain('Do not ask them for any key');
     expect(text).not.toContain('opened without an owner');
     expect(text).not.toContain('cannot verify agents');
+    const published = agentReady({ origin: 'https://scout.example', owner: account(20), network: 'Stellar Testnet', verifies: true, npmPackage: 'stellar-agent-wallet' });
+    expect(published).toContain(`npx -y stellar-agent-wallet init --market https://scout.example --owner ${account(20)}`);
+    expect(published).toContain('claude mcp add agent-wallet -- npx -y stellar-agent-wallet mcp');
+    expect(published).not.toContain('curl');
     const bare = agentReady({ origin: 'https://scout.example', network: 'Stellar Testnet', verifies: false });
     expect(bare).toContain('opened without an owner');
     expect(bare).toContain('cannot verify agents at the moment');
@@ -486,6 +490,10 @@ describe('the wallet\'s record', () => {
     const partial = renderRecord(ready({ history: { ...history, status: 'incomplete', detail: 'Entries after 2 are not yet visible' } }));
     expect(partial).toMatch(/data-testid="history-status">Incomplete</);
     expect(partial).toContain('Do not treat this list as the whole record');
+    // For a few seconds after an action the record trails the wallet. That is said plainly, without the warning.
+    const trailing = renderRecord(ready({ catchingUp: true, history: { ...history, status: 'incomplete', detail: 'Entries after 2 are not yet visible' } }));
+    expect(trailing).toMatch(/data-testid="history-status">Catching up</);
+    expect(trailing).not.toContain('Do not treat this list');
     expect(renderRecord(ready({ history: { ...history, status: 'mismatch', detail: 'Entry 2 does not hash' } })))
       .toMatch(/history-status">Does not match the wallet</);
     expect(renderRecord(ready({ historyError: 'offline' }))).toContain('The record could not be read: offline');

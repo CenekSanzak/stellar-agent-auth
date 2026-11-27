@@ -24,6 +24,8 @@ const REFRESH_MS = 5_000;
 /** The agent's identity and verification change rarely; they are read on every sixth refresh. */
 const AGENT_EVERY = 6;
 const KEEP_ACTIVITY = 30;
+/** How long the record may trail the wallet before the page calls it incomplete. */
+const CATCH_UP_MS = 45_000;
 const LAST_KEY = 'scout-demo:last';
 
 export function startApp(root: Document, storage: Storage = localStorage) {
@@ -35,6 +37,7 @@ export function startApp(root: Document, storage: Storage = localStorage) {
   let refreshing = false;
   let refreshAgain = false;
   let refreshes = 0;
+  let behindSince: number | null = null;
   const drawn = new Map<string, string>();
 
   const sections: Record<string, (current: State) => string> = {
@@ -165,6 +168,10 @@ export function startApp(root: Document, storage: Storage = localStorage) {
             state.history = await chain.history(session.wallet, indexer);
             state.attempts = await readAttempts(indexer, session.wallet);
             state.historyError = null;
+            // Behind by its newest entries, and not for long: the indexer has not read them yet.
+            const behind = state.history.status === 'incomplete' && /not yet visible|No events found/.test(state.history.detail);
+            behindSince = behind ? behindSince ?? Date.now() : null;
+            state.catchingUp = behindSince !== null && Date.now() - behindSince < CATCH_UP_MS;
           } catch (error) {
             state.historyError = message(error);
           }
@@ -201,7 +208,7 @@ export function startApp(root: Document, storage: Storage = localStorage) {
     disconnectWallet = undefined;
     Object.assign(state, {
       owner: null, session: null, accountFunded: null, wallet: null, policies: [], exposure: [], history: null,
-      historyError: null, attempts: [], activity: [], agent: null, own: [], connectError: null,
+      historyError: null, catchingUp: false, attempts: [], activity: [], agent: null, own: [], connectError: null,
     });
     state.ui = { ...initialState().ui, formAgent: state.ui.formAgent };
   }

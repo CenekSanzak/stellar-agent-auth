@@ -110,6 +110,20 @@ With this package the whole run on 2026-11-27 was: `npm run check` passed with 5
 
 No model took part. The machine this was built on has no agent harness with a command-line mode, so what a model does with these tools has not been observed.
 
+## Bringing your own agent
+
+Anyone can connect their own AI agent to their wallet ([ADR 0015](decisions/0015-bring-your-own-agent.md), [how to use it](../packages/mcp/README.md)). Run on 2026-11-27 on the local network: `npm run check` passed with 543 unit tests; `npm run test:integration` passed with 100 tests in 16 files and 1 opt-in skipped; `npm run test:browser` passed with 11.
+
+**The agent's side and the server** (`tests/integration/own-agent.test.ts`, 7 tests). One call to `init` creates two key files readable by their owner only, registers a new agent whose identity carries the hash of the document the server serves for it, gets a result published for it (`Metadata` and `SignerAccount` passed, `Endpoint` not applicable), and puts it on the owner's list. Running it again registers nothing and publishes nothing. The command line says what is left to do and prints no key. The server refuses a name with markup in it, an unknown agent, linking the built-in agent, and a path that tries to leave the metadata directory. With an allowance the owner approves for it, the agent pays through its tools with no settings but its home directory; a purchase above its limit is blocked and a seller that wants more refuses it. The built-in agent, asked to pay under the new agent's allowance, pays nothing.
+
+**In the page** (`tests/browser/demo.test.ts`, one new test). A guest's page shows the sentence to paste, naming the server and the guest's account. The instructions and the one-file tool are served. After `init` runs for that guest, the agent appears in the page by itself, verified, with no allowance. The guest approves Scout's allowance and then a smaller one for the new agent; the agent buys a brief and is blocked on a digest above its limit; its card shows 1 of 4 spent while Scout's shows 0 of 6; and the record names the agent.
+
+**By hand, as an agent would do it.** The instructions were fetched from a running local server, the tool was downloaded from it with `curl` into an empty directory outside the repository and run with Node 24: `init` registered agent 2 and printed the link and the host commands; the link opened the page on that agent's allowance form; after approval the downloaded file, started as an MCP server by a client, reported the allowance, bought a brief and was blocked on a digest; the page showed the spend within seconds.
+
+One fault was found by looking at the page and fixed: for a few seconds after any action the record was labelled "Incomplete", with a warning, because the indexer had not yet read the newest entries. A record that trails the wallet by its newest entries is now shown as catching up for up to 45 seconds, and as incomplete only if it stays that way.
+
+Not run: any of this on Testnet or on the hosted server, where the verifier is the real one and fetches the agent's document over HTTPS from the server's own public address; and no model has followed the instructions. Both are the next things to try.
+
 ## Not covered
 
 - **Rate limits behind the real proxy.** The hosted server takes the client's address from Fly's header; that two visitors are limited separately was tested with that header locally, not from two networks.

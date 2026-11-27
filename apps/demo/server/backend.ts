@@ -474,7 +474,7 @@ export async function createBackend(options: BackendOptions) {
         response.writeHead(200, { 'content-type': 'text/markdown; charset=utf-8', 'cache-control': 'no-store', ...SECURITY_HEADERS });
         return response.end(agentReady({
           origin, owner: asked && StrKey.isValidEd25519PublicKey(asked) ? asked : undefined, network: networkName,
-          verifies: agentService.capabilities().verify,
+          verifies: agentService.capabilities().verify, npmPackage: options.env['DEMO_AGENT_NPM_PACKAGE'] || undefined,
         }));
       }
       if (request.method === 'GET' && url.pathname === '/agent/stellar-agent-wallet.mjs') {

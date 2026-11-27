@@ -21,7 +21,7 @@ export function renderRecord(state: State): string {
     return `<div class="card">${head}</div><p class="muted">${state.historyError
       ? esc(`The record could not be read: ${state.historyError}`) : 'Reading the record…'}</p></div>`;
   }
-  const completeness = COMPLETENESS[history.status]!;
+  const completeness = state.catchingUp ? { tone: 'muted' as Tone, label: 'Catching up' } : COMPLETENESS[history.status]!;
   const entries = [...history.entries].reverse();
   const names = Object.fromEntries(config.vendors.map((vendor) => [vendor.address, vendor.name]));
   // Who did it, by name where the page knows the key.
@@ -35,7 +35,8 @@ export function renderRecord(state: State): string {
     ${head}<span class="badge ${completeness.tone}" data-testid="history-status">${esc(completeness.label)}</span></div>
     <p class="muted small">Every payment and every change you make is written by the wallet into a chain of hashes. This page
       rebuilt that chain from the indexer's copy and compared it with the wallet itself: ${esc(history.detail)}.</p>
-    ${history.status !== 'verified' ? `<p class="banner ${completeness.tone}">Do not treat this list as the whole record.
+    ${state.catchingUp ? '<p class="small muted">The newest entries are being read from the network. This takes a few seconds.</p>' : ''}
+    ${history.status !== 'verified' && !state.catchingUp ? `<p class="banner ${completeness.tone}">Do not treat this list as the whole record.
       ${history.indexer ? `The indexer reports: ${esc(history.indexer.status)}, ${esc(history.indexer.detail)}.` : ''}</p>` : ''}
     <button class="quiet" data-action="toggle" data-what="record" data-testid="record-toggle">${open ? 'Hide the record' : `Show the record (${esc(count)})`}</button>
     ${open ? `<h3>On the ledger</h3>

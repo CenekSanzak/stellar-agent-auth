@@ -278,7 +278,7 @@ footer:empty { display: none; }
   .board { display: flex; flex-direction: column; }
   .col { display: contents; }
   #wallet { order: 1; } #withdraw { order: 2; } #allowance { order: 3; } #allowance-form { order: 4; }
-  #own-agents { order: 5; } #tasks { order: 6; } #activity { order: 7; } #connect { order: 8; } #sellers { order: 9; } #scout { order: 10; }
+  #own-agents { order: 5; } #tasks { order: 6; } #connect { order: 7; } #activity { order: 8; } #sellers { order: 9; } #scout { order: 10; }
   #record { order: 11; } #details { order: 12; }
   .how { grid-template-columns: 1fr; }
   .hero { padding-top: 28px; }

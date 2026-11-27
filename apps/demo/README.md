@@ -52,9 +52,11 @@ DEMO_DIRECTORY=.local/testnet-demo npm run demo:assess
 
 What happens is not scripted. Change the allowance and the outcomes change with it: allow 10 per purchase and the dataset is bought; tick Bargain Data and Scout buys the cheapest headlines there.
 
-## Let Claude Code or Codex be Scout
+## Use your own AI agent
 
-Scout's tasks in the page are fixed code. A real model can take its place: [`packages/mcp`](../../packages/mcp/README.md) is an MCP server that gives an agent host four tools, `allowance`, `sellers`, `price` and `buy`, backed by the same wallet and the same sellers. Keep the page open while the model works; its purchases appear in the wallet's record as they happen. It needs Scout's key, so it runs where the deployment's keys are.
+Scout is a sample. The point is your own agent: in Claude Code, Codex or any MCP host, with a key of its own on your machine, spending from your wallet inside an allowance you approve in the page.
+
+In the page, under **Use your own AI agent**, copy the sentence and paste it into your agent. The agent reads [`/agent-ready.md`](https://scout-agent-demo.fly.dev/agent-ready.md), fetches a one-file tool, creates and registers itself, and has itself verified. It then appears in the page beside Scout; give it an allowance. Its purchases show in the wallet's record as they happen. The tool, what it does and what to know before trusting it are in [`packages/mcp`](../../packages/mcp/README.md); the design is in [ADR 0015](../../docs/decisions/0015-bring-your-own-agent.md).
 
 ## The sellers
 
@@ -73,9 +75,11 @@ Four sellers stand for other people's businesses. Each has its own account, its 
 | --- | --- | --- |
 | Owner | Your wallet, or your browser as a guest | Wallet creation, allowances, freezing, ending, withdrawals |
 | Agent (Scout) | The demo server | Authorization entries for purchases, for the named tasks only |
+| Your own agent | Your machine, in `~/.stellar-agent-wallet` | Its own registration, and authorization entries for its purchases |
+| Provider | The demo server, when it is given the key | Verification results |
 | Facilitator | The demo server | Envelopes of x402 payments; it pays their fees and authorizes nothing |
 | Funder | The demo server | Faucet payments into wallets |
-| Admin, provider, controller, issuer, sellers | Used by the setup only | Deployment, provider approval, registration, the result, the asset, trustlines |
+| Admin, controller, issuer, sellers | Used by the setup only | Deployment, provider approval, registration, the result, the asset, trustlines |
 
 The page reads balances, allowances, the agent's identity and its verification from the network itself, through the RPC. It takes only the deployment's addresses, the sellers and the task list from the demo server.
 
@@ -90,6 +94,13 @@ The page reads balances, allowances, the agent's identity and its verification f
 | `POST /v1/fund { owner }` | The funder sends 100 tUSD to that owner's wallet, unless it already holds 200 or more |
 | `POST /v1/tasks { owner, task, policy_hash }` | Scout runs one named task for that owner's wallet under that allowance |
 | `GET /indexer/v1/...` | The indexer's read routes for a wallet, passed through |
+| `GET /agent-ready.md?owner=<G...>` | Instructions for an AI agent to set itself up, with this server and that owner filled in |
+| `GET /agent/stellar-agent-wallet.mjs` | The agent tool as one file |
+| `POST /v1/agents/metadata { signer, name, description? }` | Writes the metadata document for an agent's key, once, and returns its address and hash |
+| `GET /agents/<signer>.json` | That document |
+| `POST /v1/agents/verify { agent_id }` | Runs the verifier for an agent whose metadata this server serves, unless its result is current |
+| `POST /v1/agents/link { owner, agent_id }` | Notes that the agent would like to work for the owner |
+| `GET /v1/agents?owner=<G...>` | The agents that asked to work for the owner |
 | `GET /x402/<seller>/<product>` | A seller. 402 until paid |
 | `GET /healthz` | For a host's health check |
 
@@ -101,6 +112,7 @@ What protects it:
 - Bodies must be JSON, which a cross-site form cannot send.
 - Scout signs for five named tasks and nothing else. The recipient and the amount come from the sellers, not from the request.
 - One task runs per wallet at a time, and six at once in all.
+- It verifies only agents whose metadata it serves itself, so it never fetches an address a visitor chose.
 - Everything that costs the server something is rate limited by client address: tasks, faucet payments, requests to the sellers, and requests in general. The faucet also has a ceiling per wallet and per day.
 - The page is served with a content security policy that lets it run only its own scripts.
 
@@ -115,11 +127,13 @@ What it does not protect: anyone may name any owner, so anyone can have Scout ru
 | `DEMO_DIRECTORY` | `.local/demo` | Where the setup writes, and where the record and state are looked for |
 | `DEMO_STATE_DIRECTORY` | `<DEMO_DIRECTORY>/state/<epoch>` | The indexer's database and the facilitator's journal |
 | `DEMO_AGENT_KEY`, `DEMO_FUNDER_KEY`, `DEMO_FACILITATOR_KEY` | `agent`, `funder`, `facilitator` | Key references: a name in the record's key directory, `file:<path>`, or `env:<NAME>` |
+| `DEMO_PROVIDER_KEY` | `provider`, when the record names a key directory | The provider's key. With it the server verifies agents people bring and keeps Scout's verification current; without it, agents can register and are not verified |
+| `DEMO_AGENT_NPM_PACKAGE` | none | The agent tool's name on npm, once published. The agent instructions then use `npx` in place of the downloaded file |
 | `DEMO_ALLOWED_ORIGINS` | the Vite dev server, on loopback only | More origins a browser may call from |
 
 ## What it does not show
 
 - **A refusal on the ledger.** Scout asks the wallet before it signs, so a refused purchase is never sent. What the wallet does with a refused payment that is submitted anyway is covered by the contract and integration tests.
 - **The wallet's own `execute` call and a service that pulls its payment.** Every purchase here is an x402 payment on the account path. The other paths are in the [payment flow example](../../examples/payment-flow.ts) and the CLI.
-- **A model, in the page.** Scout's tasks there are fixed code. What is real is everything the tasks meet: the wallet, the allowance, the sellers and the network. A model can be the agent from a terminal; see above.
+- **A model, in the page.** Scout's tasks there are fixed code. A model is the agent from a terminal, as above.
 - **Wallets other than a guest key and Freighter, tested.** The other wallets go through Stellar Wallets Kit and need only transaction signing, which every wallet does; none of them was tried here by hand.

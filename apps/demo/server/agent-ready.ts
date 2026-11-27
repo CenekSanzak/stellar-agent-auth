@@ -3,10 +3,16 @@
  * document's address into their agent; the agent does the rest. It is written to the agent, in the imperative, and
  * it is generated so that the commands in it already name this server and the owner's account.
  */
-export function agentReady(options: { origin: string; owner?: string | undefined; network: string; verifies: boolean }): string {
+export function agentReady(options: {
+  origin: string; owner?: string | undefined; network: string; verifies: boolean;
+  /** The tool's name on npm, once it is published there. Without it the tool is fetched from this server as one file. */
+  npmPackage?: string | undefined;
+}): string {
   const { origin, network } = options;
   const owner = options.owner ?? '<the G... address of the account that owns the wallet>';
-  const tool = '~/.stellar-agent-wallet/stellar-agent-wallet.mjs';
+  const file = '~/.stellar-agent-wallet/stellar-agent-wallet.mjs';
+  // How the tool is run: from npm when it is published there, from the downloaded file otherwise.
+  const run = options.npmPackage ? `npx -y ${options.npmPackage}` : `node ${file}`;
   return `# Become the agent of a Stellar smart wallet
 
 These are instructions for you, an AI coding agent. The person who gave you this address owns a smart wallet on
@@ -35,20 +41,22 @@ node --version
 It must print v20 or newer. If it does not, tell the person to install Node.js and stop here.
 
 ## 2. Get the tool
-
+${options.npmPackage ? `
+There is nothing to install: \`npx\` fetches \`${options.npmPackage}\` from npm the first time it is used.
+` : `
 One file, with nothing else to install:
 
 \`\`\`sh
 mkdir -p ~/.stellar-agent-wallet
-curl -fsSL ${origin}/agent/stellar-agent-wallet.mjs -o ${tool}
+curl -fsSL ${origin}/agent/stellar-agent-wallet.mjs -o ${file}
 \`\`\`
-
+`}
 ## 3. Create and register yourself
 
 Pick a short name the owner will recognise, such as "Claude Code on <this machine's name>".
 
 \`\`\`sh
-node ${tool} init --market ${origin} --owner ${owner} --name "<your name>"
+${run} init --market ${origin} --owner ${owner} --name "<your name>"
 \`\`\`
 
 This creates your keys under \`~/.stellar-agent-wallet/keys\`, funds them with test XLM, registers you in the agent
@@ -60,12 +68,12 @@ ${options.verifies ? '' : '\nThis server cannot verify agents at the moment. You
 Use the line for the host you are running in:
 
 \`\`\`sh
-claude mcp add agent-wallet -- node ${tool} mcp      # Claude Code
-codex mcp add agent-wallet -- node ${tool} mcp       # Codex
+claude mcp add agent-wallet -- ${run} mcp      # Claude Code
+codex mcp add agent-wallet -- ${run} mcp       # Codex
 \`\`\`
 
-For any other MCP host: the command is \`node\`, with the arguments \`${tool.replace('~', '<home directory>')}\` and
-\`mcp\`. Use the full path; hosts do not expand \`~\`.
+For any other MCP host, the command to start is \`${run} mcp\`. Where a host wants the command and its arguments
+apart, write out the home directory in any path; hosts do not expand \`~\`.
 
 New tools usually appear only after the host reloads its tools or a new session starts. If you cannot call
 \`allowance\` after adding them, say so in step 5.
