@@ -69,15 +69,75 @@ export interface Content {
   source: string;
 }
 
-export type ContentSource = Pick<rpc.Server, 'getLatestLedger' | 'getFeeStats' | 'getLedgers'>;
+/** One closed ledger, as far as the sellers care about it. */
+export interface LedgerSample {
+  sequence: number;
+  closeTime: number;
+  hash: string;
+}
+
+/**
+ * The recent ledgers this server has seen close.
+ *
+ * An RPC returns a ledger together with everything that happened in it, which on a busy network is megabytes.
+ * Asking for a hundred ledgers at once, to learn a hundred close times, exhausts a small machine's memory. So the
+ * server looks at the latest ledger every few seconds and keeps three numbers from each. What the sellers sell
+ * about recent ledgers comes from here.
+ */
+export class LedgerWatch {
+  private readonly seen = new Map<number, LedgerSample>();
+  /** The oldest and newest ledgers the RPC still keeps, when it last said. */
+  window: { oldest: number; oldestCloseTime: number; latest: number; latestCloseTime: number } | undefined;
+
+  constructor(private readonly keep = 240) {}
+
+  record(sample: LedgerSample) {
+    this.seen.set(sample.sequence, sample);
+    while (this.seen.size > this.keep) this.seen.delete(Math.min(...this.seen.keys()));
+  }
+
+  /** Up to `count` of the newest ledgers seen, oldest first. They need not be consecutive. */
+  recent(count: number): LedgerSample[] {
+    return [...this.seen.values()].sort((a, b) => a.sequence - b.sequence).slice(-count);
+  }
+}
+
+/** The raw reads: nothing in a ledger is decoded, since only its number, time and hash are wanted. */
+export type ContentSource = Pick<rpc.Server, '_getLatestLedger' | 'getFeeStats'>;
+export type LedgerSource = Pick<rpc.Server, '_getLatestLedger' | '_getLedgers'>;
 
 const count = (value: number | string) => Number(value).toLocaleString('en-US');
 const clock = (seconds: number | string) => `${new Date(Number(seconds) * 1_000).toISOString().slice(11, 19)} UTC`;
 const day = (seconds: number | string) => new Date(Number(seconds) * 1_000).toISOString().slice(0, 10);
 
-async function latest(source: ContentSource) {
-  const ledger = await source.getLatestLedger();
-  return { sequence: ledger.sequence, closeTime: Number(ledger.closeTime), protocol: String(ledger.protocolVersion) };
+/** Read the latest ledger and remember it. */
+export async function observe(source: Pick<rpc.Server, '_getLatestLedger'>, watch: LedgerWatch) {
+  const ledger = await source._getLatestLedger();
+  const sample = { sequence: ledger.sequence, closeTime: Number(ledger.closeTime), hash: ledger.id };
+  watch.record(sample);
+  return { ...sample, protocol: String(ledger.protocolVersion) };
+}
+
+/**
+ * Fill the watch with the ledgers just before now, so that there is something to sell straight after a start. One
+ * ledger is asked for at a time, newest first, and it stops quietly at the first one the RPC will not give.
+ */
+export async function backfill(source: LedgerSource, watch: LedgerWatch, ledgers = 40) {
+  const newest = (await observe(source, watch)).sequence;
+  for (let sequence = newest - 1; sequence > newest - ledgers && sequence >= 2; sequence--) {
+    try {
+      const page = await source._getLedgers({ startLedger: sequence, pagination: { limit: 1 } });
+      const ledger = page.ledgers[0];
+      if (!ledger) return;
+      watch.record({ sequence: ledger.sequence, closeTime: Number(ledger.ledgerCloseTime), hash: ledger.hash });
+      watch.window = {
+        oldest: page.oldestLedger, oldestCloseTime: Number(page.oldestLedgerCloseTime),
+        latest: page.latestLedger, latestCloseTime: Number(page.latestLedgerCloseTime),
+      };
+    } catch {
+      return;
+    }
+  }
 }
 
 /** Fee statistics, or `undefined` when the RPC has none to give; a brief is still worth selling without them. */
@@ -90,21 +150,6 @@ async function fees(source: ContentSource) {
   }
 }
 
-/** Up to `span` of the most recent ledgers, oldest first; fewer on a young network. */
-async function recentLedgers(source: ContentSource, newest: number, span: number) {
-  for (const reach of [span, Math.ceil(span / 4), 2]) {
-    try {
-      const page = await source.getLedgers({ startLedger: Math.max(2, newest - reach + 1), pagination: { limit: reach } });
-      return page.ledgers.map((ledger) => ({
-        sequence: ledger.sequence, closeTime: Number(ledger.ledgerCloseTime), hash: ledger.hash,
-      }));
-    } catch {
-      // The window asked for may reach past what this RPC still keeps; ask for less.
-    }
-  }
-  return [];
-}
-
 function feeFacts(stats: Awaited<ReturnType<typeof fees>>) {
   if (!stats) return [];
   return [
@@ -114,10 +159,10 @@ function feeFacts(stats: Awaited<ReturnType<typeof fees>>) {
   ];
 }
 
-/** Produce what `product` sells, from `network` as it is now. */
-export async function produce(product: Product, source: ContentSource, network: string): Promise<Content> {
+/** Produce what `product` sells, from `network` as it is now and from the ledgers `watch` has seen. */
+export async function produce(product: Product, source: ContentSource, network: string, watch: LedgerWatch): Promise<Content> {
   const vendor = vendorOf(product.vendor).name;
-  const now = await latest(source);
+  const now = await observe(source, watch);
   const head = { as_of_ledger: now.sequence, source: `${vendor}, from the ${network} network` };
   const basics = [
     { label: 'Latest ledger', value: count(now.sequence) },
@@ -145,13 +190,17 @@ export async function produce(product: Product, source: ContentSource, network: 
       };
     }
     case 'digest': {
-      const ledgers = await recentLedgers(source, now.sequence, 120);
-      const gaps = ledgers.slice(1).map((ledger, i) => ledger.closeTime - ledgers[i]!.closeTime);
+      const ledgers = watch.recent(240);
+      // Only ledgers seen one after the other say how long one took.
+      const gaps = ledgers.slice(1).flatMap((ledger, i) =>
+        (ledger.sequence === ledgers[i]!.sequence + 1 ? [ledger.closeTime - ledgers[i]!.closeTime] : []));
       const mean = gaps.length ? gaps.reduce((sum, gap) => sum + gap, 0) / gaps.length : undefined;
+      const kept = watch.window && watch.window.latest > watch.window.oldest ? watch.window : undefined;
+      const longRun = kept ? (kept.latestCloseTime - kept.oldestCloseTime) / (kept.latest - kept.oldest) : undefined;
       return {
-        ...head, title: `Close-time digest · ${count(ledgers.length)} ledgers`,
-        summary: mean === undefined ? `Ledger ${count(now.sequence)} is the latest; there is not enough history to measure close times.`
-          : `The last ${count(ledgers.length)} ledgers closed ${mean.toFixed(2)} seconds apart on average, `
+        ...head, title: `Close-time digest · ${count(gaps.length)} ledgers`,
+        summary: mean === undefined ? `Ledger ${count(now.sequence)} is the latest; too few ledgers have been watched yet to measure close times.`
+          : `The last ${count(gaps.length)} ledgers watched closed ${mean.toFixed(2)} seconds apart on average, `
             + `the slowest after ${Math.max(...gaps)} seconds.`,
         facts: [
           ...basics,
@@ -160,15 +209,18 @@ export async function produce(product: Product, source: ContentSource, network: 
             { label: 'Slowest', value: `${Math.max(...gaps)} s` },
             { label: 'Fastest', value: `${Math.min(...gaps)} s` },
           ]),
+          ...(longRun === undefined ? [] : [{
+            label: `Average over the last ${count(kept!.latest - kept!.oldest)} ledgers`, value: `${longRun.toFixed(2)} s`,
+          }]),
           ...feeFacts(await fees(source)),
         ],
       };
     }
     case 'dataset': {
-      const ledgers = await recentLedgers(source, now.sequence, 40);
+      const ledgers = watch.recent(40);
       return {
         ...head, title: `Recent ledgers · ${count(ledgers.length)} rows`,
-        summary: `${count(ledgers.length)} consecutive ledgers up to ${count(now.sequence)}, with close time and hash.`,
+        summary: `The ${count(ledgers.length)} most recent ledgers watched, up to ${count(now.sequence)}, with close time and hash.`,
         facts: basics,
         table: {
           columns: ['Ledger', 'Closed at', 'Hash'],

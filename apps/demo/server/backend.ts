@@ -16,7 +16,7 @@ import {
   type PayeeTerms,
 } from '@stellar-agent-auth/x402';
 import { ScoutAgent, TASKS, UnknownTask } from './agent.js';
-import { PRODUCTS, VENDORS, produce, vendorOf } from './catalogue.js';
+import { LedgerWatch, PRODUCTS, VENDORS, backfill, observe, produce, vendorOf } from './catalogue.js';
 import { hexToBytes, type Deployment } from './deployment.js';
 
 /**
@@ -149,6 +149,11 @@ export async function createBackend(options: BackendOptions) {
     requirement: { required_checks: [], max_age: 30n * 86_400n, max_risk_score: 10 },
   };
   const networkName = deployment.network === 'testnet' ? 'Stellar Testnet' : 'local Stellar';
+  // The sellers' view of recent ledgers: a few numbers per ledger, gathered as ledgers close.
+  const watch = new LedgerWatch();
+  void backfill(server, watch).catch((error: unknown) => console.error('demo: could not read recent ledgers:', error));
+  const watching = setInterval(() => { void observe(server, watch).catch(() => undefined); }, 5_000);
+  watching.unref();
   const market = await createPaidService(network, inProcessFacilitator(network, facilitator), PRODUCTS.map((product) => {
     const vendor = vendorOf(product.vendor);
     return {
@@ -156,7 +161,7 @@ export async function createBackend(options: BackendOptions) {
       price: { asset: deployment.asset.contract, amount: toContractUnits(product.price, deployment.asset.decimals).toString() },
       payTo: deployment.vendors[product.vendor],
       gate: payeeGate({ ...terms, requirement: { ...terms.requirement, required_checks: [...vendor.requires] } }),
-      handler: () => produce(product, server, networkName),
+      handler: () => produce(product, server, networkName, watch),
     };
   }));
 
@@ -457,7 +462,10 @@ export async function createBackend(options: BackendOptions) {
 
   return {
     handler, walletOf, indexer,
-    stop: () => indexer.stop(),
+    async stop() {
+      clearInterval(watching);
+      await indexer.stop();
+    },
     /** Tell the server where it is reachable, once it listens; Scout buys from the sellers at this address. */
     listening(url: string) {
       marketUrl = url;

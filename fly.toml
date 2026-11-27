@@ -14,6 +14,8 @@ primary_region = "iad"
   DEMO_AGENT_KEY = "env:SCOUT_AGENT_SECRET"
   DEMO_FUNDER_KEY = "env:SCOUT_FUNDER_SECRET"
   DEMO_FACILITATOR_KEY = "env:SCOUT_FACILITATOR_SECRET"
+  # Let the server use most of the machine's 512 MB before it gives up; the default stops near 256 MB.
+  NODE_OPTIONS = "--max-old-space-size=320"
 
 # The indexer's database. RPC servers keep only a window of recent events, so this file is the history.
 [mounts]

@@ -10,7 +10,10 @@ import { isMainModule } from '@stellar-agent-auth/sdk/node';
 
 export { createBackend, rateLimiter, DEFAULT_LIMITS, type BackendOptions, type Limits } from './backend.js';
 export { ScoutAgent, TASKS, type Task, type TaskResult, type Step } from './agent.js';
-export { PRODUCTS, VENDORS, VENDOR_IDS, produce, type Content, type Product, type Vendor, type VendorId } from './catalogue.js';
+export {
+  LedgerWatch, PRODUCTS, VENDORS, VENDOR_IDS, backfill, observe, produce,
+  type Content, type LedgerSample, type Product, type Vendor, type VendorId,
+} from './catalogue.js';
 export { assertDeployment, loadDeployment, saveDeployment, type Deployment } from './deployment.js';
 export { setupDeployment, demoDirectory, recordPath, FIXTURE_LABEL, type SetupOptions } from './setup.js';
 

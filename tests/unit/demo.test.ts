@@ -15,7 +15,9 @@ import { renderActivity, renderTasks } from '../../apps/demo/src/views/work.js';
 import type { Config, Step } from '../../apps/demo/src/backend.js';
 import { TASKS } from '../../apps/demo/server/agent.js';
 import { rateLimiter } from '../../apps/demo/server/backend.js';
-import { PRODUCTS, VENDORS, VENDOR_IDS, produce, type ContentSource } from '../../apps/demo/server/catalogue.js';
+import {
+  LedgerWatch, PRODUCTS, VENDORS, VENDOR_IDS, backfill, observe, produce, type ContentSource, type LedgerSource,
+} from '../../apps/demo/server/catalogue.js';
 import { assertDeployment } from '../../apps/demo/server/deployment.js';
 import type {
   AgentIdentity, Policy, PolicyState, TransactionRecord, VerificationResult,
@@ -439,41 +441,75 @@ describe('the guest', () => {
 });
 
 describe('what the sellers sell', () => {
-  const ledgers = Array.from({ length: 200 }, (_, i) => ({ sequence: 801 + i, ledgerCloseTime: String(1_800_000_000 + i * 5 + (i === 150 ? 4 : 0)), hash: `${i}`.padStart(64, '0') }));
+  const sample = (i: number) => ({ sequence: 801 + i, closeTime: 1_800_000_000 + i * 5 + (i >= 150 ? 4 : 0), hash: `${i}`.padStart(64, '0') });
+  const watched = (from = 0, to = 200) => {
+    const watch = new LedgerWatch();
+    for (let i = from; i < to; i++) watch.record(sample(i));
+    return watch;
+  };
   const source = (overrides: Partial<ContentSource> = {}): ContentSource => ({
-    getLatestLedger: async () => ({ sequence: 1_000, closeTime: '1800001000', protocolVersion: '30' }) as never,
+    _getLatestLedger: async () => ({ id: 'f'.repeat(64), sequence: 1_000, closeTime: '1800001000', protocolVersion: '30' }) as never,
     getFeeStats: async () => ({
       sorobanInclusionFee: { p50: '100', p99: '2500', transactionCount: '1234', ledgerCount: 50 },
       inclusionFee: { p50: '100', p99: '200', transactionCount: '10', ledgerCount: 50 }, latestLedger: 1_000,
-    }) as never,
-    getLedgers: async ({ startLedger, pagination }: { startLedger: number; pagination?: { limit?: number } }) => ({
-      ledgers: ledgers.filter((ledger) => ledger.sequence >= startLedger).slice(0, pagination?.limit ?? 100),
     }) as never,
     ...overrides,
   });
   const product = (id: string) => PRODUCTS.find((item) => item.id === id)!;
 
   it('is read from the network when it is bought', async () => {
-    const brief = await produce(product('wire-brief'), source(), 'Stellar Testnet');
+    const brief = await produce(product('wire-brief'), source(), 'Stellar Testnet', watched());
     expect(brief).toMatchObject({ title: 'Network brief · ledger 1,000', as_of_ledger: 1_000, source: 'Ledger Wire, from the Stellar Testnet network' });
     expect(brief.summary).toContain('1,234 contract transactions paid a median inclusion fee of 100 stroops');
     expect(brief.facts).toContainEqual({ label: 'Contract fee, 99th percentile', value: '2,500 stroops' });
-    const digest = await produce(product('wire-digest'), source(), 'Stellar Testnet');
-    expect(digest.title).toBe('Close-time digest · 120 ledgers');
+    const watch = watched();
+    watch.window = { oldest: 1, oldestCloseTime: 1_799_994_995, latest: 1_000, latestCloseTime: 1_800_001_000 };
+    const digest = await produce(product('wire-digest'), source(), 'Stellar Testnet', watch);
+    // Two hundred ledgers in a row give 199 intervals; one of them was slow.
+    expect(digest.title).toBe('Close-time digest · 199 ledgers');
     expect(digest.facts).toContainEqual({ label: 'Slowest', value: '9 s' });
-    const dataset = await produce(product('archive-ledgers'), source(), 'Stellar Testnet');
+    expect(digest.facts).toContainEqual({ label: 'Average over the last 999 ledgers', value: '6.01 s' });
+    const dataset = await produce(product('archive-ledgers'), source(), 'Stellar Testnet', watched());
     expect(dataset.table).toMatchObject({ columns: ['Ledger', 'Closed at', 'Hash'] });
     expect(dataset.table!.rows).toHaveLength(40);
-    expect(dataset.table!.rows[0]![0]).toBe('1000');
-    expect((await produce(product('bargain-headlines'), source(), 'x')).facts).toHaveLength(2);
+    expect(dataset.table!.rows[0]).toEqual(['1000', '08:16:40 UTC', 'f'.repeat(64)]);
+    expect((await produce(product('bargain-headlines'), source(), 'x', watched())).facts).toHaveLength(2);
   });
 
   it('still has something to sell when the network can tell it less', async () => {
-    const quiet = await produce(product('wire-brief'), source({ getFeeStats: async () => { throw new Error('unsupported'); } }), 'x');
+    const quiet = await produce(product('wire-brief'), source({ getFeeStats: async () => { throw new Error('unsupported'); } }), 'x', watched());
     expect(quiet.summary).toContain('too light to report');
     expect(quiet.facts).toHaveLength(3);
-    const young = await produce(product('wire-digest'), source({ getLedgers: async () => { throw new Error('out of range'); } }), 'x');
-    expect(young.summary).toContain('not enough history');
+    const young = await produce(product('wire-digest'), source(), 'x', new LedgerWatch());
+    expect(young.summary).toContain('too few ledgers have been watched');
+    expect((await produce(product('archive-ledgers'), source(), 'x', new LedgerWatch())).table!.rows).toHaveLength(1);
+  });
+
+  it('watches ledgers a few numbers at a time, and never asks an RPC for many at once', async () => {
+    const asked: { startLedger: number; limit: number | undefined }[] = [];
+    const ledgers: LedgerSource = {
+      _getLatestLedger: source()._getLatestLedger,
+      _getLedgers: async ({ startLedger, pagination }: { startLedger: number; pagination?: { limit?: number } }) => {
+        asked.push({ startLedger, limit: pagination?.limit });
+        if (startLedger < 990) throw new Error('startLedger must be within the ledger range');
+        return {
+          ledgers: [{ sequence: startLedger, ledgerCloseTime: String(1_800_000_000 + startLedger), hash: 'a'.repeat(64) }],
+          oldestLedger: 990, oldestLedgerCloseTime: 1_800_000_990, latestLedger: 1_000, latestLedgerCloseTime: 1_800_001_000,
+        } as never;
+      },
+    };
+    const watch = new LedgerWatch();
+    await backfill(ledgers, watch, 40);
+    // One ledger per request, newest first, and it stops at the first one the RPC no longer keeps.
+    expect(asked.every(({ limit }) => limit === 1)).toBe(true);
+    expect(asked.map(({ startLedger }) => startLedger)).toEqual([999, 998, 997, 996, 995, 994, 993, 992, 991, 990, 989]);
+    expect(watch.recent(100).map((ledger) => ledger.sequence)).toEqual([990, 991, 992, 993, 994, 995, 996, 997, 998, 999, 1_000]);
+    expect(watch.window).toMatchObject({ oldest: 990, latest: 1_000 });
+    // Memory is bounded: the oldest ledgers are forgotten.
+    const small = new LedgerWatch(3);
+    for (let i = 0; i < 10; i++) small.record(sample(i));
+    expect(small.recent(10).map((ledger) => ledger.sequence)).toEqual([808, 809, 810]);
+    expect((await observe(ledgers, small)).protocol).toBe('30');
   });
 
   it('prices every product and gives every seller an account of its own', () => {
