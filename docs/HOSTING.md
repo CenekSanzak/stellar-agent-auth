@@ -6,7 +6,19 @@ Design and risks are in [ADR 0013](decisions/0013-hosted-demo.md).
 
 ## What it costs
 
-Fly.io has no free plan for new organisations. A `shared-cpu-1x` machine with 512 MB that stays up, a 1 GB volume and a shared IPv4 address come to roughly three to four US dollars a month at the prices published in November 2026; check [the pricing page](https://fly.io/docs/about/pricing/) before relying on that. A card is required. The container used about 120 MB at rest in testing, so the 256 MB size would probably also do.
+It fits inside Fly.io's Free plan. A personal organisation on that plan gets 5 US dollars of usage every month once a card is added, and up to three machines. At the prices [published](https://fly.io/docs/about/pricing/) on 27 November 2026, in the Ashburn region (`iad`):
+
+| Item | Per month |
+| --- | --- |
+| One `shared-cpu-1x` machine with 512 MB, always on | $3.69 |
+| A 1 GB volume | $0.15 |
+| Shared IPv4, IPv6, the certificate for `<name>.fly.dev`, image builds | free |
+| Outbound data | $0.02 per GB; a demo uses far less than one |
+| **Total** | **about $3.85** |
+
+Usage above 5 dollars in a month is billed, and the account moves to Pay As You Go; it is not cut off. Two things would take this demo over: a region with higher machine prices (Frankfurt is about 15% more, which still fits, with less room), or a second machine. The container used about 120 MB at rest in testing, so the 256 MB size ($2.19) would probably also do.
+
+`iad` is also the sensible region for another reason: the server spends its time talking to the Testnet RPC, not to the visitor.
 
 ## What is needed first
 
@@ -21,7 +33,7 @@ Choose a name. It becomes the address, `https://<name>.fly.dev`, so set both `ap
 ```sh
 fly auth login
 fly apps create <name>
-fly volumes create scout_data --size 1 --region fra --app <name>
+fly volumes create scout_data --size 1 --region iad --app <name>
 ```
 
 Give it the three secrets. Run this yourself, in your own shell; it reads the key files and sends them to Fly, and prints nothing.

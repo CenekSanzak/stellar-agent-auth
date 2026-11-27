@@ -2,7 +2,8 @@
 #
 # `app` must be unique on Fly, and DEMO_PUBLIC_URL must be the address visitors use: change both together.
 app = "scout-agent-demo"
-primary_region = "fra"
+# Ashburn: the lowest machine prices, which keeps this inside the Free plan's monthly usage.
+primary_region = "iad"
 
 [build]
   dockerfile = "Dockerfile"
