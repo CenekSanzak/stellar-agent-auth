@@ -1,13 +1,14 @@
 import {
   Account, Address, Keypair, Networks, Operation, StrKey, TransactionBuilder, nativeToScVal, xdr,
 } from '@stellar/stellar-sdk';
+import { x402Client } from '@x402/core/client';
 import { describe, expect, it } from 'vitest';
 import { encodeAccountSignature } from '../../packages/sdk/src/encoding.js';
 import { keypairSigner } from '../../packages/sdk/src/signers.js';
 import { MemoryJournal } from '../../packages/sdk/src/transactions.js';
 import {
-  STELLAR_LOCAL, STELLAR_PUBNET, STELLAR_TESTNET, StellarExactFacilitator, WalletExactScheme, checkPayer, passphraseOf,
-  payerOf, policyHashOf, transferProblem, x402Network,
+  STELLAR_LOCAL, STELLAR_PUBNET, STELLAR_TESTNET, StellarExactFacilitator, WalletExactScheme, checkPayer, fetchPaying,
+  passphraseOf, payerOf, policyHashOf, transferProblem, x402Network,
 } from '../../packages/x402/src/index.js';
 import { bytes, contract } from '../fixtures/abi-v1.js';
 import { FakeRpc, success } from './support/fake-rpc.js';
@@ -225,6 +226,35 @@ describe('the paying side', () => {
     await expect(create({ amount: '0' })).rejects.toThrow('invalid amount');
     await expect(create({ amount: '1.5' })).rejects.toThrow('invalid amount');
     await expect(create({ asset: 'not-an-asset' })).rejects.toThrow('invalid asset');
+  });
+});
+
+describe('paying for a request', () => {
+  const terms = { x402Version: 2, resource: { url: 'https://seller.example/thing' }, accepts: [requirements()] };
+  const asking = () => new Response('{}', {
+    status: 402, headers: { 'payment-required': Buffer.from(JSON.stringify(terms)).toString('base64') },
+  });
+  const client = () => new x402Client().setSpendControls(false).register(STELLAR_LOCAL, {
+    scheme: 'exact', createPaymentPayload: async (x402Version: number) => ({ x402Version, payload: { transaction: 'AAAA' } }),
+  } as never);
+
+  it('returns a seller\'s refusal as an answer when it does not repeat its terms', async () => {
+    // Some sellers answer a payment they refuse with a bare 402 and a body of their own.
+    const answers = [asking(), new Response('{"error":"payment_invalid"}', { status: 402 })];
+    const paid = await fetchPaying(client(), 'https://seller.example/thing', {}, (async () => answers.shift()!) as typeof fetch);
+    expect(paid.response.status).toBe(402);
+    expect(paid.required).toBeUndefined();
+    expect(await paid.response.json()).toEqual({ error: 'payment_invalid' });
+  });
+
+  it('reports the reason a seller gives with its terms', async () => {
+    const refusal = new Response('{}', {
+      status: 402,
+      headers: { 'payment-required': Buffer.from(JSON.stringify({ ...terms, error: 'not_today' })).toString('base64') },
+    });
+    const answers = [asking(), refusal];
+    const paid = await fetchPaying(client(), 'https://seller.example/thing', {}, (async () => answers.shift()!) as typeof fetch);
+    expect(paid.required?.error).toBe('not_today');
   });
 });
 

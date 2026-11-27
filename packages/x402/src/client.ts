@@ -120,8 +120,16 @@ export async function fetchPaying(
     ...init, headers: { ...(init.headers as Record<string, string> | undefined), ...http.encodePaymentSignatureHeader(payload) },
   });
   if (paid.status === 402) {
-    const again = http.getPaymentRequiredResponse(header(paid), await paid.clone().json().catch(() => undefined));
-    return { response: paid, required: again };
+    // A seller may refuse without repeating its terms in the form x402 gives them. That is still a refusal, not a
+    // fault: the answer is returned as it is, and its body says why if anything does.
+    try {
+      return {
+        response: paid,
+        required: http.getPaymentRequiredResponse(header(paid), await paid.clone().json().catch(() => undefined)),
+      };
+    } catch {
+      return { response: paid };
+    }
   }
   let settlement: SettleResponse | undefined;
   try {

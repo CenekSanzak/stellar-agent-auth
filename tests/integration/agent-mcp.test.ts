@@ -229,7 +229,8 @@ describe('an agent over MCP, paying from a policy-limited wallet on local Stella
   }, TIMEOUT);
 
   it('will not start without knowing which key and which wallet', async () => {
-    await expect(configure({})).rejects.toThrow('AGENT_KEY');
+    // An empty home of its own: a developer's machine may hold an agent that `init` set up.
+    await expect(configure({}, fetch, join(directory, 'nobody-home'))).rejects.toThrow('AGENT_KEY');
     await expect(configure({ AGENT_KEY: Keypair.random().secret() })).rejects.toThrow('never a secret key');
     await expect(configure({ AGENT_KEY: env['AGENT_KEY']!, AGENT_MARKET: base })).rejects.toThrow('AGENT_WALLET');
     await expect(configure({ ...env, AGENT_OWNER: 'nobody' })).rejects.toThrow('G... account address');
