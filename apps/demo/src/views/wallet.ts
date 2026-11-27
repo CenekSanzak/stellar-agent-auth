@@ -81,14 +81,6 @@ export function allowanceCard(state: State, agentId: string, testId: string): st
   </div>`;
 }
 
-/** The built-in agent's allowance. */
-export function renderAllowance(state: State): string {
-  const { config, wallet } = state;
-  if (phaseOf(state) !== 'ready' || !config || !wallet) return '';
-  return `<div class="card">${allowanceCard(state, config.agent.agent_id, 'allowance')}
-    <p class="muted small">Ending an allowance is permanent; you can always approve a new one. To stop everything at once, freeze the wallet.</p></div>`;
-}
-
 /**
  * The form for a new allowance, for one agent. It is drawn once, so a refresh never clears what the owner is
  * typing.
@@ -98,7 +90,6 @@ export function renderAllowanceForm(state: State): string {
   const agentId = formAgent(state);
   if (!config || !agentId) return '';
   const name = agentName(state, agentId);
-  const own = agentId !== config.agent.agent_id;
   const { code } = config.asset;
   const price = (vendor: string) => config.products.filter((product) => product.vendor === vendor)
     .map((product) => `${product.title} ${money(product.price)}`).join(', ');
@@ -124,7 +115,7 @@ export function renderAllowanceForm(state: State): string {
         every check it has passed today.</p>
     </details>
     <div class="actions"><button class="primary" type="submit">Approve allowance</button>
-      ${own ? '<button type="button" class="quiet" data-action="set-allowance" data-agent="">Not now</button>' : ''}</div>
+      <button type="button" class="quiet" data-action="set-allowance" data-agent="">Not now</button></div>
     <p class="muted small">The suggested numbers leave room to see the wallet say no: one seller asks more than 5, and one
       is not ticked.</p>
   </form>`;

@@ -136,13 +136,15 @@ One fault was found by looking at the page and fixed: for a few seconds after an
 | `buy` the audited report | Declined by the seller: `payee_gate_CheckNotPassed` |
 | The guest's page afterwards | 1 of 4 spent for the agent, Scout's allowance untouched, and the purchase in the wallet's record under the agent's name, verified against the wallet |
 
-Not run: a model following the instructions. Everything a model would do was done by hand or by a test client; whether Claude Code or Codex reads `agent-ready.md` and carries it out as written has not been seen.
+**A model, once.** The owner pasted the first version of the sentence into Claude Code. It read `agent-ready.md`, checked Node, and stopped before running anything: the page told it to act without explaining, the file was too large to review, the registration could not be undone, and it would change its own configuration. It listed the three steps and asked for a go-ahead. Nothing was wrong with that; the document was. It was rewritten to say what each step does and how to undo it and to leave the decision with the person, and the pasted sentence now carries the owner's go-ahead for the three steps. How a model responds to the new version has not been seen yet.
+
+**The page, reorganised**, the same day. The wallet is at the top and the agents under it, with bringing your own and the sample side by side. The browser suite checks that no allowance form is open until an agent is picked, and that a reload of a connected, set-up owner never shows the welcome page or the set-up steps on the way back. Quiet reconnection for Freighter and for wallets through Stellar Wallets Kit is written and was not tried with a wallet: only the guest's was run.
 
 ## Not covered
 
 - **Rate limits behind the real proxy.** The hosted server takes the client's address from Fly's header; that two visitors are limited separately was tested with that header locally, not from two networks.
 - **Wallets other than a guest key and Freighter.** The wallet picker opens under the content security policy and lists the wallets; no wallet in it was used to sign. Freighter was last used by hand with the earlier page, on a local network; the code that connects it is unchanged.
 - **Load.** Two visitors at once were tested. The limits are set for a demo that a few reviewers use; the public Testnet RPC's own limits were not measured.
-- **A model.** No AI agent has run the set-up or used the tools.
+- **A model, to the end.** One read the instructions and asked before acting. None has completed the set-up or used the tools.
 - **A long-running deployment.** It has been up for hours, not days. What needs doing over time is listed in [hosting](HOSTING.md).
 - **A refusal as a transaction on the ledger**, as before: Scout asks the wallet before it signs.

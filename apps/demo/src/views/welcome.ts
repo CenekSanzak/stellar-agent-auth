@@ -33,10 +33,10 @@ export function renderWelcome(state: State): string {
   if (phaseOf(state) !== 'welcome') return '';
   return `<div class="hero">
     <p class="eyebrow">Agent payments on Stellar</p>
-    <h1>Give an AI agent an allowance, not your keys.</h1>
-    <p class="lede">Scout is a research agent. It buys briefs and datasets from online sellers and pays from
-      <em>your</em> wallet, but only within the limits you set, only to sellers you approve, and only for as long as
-      you let it. Freeze it or end its allowance whenever you like.</p>
+    <h1>Give your AI agent an allowance, not your keys.</h1>
+    <p class="lede">A smart wallet that your AI agents can pay from, on your terms. Connect your own agent, in Claude Code,
+      Codex or any MCP host, and it spends only within the limits you set, only at sellers you approve, and only for as
+      long as you let it. Freeze the wallet or end an allowance whenever you like.</p>
     <div class="actions">
       <button class="primary big" data-action="connect-guest">Try it as a guest</button>
       <button class="big" data-action="connect-freighter">Connect Freighter</button>
@@ -49,11 +49,20 @@ export function renderWelcome(state: State): string {
   <ol class="how">
     <li><span class="how-n">1</span><h3>You set the rules</h3>
       <p>How much per purchase, per day and in total. Which sellers. Until when.</p></li>
-    <li><span class="how-n">2</span><h3>Scout does the shopping</h3>
-      <p>It asks sellers for prices and signs purchases with its own key. It holds no money and cannot change your rules.</p></li>
+    <li><span class="how-n">2</span><h3>Your agent does the shopping</h3>
+      <p>Your own AI agent, with a key of its own, or the sample agent that runs here. It holds no money and cannot change your rules.</p></li>
     <li><span class="how-n">3</span><h3>Your wallet decides</h3>
-      <p>A smart contract checks each payment against your rules and Scout's verification, pays or refuses, and keeps a record.</p></li>
+      <p>A smart contract checks each payment against your rules and the agent's verification, pays or refuses, and keeps a record.</p></li>
   </ol>`;
+}
+
+/**
+ * The moment between being connected and knowing what the owner has. Nothing is offered in it: someone who set
+ * their wallet up yesterday must not be shown the steps of setting it up.
+ */
+export function renderChecking(state: State): string {
+  if (phaseOf(state) !== 'checking') return '';
+  return `<p class="muted center" data-testid="checking">${state.reconnecting ? 'Reconnecting…' : 'Looking for your wallet…'}</p>`;
 }
 
 /** The way from a connected account to a funded wallet. One button does it; each step says where it stands. */
@@ -65,8 +74,8 @@ export function renderSetup(state: State): string {
   const guest = owner.kind === 'guest';
   return `<div class="card setup" data-testid="setup">
     <h2>Set up your wallet</h2>
-    <p class="muted">Your wallet is a smart contract that only you control. Scout will be allowed to spend from it,
-      inside rules you choose next.</p>
+    <p class="muted">Your wallet is a smart contract that only you control. An agent can spend from it only inside
+      an allowance you give it afterwards.</p>
     <ol class="checklist">
       ${step(state.accountFunded === true, 'Test XLM for network fees',
     `Your account ${addr(owner.address)} needs a little test XLM to pay for its own transactions. Friendbot gives it for free.`)}
@@ -75,7 +84,7 @@ export function renderSetup(state: State): string {
       ${step(false, `Add ${esc(config.faucet_amount)} ${esc(config.asset.code)}`,
     `The demo's faucet sends test dollars to the wallet${session ? `, at ${addr(session.wallet)}` : ''}.`)}
     </ol>
-    <button class="primary big" data-action="setup" ${state.accountFunded === null || !session ? 'disabled' : ''}>Set up my wallet</button>
+    <button class="primary big" data-action="setup">Set up my wallet</button>
     ${state.busy ? `<p class="working" data-testid="busy">${esc(state.busy)}…</p>` : ''}
   </div>`;
 }
@@ -84,7 +93,7 @@ export function renderSetup(state: State): string {
 export function renderFooter(state: State): string {
   const { config } = state;
   if (!config) return '';
-  return `<p>Scout is a demonstration of <a href="https://github.com/CenekSanzak/stellar-agent-auth" target="_blank" rel="noreferrer">stellar-agent-auth</a>:
+  return `<p>A working example of <a href="https://github.com/CenekSanzak/stellar-agent-auth" target="_blank" rel="noreferrer">stellar-agent-auth</a>:
     agent identity, time-limited verification and policy-limited wallets as Soroban contracts, with payments over x402.
     Everything here runs on ${config.network === 'testnet' ? 'Stellar Testnet' : 'a local network'}; the assets have no value.</p>`;
 }

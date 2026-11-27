@@ -3,14 +3,14 @@ import { demoServer, indexerUrl, readAttempts, type Config } from './backend.js'
 import { StorageJournal, createChain, type AllowanceDraft, type Chain, type OwnerOutcome } from './chain.js';
 import { fromHex, toHex } from './format.js';
 import type { Stage } from './model.js';
-import { ConnectCancelled, connectFreighter, connectGuest, connectWithKit, type Owner } from './owner.js';
+import { ConnectCancelled, connectFreighter, connectGuest, connectWithKit, reconnect, type Owner, type OwnerKind } from './owner.js';
 import { agentName, formAgent, initialState, phaseOf, taskAllowance, type Activity, type State } from './state.js';
-import { renderConnect, renderOwnAgents, setupPrompt } from './views/agents.js';
-import { renderScout, renderSellers } from './views/market.js';
+import { renderAgents, setupPrompt } from './views/agents.js';
+import { renderSellers } from './views/market.js';
 import { renderDetails, renderRecord } from './views/record.js';
-import { renderAllowance, renderAllowanceForm, renderWallet, renderWithdraw } from './views/wallet.js';
-import { renderAccount, renderFooter, renderNetwork, renderNotice, renderSetup, renderWelcome } from './views/welcome.js';
-import { renderActivity, renderTasks } from './views/work.js';
+import { renderAllowanceForm, renderWallet, renderWithdraw } from './views/wallet.js';
+import { renderAccount, renderChecking, renderFooter, renderNetwork, renderNotice, renderSetup, renderWelcome } from './views/welcome.js';
+import { renderActivity } from './views/work.js';
 
 /**
  * The page: one state object, a few actions that change it, and sections that are redrawn when their HTML changes.
@@ -41,10 +41,9 @@ export function startApp(root: Document, storage: Storage = localStorage) {
   const drawn = new Map<string, string>();
 
   const sections: Record<string, (current: State) => string> = {
-    network: renderNetwork, account: renderAccount, notice: renderNotice, welcome: renderWelcome, setup: renderSetup,
-    wallet: renderWallet, allowance: renderAllowance, 'own-agents': renderOwnAgents, connect: renderConnect,
-    sellers: renderSellers, scout: renderScout, tasks: renderTasks,
-    activity: renderActivity, record: renderRecord, details: renderDetails, footer: renderFooter,
+    network: renderNetwork, account: renderAccount, notice: renderNotice, welcome: renderWelcome, checking: renderChecking,
+    setup: renderSetup, wallet: renderWallet, agents: (current) => renderAgents(current, root.location.origin),
+    sellers: renderSellers, activity: renderActivity, record: renderRecord, details: renderDetails, footer: renderFooter,
   };
 
   function render() {
@@ -209,11 +208,12 @@ export function startApp(root: Document, storage: Storage = localStorage) {
     Object.assign(state, {
       owner: null, session: null, accountFunded: null, wallet: null, policies: [], exposure: [], history: null,
       historyError: null, catchingUp: false, attempts: [], activity: [], agent: null, own: [], connectError: null,
+      reconnecting: false,
     });
     state.ui = { ...initialState().ui, formAgent: state.ui.formAgent };
   }
 
-  async function connect(make: (config: Config) => Promise<Owner> | Owner) {
+  async function connect(make: (config: Config) => Promise<Owner> | Owner, quiet = false) {
     if (!state.config || state.busy) return;
     state.connectError = null;
     try {
@@ -222,16 +222,17 @@ export function startApp(root: Document, storage: Storage = localStorage) {
       signer = owner.signer;
       disconnectWallet = owner.disconnect;
       state.owner = { kind: owner.kind, label: owner.label, address: owner.address };
-      // A guest comes back as the same guest after a reload; a wallet is asked again, since that takes its consent.
+      // Remembered, so that a reload comes back as the same owner without asking them again.
       try {
-        if (owner.kind === 'guest') storage.setItem(LAST_KEY, 'guest');
-        else storage.removeItem(LAST_KEY);
+        storage.setItem(LAST_KEY, owner.kind);
       } catch {
         // Not remembered, then.
       }
     } catch (error) {
-      if (!(error instanceof ConnectCancelled)) state.connectError = message(error);
+      // Coming back after a reload fails quietly: the welcome page is the answer, not an error about a wallet.
+      if (!(error instanceof ConnectCancelled) && !quiet) state.connectError = message(error);
     }
+    state.reconnecting = false;
     render();
     await refresh();
   }
@@ -422,8 +423,14 @@ export function startApp(root: Document, storage: Storage = localStorage) {
     } catch {
       // Storage is unavailable: start at the welcome page.
     }
-    if (state.config && last === 'guest') await connect((config) => connectGuest(config.passphrase, storage));
-    else await refresh();
+    if (state.config && (last === 'guest' || last === 'freighter' || last === 'kit')) {
+      // Whoever was here before the reload: found again without a click, or not at all.
+      state.reconnecting = true;
+      render();
+      await connect((config) => reconnect(last as OwnerKind, config.passphrase, storage), true);
+    } else {
+      await refresh();
+    }
     // Nothing is read for a page nobody is looking at.
     setInterval(() => { if (!state.busy && !root.hidden) void refresh(); }, REFRESH_MS);
     root.addEventListener('visibilitychange', () => { if (!root.hidden && !state.busy) void refresh(); });

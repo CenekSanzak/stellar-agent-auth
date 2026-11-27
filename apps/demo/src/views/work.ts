@@ -3,14 +3,13 @@ import { clock, esc, money, tx } from '../format.js';
 import { allowanceView, explainStep, stageVerdict } from '../model.js';
 import { phaseOf, taskAllowance, type Activity, type State } from '../state.js';
 
-/** What Scout can be asked to do. */
-export function renderTasks(state: State): string {
+/** What the sample agent can be asked to do. Shown in its card; held back until it has had an allowance to try them under. */
+export function taskList(state: State): string {
   const { config } = state;
-  if (phaseOf(state) !== 'ready' || !config) return '';
+  if (!config) return '';
   const ready = taskAllowance(state) !== undefined;
-  return `<div class="card tasks">
-    <div class="card-head"><h2>Ask Scout</h2>${state.busy ? `<span class="working" data-testid="busy">${esc(state.busy)}…</span>` : ''}</div>
-    ${ready ? '' : '<p class="muted">Approve an allowance first. Until then Scout has no way to pay for anything.</p>'}
+  return `<div class="tasks">
+    <h3>Give Scout a task</h3>
     <ul class="task-list">${config.tasks.map((task) => `<li>
       <button class="task" data-action="task" data-task="${esc(task.id)}" ${ready ? '' : 'disabled'}>
         <span class="task-label">${esc(task.label)}</span>
@@ -53,12 +52,13 @@ function renderStep(step: Step, index: number, item: Activity, state: State): st
 /** What was asked for and what came of it, newest first. */
 export function renderActivity(state: State): string {
   const { config } = state;
-  if (!config || phaseOf(state) === 'loading' || phaseOf(state) === 'welcome') return '';
+  if (!config || phaseOf(state) !== 'ready') return '';
+  const head = `<div class="card-head"><h2>Activity</h2>${state.busy ? `<span class="working" data-testid="busy">${esc(state.busy)}…</span>` : ''}</div>`;
   if (!state.activity.length) {
     return phaseOf(state) === 'ready'
-      ? '<div class="card"><h2>Activity</h2><p class="muted">Nothing yet. What you and Scout do appears here.</p></div>' : '';
+      ? `<div class="card">${head}<p class="muted">Nothing yet. What you and your agents do here appears in this list.</p></div>` : '';
   }
-  return `<div class="card"><h2>Activity</h2>
+  return `<div class="card">${head}
     <ol class="feed">${state.activity.map((item) => {
     const verdict = stageVerdict(item.stage);
     const steps = item.result?.steps ?? [];

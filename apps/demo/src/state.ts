@@ -29,6 +29,8 @@ export interface State {
   config: Config | null;
   owner: { kind: OwnerKind; label: string; address: string } | null;
   connectError: string | null;
+  /** Set while the page is finding out, after a reload, whether the owner is still connected. */
+  reconnecting: boolean;
   /** Whether the owner's account exists on the network; `null` until known. */
   accountFunded: boolean | null;
   session: Session | null;
@@ -56,7 +58,7 @@ export interface State {
   /** What is unfolded on the page. Kept here because sections are redrawn. */
   ui: {
     record: boolean; details: boolean; withdraw: boolean; form: boolean; tables: number[];
-    /** The agent whose allowance form is asked for; `null` leaves it to the built-in agent. */
+    /** The agent whose allowance form is asked for, if any. */
     formAgent: string | null;
     /** Set for a moment after the set-up prompt was copied. */
     copied: boolean;
@@ -68,19 +70,26 @@ export interface OwnAgent extends LinkedAgent {
 }
 
 export const initialState = (): State => ({
-  fatal: null, config: null, owner: null, connectError: null, accountFunded: null, session: null, now: 0n,
+  fatal: null, config: null, owner: null, connectError: null, reconnecting: false, accountFunded: null, session: null, now: 0n,
   agent: null, own: [], wallet: null, policies: [], exposure: [], history: null, historyError: null, catchingUp: false, attempts: [],
   activity: [], busy: null, readError: null,
   ui: { record: false, details: false, withdraw: false, form: false, tables: [], formAgent: null, copied: false },
 });
 
-export type Phase = 'loading' | 'welcome' | 'setup' | 'ready';
+export type Phase = 'loading' | 'welcome' | 'checking' | 'setup' | 'ready';
 
-/** Where the visitor is: nothing loaded, not connected, connected without a wallet, or with one. */
+/**
+ * Where the visitor is: nothing loaded, not connected, connected with a wallet, or without one. `checking` is the
+ * moment in between, when someone is connected and the page does not know yet whether they have a wallet. Nothing
+ * is claimed in that moment: a returning owner is never shown the steps of a set-up they have done.
+ */
 export function phaseOf(state: State): Phase {
   if (!state.config) return 'loading';
+  if (state.reconnecting) return 'checking';
   if (!state.owner) return 'welcome';
-  return state.session?.deployed ? 'ready' : 'setup';
+  if (state.session?.deployed) return 'ready';
+  // Whether the wallet exists, and whether the account does, are both read before anything is offered.
+  return state.session === null || state.accountFunded === null ? 'checking' : 'setup';
 }
 
 /**
@@ -107,11 +116,12 @@ export function agentName(state: State, agentId: string): string {
 }
 
 /**
- * The agent whose allowance form is shown, if any: the one the owner asked for, or the built-in agent while it has
- * no allowance. One form at a time; it is drawn once, so typing in it survives a refresh.
+ * The agent whose allowance form is shown, if any: the one the owner asked for, while it has no allowance. One
+ * form at a time; it is drawn once, so typing in it survives a refresh.
  */
 export function formAgent(state: State): string | undefined {
   const asked = state.ui.formAgent;
-  if (asked && state.own.some((agent) => agent.agent_id === asked) && !currentAllowance(state, asked)) return asked;
-  return state.config && !currentAllowance(state) ? state.config.agent.agent_id : undefined;
+  if (!asked || !state.config) return undefined;
+  const known = asked === state.config.agent.agent_id || state.own.some((agent) => agent.agent_id === asked);
+  return known && !currentAllowance(state, asked) ? asked : undefined;
 }

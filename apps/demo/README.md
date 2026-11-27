@@ -1,6 +1,6 @@
-# Scout, the demo
+# Agent Wallet, the demo
 
-Scout is a research agent. It buys briefs and datasets from sellers over x402 and pays from its owner's wallet, inside an allowance the owner sets: how much per purchase, per day and in total, which sellers, and until when. The owner can freeze it or end the allowance at any time.
+A smart wallet that AI agents can pay from, inside allowances its owner sets: how much per purchase, per day and in total, which sellers, and until when. The owner can freeze the wallet or end an allowance at any time. Two kinds of agent use it. The owner's own, in Claude Code, Codex or any MCP host; and Scout, a sample agent that runs on the site, for seeing an allowance at work without setting anything up. Agents buy from sample sellers over x402.
 
 It is hosted at **<https://scout-agent-demo.fly.dev/>**, on Stellar Testnet, and can be tried there as a guest with nothing installed.
 
@@ -43,20 +43,20 @@ DEMO_DIRECTORY=.local/testnet-demo npm run demo:assess
 
 ## What you do in the page
 
-1. **Come in.** As a guest, with Freighter, or with any wallet [Stellar Wallets Kit](https://stellarwalletskit.dev/) knows (xBull, Albedo, Lobstr, Rabet, Hana and others). A guest is a key generated in the browser; the page never asks for a secret key.
+1. **Come in.** As a guest, with Freighter, or with any wallet [Stellar Wallets Kit](https://stellarwalletskit.dev/) knows (xBull, Albedo, Lobstr, Rabet, Hana and others). A guest is a key generated in the browser; the page never asks for a secret key. A reload brings you back as you were, without asking again.
 2. **Set up your wallet.** One button: Friendbot funds your account, you create your wallet, and the faucet adds 100 tUSD. A guest's steps need no approval; a wallet asks you once, for the wallet's creation.
-3. **Set Scout's allowance.** The form starts at 5 per purchase, 6 per day, 20 in total, for seven days, with three of the four sellers ticked.
-4. **Ask Scout.** Five tasks. With the suggested allowance: the brief is bought; the dataset costs 8 and is blocked by your wallet; the audited report is refused by its seller; the cheapest headlines are blocked at the unapproved seller and bought from the next; and the weekly catch-up buys until the day's limit stops it.
-5. **Freeze, unfreeze, end.** Then ask Scout again and watch the wallet refuse.
-6. **Read the wallet's record.** Entries on the ledger are verified in the page against the wallet's stored head. Refusals are listed separately: they left nothing on the ledger.
+3. **Give an agent an allowance.** Under **Agents** there are two cards of the same kind: **Your own AI agent**, with a sentence to paste into it, and **Scout**, the sample. Each agent you have is a card there, with its verification and its allowance. The form starts at 5 per purchase, 6 per day, 20 in total, for seven days, with three of the four sellers ticked.
+4. **Watch it buy.** Your own agent buys when you ask it to, from wherever it runs. Scout has five tasks in its card. With the suggested allowance: the brief is bought; the dataset costs 8 and is blocked by your wallet; the audited report is refused by its seller; the cheapest headlines are blocked at the unapproved seller and bought from the next; and the weekly catch-up buys until the day's limit stops it.
+5. **Freeze, unfreeze, end.** Freezing is the wallet's and stops every agent; ending is one allowance's. Then ask an agent again and watch the wallet refuse.
+6. **Read the wallet's record.** Entries on the ledger are verified in the page against the wallet's stored head, each under the name of the agent that made it. Refusals are listed separately: they left nothing on the ledger.
 
-What happens is not scripted. Change the allowance and the outcomes change with it: allow 10 per purchase and the dataset is bought; tick Bargain Data and Scout buys the cheapest headlines there.
+What happens is not scripted. Change an allowance and the outcomes change with it: allow 10 per purchase and the dataset is bought; tick Bargain Data and Scout buys the cheapest headlines there.
 
 ## Use your own AI agent
 
 Scout is a sample. The point is your own agent: in Claude Code, Codex or any MCP host, with a key of its own on your machine, spending from your wallet inside an allowance you approve in the page.
 
-In the page, under **Use your own AI agent**, copy the sentence and paste it into your agent. The agent reads [`/agent-ready.md`](https://scout-agent-demo.fly.dev/agent-ready.md), fetches a one-file tool, creates and registers itself, and has itself verified. It then appears in the page beside Scout; give it an allowance. Its purchases show in the wallet's record as they happen. The tool, what it does and what to know before trusting it are in [`packages/mcp`](../../packages/mcp/README.md); the design is in [ADR 0015](../../docs/decisions/0015-bring-your-own-agent.md).
+In the page, under **Agents**, copy the sentence from the card **Your own AI agent** and paste it into your agent. The sentence names [`/agent-ready.md`](https://scout-agent-demo.fly.dev/agent-ready.md) and carries your go-ahead for the three things it does; the document says what each does, where it leaves a trace and how to undo it. The agent runs a one-file tool from npm, creates and registers itself, and has itself verified. It then appears in the page as a card of its own; give it an allowance. Its purchases show in the wallet's record as they happen. The tool, what it does and what to know before trusting it are in [`packages/mcp`](../../packages/mcp/README.md); the design is in [ADR 0015](../../docs/decisions/0015-bring-your-own-agent.md).
 
 ## The sellers
 

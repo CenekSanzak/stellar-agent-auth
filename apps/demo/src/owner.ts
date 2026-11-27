@@ -64,13 +64,25 @@ export function forgetGuest(passphrase: string, storage: Pick<Storage, 'removeIt
   }
 }
 
-export async function connectFreighter(passphrase: string): Promise<Owner> {
+/**
+ * Connect Freighter. With `silent`, nothing is asked of the owner: it succeeds only if they have already allowed
+ * this site, which is how a reload finds the wallet still connected.
+ */
+export async function connectFreighter(passphrase: string, options: { silent?: boolean } = {}): Promise<Owner> {
   const freighter = await import('@stellar/freighter-api');
   const connected = await freighter.isConnected();
   if (connected.error || !connected.isConnected) {
     throw new Error('Freighter was not found in this browser. Install the extension, pick another wallet, or try as a guest.');
   }
-  const { address } = unwrap(await freighter.requestAccess(), 'Freighter did not grant access');
+  let address: string;
+  if (options.silent) {
+    const allowed = await freighter.isAllowed();
+    if (allowed.error || !allowed.isAllowed) throw new ConnectCancelled();
+    ({ address } = unwrap(await freighter.getAddress(), 'Freighter did not say which account is active'));
+    if (!address) throw new ConnectCancelled();
+  } else {
+    ({ address } = unwrap(await freighter.requestAccess(), 'Freighter did not grant access'));
+  }
   const details = unwrap(await freighter.getNetworkDetails(), 'Freighter did not report its network');
   const problem = networkProblem(passphrase, details.networkPassphrase);
   if (problem) throw new Error(problem);
@@ -98,18 +110,24 @@ const kitMessage = (error: unknown) => (error instanceof Error ? error.message
  * Let the owner pick any wallet Stellar Wallets Kit knows. The kit is loaded only when asked for: it is large, and
  * a guest never needs it.
  */
-export async function connectWithKit(passphrase: string): Promise<Owner> {
+export async function connectWithKit(passphrase: string, options: { silent?: boolean } = {}): Promise<Owner> {
   const [{ StellarWalletsKit }, { defaultModules }] = await Promise.all([
     import('@creit.tech/stellar-wallets-kit/sdk'), import('@creit.tech/stellar-wallets-kit/modules/utils'),
   ]);
   StellarWalletsKit.init({ modules: defaultModules(), network: passphrase as never });
   let address: string;
-  try {
-    ({ address } = await StellarWalletsKit.authModal());
-  } catch (error) {
-    const reason = kitMessage(error);
-    if (/closed the modal/i.test(reason)) throw new ConnectCancelled();
-    throw new Error(`No wallet was connected: ${reason}`);
+  if (options.silent) {
+    // The kit remembers the wallet that was picked and its account; a reload asks it, and opens no window.
+    address = await StellarWalletsKit.getAddress().then((answer) => answer.address, () => '');
+    if (!address) throw new ConnectCancelled();
+  } else {
+    try {
+      ({ address } = await StellarWalletsKit.authModal());
+    } catch (error) {
+      const reason = kitMessage(error);
+      if (/closed the modal/i.test(reason)) throw new ConnectCancelled();
+      throw new Error(`No wallet was connected: ${reason}`);
+    }
   }
   // A wallet that can say which network it is on must be on this one. Some cannot say, and sign for whichever
   // network the request names; a signature made for another network is useless here.
@@ -139,4 +157,13 @@ export async function connectWithKit(passphrase: string): Promise<Owner> {
     kind: 'kit', label, address, signer: walletAdapterSigner(adapter, address, passphrase),
     disconnect: () => StellarWalletsKit.disconnect().catch(() => undefined),
   };
+}
+
+/**
+ * Come back as whoever was connected before a reload, without asking them anything. Throws `ConnectCancelled` when
+ * that is not possible, which is not an error: the welcome page is then shown as on a first visit.
+ */
+export function reconnect(kind: OwnerKind, passphrase: string, storage: Pick<Storage, 'getItem' | 'setItem'> = localStorage): Promise<Owner> | Owner {
+  if (kind === 'guest') return connectGuest(passphrase, storage);
+  return kind === 'freighter' ? connectFreighter(passphrase, { silent: true }) : connectWithKit(passphrase, { silent: true });
 }

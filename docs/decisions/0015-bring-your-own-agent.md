@@ -51,13 +51,23 @@ Each agent has its own policy. The wallet refuses a signature by any key but the
 
 ### One sentence to paste
 
-The page shows a sentence to paste into an agent. It contains the address of `agent-ready.md` with the owner's account in it. The server generates that document with its own address and the owner filled into every command, written to the agent in the imperative. The agent fetches the tool, runs `init`, adds the tool to itself, and tells the person the one thing left for them to do.
+The page shows a sentence to paste into an agent. It contains the address of `agent-ready.md` with the owner's account in it. The server generates that document with its own address and the owner filled into every command.
+
+The first version of the document told the agent to do the set-up and not to explain it back first. The first model to read it, Claude Code, stopped, and said why: a web page was telling it to download and run a file it could not review, register something that could not be undone, and change its own configuration, without telling its user. It was right. A page is not who an agent takes orders from.
+
+So the document does not instruct. It says what each of the three steps does, where it leaves a trace, how to undo it, what the tool is and how to check it, and that the decision is the person's. The go-ahead is in the sentence the owner pastes, in their own words to their own agent, naming the three steps; and the page shows the same three steps beside the sentence, so that the owner agrees to something they have read. An agent that still asks once before running anything is doing its job.
 
 ### One file
 
 The tool is built into a single file with nothing to install beside it, and the server hands that file out. An agent host then starts `node <file> mcp`, which is immediate and does not depend on a package registry being reachable.
 
-The same file is laid out as an npm package, `stellar-agent-wallet`, ready to publish. When it is, the instructions switch to `npx` by setting `DEMO_AGENT_NPM_PACKAGE`. It is not on PyPI: the tool is a Node program, and a Python package could only start Node.
+The same file is published to npm as `stellar-agent-wallet`, and the hosted instructions use `npx` (`DEMO_AGENT_NPM_PACKAGE`). It is not on PyPI: the tool is a Node program, and a Python package could only start Node.
+
+### The page is about the wallet and its agents
+
+The page began as Scout's: its allowance, its tasks, its sellers, with bringing an agent of one's own as one card far down a column. That put the sample in front of the product. It now has a wallet at the top and an **Agents** section under it, where each of the owner's agents is a card, and the two ways to get one, bringing your own and trying the sample, are cards of the same kind side by side. No allowance form is open until the owner picks an agent. The sample's tasks are inside its card.
+
+A reload brings the owner back as they were. The page remembers how they connected and asks the wallet quietly, without opening it; and while it does not yet know whether they have a wallet, it shows neither the welcome page nor the set-up steps.
 
 ## Consequences
 
@@ -72,5 +82,4 @@ The same file is laid out as an npm package, `stellar-agent-wallet`, ready to pu
 - The owner as the agent's controller, for the reason above.
 - An owner removing an agent from their list. An agent they ignore can do nothing.
 - A richer check of a self-made agent. The verifier's coverage is what it was.
-- Publishing to npm. That needs the publisher's own account.
-- A run by a model. The whole flow was driven by tests and by hand, calling what a model would call.
+- A complete run by a model. One model read the instructions and stopped to ask, which led to the rewrite above; none has yet gone through to a purchase.

@@ -57,6 +57,11 @@ describe('Scout demo in a browser', () => {
   };
   const steps = (item: Awaited<ReturnType<typeof ask>>) => item.locator('.step').evaluateAll((rows) =>
     rows.map((row) => [row.getAttribute('data-vendor'), row.getAttribute('data-status'), row.getAttribute('data-error')]));
+  /** Open the allowance form for the sample agent. No form is put in front of a visitor; they pick the agent. */
+  const openScoutForm = async (on: Page = page) => {
+    await on.locator('[data-testid="scout"] [data-action="set-allowance"]').click();
+    await on.locator('form[data-form="allowance"]').waitFor({ timeout: 30_000 });
+  };
   /** From the welcome page to a funded wallet, as a guest. */
   const arrive = async (on: Page) => {
     await on.goto(base);
@@ -136,12 +141,16 @@ describe('Scout demo in a browser', () => {
   }, TIMEOUT);
 
   it('approves the suggested allowance and shows it as limits, a meter and approved sellers', async () => {
+    // Bringing an agent of one's own and trying the sample are offered side by side; neither form is open yet.
+    expect(await page.getByTestId('connect').count()).toBe(1);
+    expect(await page.getByTestId('allowance-form').count()).toBe(0);
+    await openScoutForm();
     await page.locator('form[data-form="allowance"] button[type="submit"]').click();
     await settled('confirmed');
     await expect.poll(() => text('allowance-status'), { timeout: 30_000 }).toBe('Active');
     expect(await text('allowance-spent')).toContain('0 of 6 tUSD spent today');
-    const approved = await page.getByTestId('vendor').evaluateAll((rows) => rows.map((row) => row.getAttribute('data-approved')));
-    expect(approved).toEqual(['true', 'true', 'true', 'false']);
+    expect(await page.getByTestId('allowance').innerText()).toContain('May pay: Ledger Wire, Deep Archive, Audited Sources.');
+    expect(await page.getByTestId('vendor').count()).toBe(4);
     expect(await page.getByTestId('allowance-form').count()).toBe(0);
   }, TIMEOUT);
 
@@ -180,6 +189,7 @@ describe('Scout demo in a browser', () => {
     await arrive(other);
     expect(await text('owner', other)).not.toBe(await text('owner'));
     // This guest lets Scout spend more at a time, and approves every seller.
+    await openScoutForm(other);
     await other.locator('input[name="perPurchase"]').fill('10');
     await other.locator('input[name="perDay"]').fill('20');
     await other.locator('input[name="vendor"][value="bargain-data"]').check();
@@ -222,8 +232,8 @@ describe('Scout demo in a browser', () => {
     expect(await steps(ended)).toEqual([['ledger-wire', 'blocked', 'Revoked']]);
     expect(await ended.innerText()).toContain('You ended this allowance');
     expect(await text('wallet-balance')).toBe('95');
-    // A new allowance can be approved at once.
-    await page.getByTestId('allowance-form').waitFor({ timeout: 30_000 });
+    // A new allowance can be set at once.
+    await page.locator('[data-testid="scout"] [data-action="set-allowance"]').waitFor({ timeout: 30_000 });
   }, TIMEOUT);
 
   it('shows the wallet\'s own record, verified, with refusals kept apart', async () => {
@@ -243,7 +253,16 @@ describe('Scout demo in a browser', () => {
   }, TIMEOUT);
 
   it('comes back as the same guest after a reload, with the wallet read from the network and what was bought kept', async () => {
-    await page.reload();
+    // Someone who is connected and set up is never shown the welcome page or the set-up steps again on the way back.
+    const seen = new Set<string>();
+    const note = async () => { seen.add((await page.locator('body').getAttribute('data-phase').catch(() => null)) ?? 'loading'); };
+    await page.reload({ waitUntil: 'commit' });
+    for (let i = 0; i < 40 && !seen.has('ready'); i++) {
+      await note();
+      await page.waitForTimeout(100);
+    }
+    expect(seen.has('ready')).toBe(true);
+    expect([...seen].filter((phase) => phase === 'welcome' || phase === 'setup')).toEqual([]);
     await expect.poll(() => text('wallet-balance'), { timeout: 60_000 }).toBe('95');
     await expect.poll(() => text('history-status'), { timeout: 30_000 }).toBe('Verified against the wallet');
     expect(await page.getByTestId('allowance').getAttribute('data-status')).toBe('none');
@@ -284,6 +303,7 @@ describe('Scout demo in a browser', () => {
     expect(await card.getByTestId('own-allowance').getAttribute('data-status')).toBe('none');
 
     // Scout gets its allowance first; then the owner gives the new agent a smaller one of its own.
+    await openScoutForm(mine);
     await mine.locator('form[data-form="allowance"] button[type="submit"]').click();
     await settled('confirmed', mine);
     await card.locator('[data-action="set-allowance"]').click();
@@ -311,7 +331,7 @@ describe('Scout demo in a browser', () => {
     await context.close();
   }, TIMEOUT);
 
-  it('fits a phone screen without sideways scrolling, with the tasks above the reading', async () => {
+  it('fits a phone screen without sideways scrolling, with the agents above the reading', async () => {
     const phone = await browser.newContext({ viewport: { width: 375, height: 812 } });
     const small = await phone.newPage();
     watch(small);
@@ -322,8 +342,9 @@ describe('Scout demo in a browser', () => {
         .map((section) => [section.id, section.getBoundingClientRect().top] as const).sort((a, b) => a[1] - b[1]).map(([id]) => id),
     }));
     expect(layout.overflow).toBe(0);
-    expect(layout.order.indexOf('tasks')).toBeLessThan(layout.order.indexOf('sellers'));
     expect(layout.order[0]).toBe('wallet');
+    expect(layout.order.indexOf('agents')).toBeLessThan(layout.order.indexOf('activity'));
+    expect(layout.order.indexOf('activity')).toBeLessThan(layout.order.indexOf('sellers'));
     await phone.close();
     // Through the whole run no page logged an error and no request of its own failed.
     expect(consoleErrors).toEqual([]);
