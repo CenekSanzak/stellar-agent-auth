@@ -54,6 +54,24 @@ Each facilitator had its own fee-paying account. One ordinary payment was made f
 
 An earlier exploratory run, kept on the `spike-x402` branch, measured the fees: 16,652 stroops for a plain account's payment, 23,426 for the wallet's, and 148,197 for the first payment from a freshly deployed wallet.
 
+## Sellers this project does not run
+
+From the run on 2026-11-27 (`tests/testnet/x402-external.test.ts`, with `RUN_TESTNET_X402_EXTERNAL=1`). Three services registered in the [stellar-8004](https://github.com/trionlabs/stellar-8004) identity registry on Testnet (`CDE3K4COIAGWNNJQQLL26SYI3KBJF5FUDHXG5FA6GYDJCG7T5V7FIWZH`), run by three different operators, each selling over x402 for Testnet USDC through a facilitator of its own choosing.
+
+A throwaway wallet was deployed, its owner bought Testnet USDC for Testnet XLM on the network's exchange and put 1 USDC into the wallet, and approved an allowance in USDC for exactly these three payees. Each seller was asked to sell to the wallet, and then to a plain account using the published client.
+
+| Seller | 8004 agent | Price | The wallet as payer | A plain account as payer |
+| --- | --- | --- | --- | --- |
+| RenderGate | 0 | 0.001 USDC | HTTP 402, `invalid_exact_stellar_payload_event_not_transfer`; nothing paid | Paid: [`3f5a8e62…27d10e`](https://stellar.expert/explorer/testnet/tx/3f5a8e621accb845c684d5f20833e23660c2cd7b246812f30ed0f8847427d10e) |
+| Stellar Agent Services example | 163 | 0.01 USDC | HTTP 402, the same reason; nothing paid | Paid: [`2074a36e…0f78d2`](https://stellar.expert/explorer/testnet/tx/2074a36e2136d3441216653377c72a9b10cdae3931a6b5fd52bb836d700f78d2) |
+| AgentEnact, EVM balance | 190 | 0.01 USDC | HTTP 402, the same reason, in the body; nothing paid | Paid: [`9440b355…3b706b`](https://stellar.expert/explorer/testnet/tx/9440b355394b978f53b23909f115a607c0223a2bf1fb5037538ca404263b706b) |
+
+The wallet was `CCYNJ5B3IOMZ24S22ECRVXLHC7HFZNCMC43QA5YS5FMGLIXT4PH42TT5`. Its balance did not change. The keys were generated at runtime and not kept.
+
+So the wallet's own check passed each time, the payment reached each seller, and each seller's facilitator refused it for the one reason measured above with the published code: the wallet's audit entry is an event beyond the transfer. The sellers work; they sold to a plain account minutes later. This is three sellers on one day, and says nothing about the rest.
+
+The third seller answered its refusal without repeating its terms in x402's form. `fetchPaying` threw on that; it now returns the answer as a refusal, and the agent's tool reads the reason from the body.
+
 ## In the demo
 
 The browser test buys from the paid API in the page: the purchase shows as confirmed with the API's answer and the transaction, the balance falls by 1 DEMO, and the history gains an account payment that verifies. The stricter API's refusal shows as refused, with the text that it was the API's own check and that nothing was paid; the balance does not change, and the refusal is listed with the other attempts.
@@ -61,7 +79,7 @@ The browser test buys from the paid API in the page: the purchase shows as confi
 ## Limits and open points
 
 - **Someone else's facilitator refuses the wallet.** A service chooses its facilitator. One that runs the published `@x402/stellar` code as it is refuses a payer that publishes events of its own, and the wallet publishes its audit entry on every payment. The specification asks only that there be no other balance change, so this may be stricter than intended, but it is what the code does. The wallet therefore pays only services whose facilitator makes the allowance.
-- **Hosted facilitators were not tried.** Whether they apply the same check was not tested.
+- **Three sellers outside this project were tried, and all three refused the wallet** for that reason; see above. Other sellers and other facilitators were not tried.
 - **The local facilitator is this project's code.** On a local network the protocol flow, the client and the resource server are x402's; the facilitator is not, because the published one cannot be pointed at a local network. Its rules are tested one by one, and it also settled a payment on Testnet.
 - **`stellar:standalone`** is this project's own name for a local network.
 - **Fee ceilings.** A new wallet's first payment costs several times a later one. A facilitator with a low ceiling refuses it.

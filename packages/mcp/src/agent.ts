@@ -163,7 +163,7 @@ export function createWalletAgent(options: AgentOptions) {
     const asked = paid.required?.accepts[0];
     const cost = asked ? { amount: units(BigInt(asked.amount)), asset: asked.asset, pay_to: asked.payTo } : {};
     if (paid.response.status === 402) {
-      const reason = paid.required?.error ?? 'no reason given';
+      const reason = paid.required?.error ?? await statedError(paid.response) ?? 'no reason given';
       return {
         url: target.href, outcome: 'declined' as const, by: 'seller', ...cost, error: reason,
         reason: reason.startsWith('payee_gate_') ? 'The seller checked this agent\'s verification and refused to sell.' : 'The seller did not accept the payment.',
@@ -189,6 +189,12 @@ export function createWalletAgent(options: AgentOptions) {
   }
 
   return { allowance, price, buy, offers };
+}
+
+/** The reason in a refusal that does not use x402's own form: a JSON body's `error`, when it is a short string. */
+async function statedError(response: Response): Promise<string | undefined> {
+  const stated = await response.clone().json().then((value: unknown) => (value as { error?: unknown } | null)?.error, () => undefined);
+  return typeof stated === 'string' && stated.length > 0 ? stated.slice(0, 200) : undefined;
 }
 
 /** A response body as data when it is JSON, as text otherwise, cut to a size an agent can read. */
