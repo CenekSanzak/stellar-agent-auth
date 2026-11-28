@@ -1,0 +1,218 @@
+{
+  "generated_at": "2026-11-28T13:03:26.180Z",
+  "service": "https://stellar-agent-wallet.fly.dev",
+  "network": "testnet",
+  "passphrase": "Test SDF Network ; September 2015",
+  "protocol": 30,
+  "contracts": {
+    "agent_registry": "CDQXY7OPSHKQGEVCIJI6UITZPD7B7U2G7SJHK2TJNXTKSE4T5WBZLE63",
+    "verification_registry": "CDZDDHWQNZBZ7JCI5THJGU76ZTAXUOB3BXIXMVZJFKQP2ZPJ3SRTV6RS",
+    "wallet": "CDA6MY2C6LUDOEDURJ5TTRW4ERTMDT5ORGGHFGQIQSUOYYMZ3GXOENDV",
+    "wallet_wasm_hash": "568ccc8e662a83f0011ee6c265681e8d887780336cce0173962a61a0625dd4b9",
+    "asset": {
+      "contract": "CCCDL5N5Z7DCJH3WWJHW2JMIJQOKMOCTE5FA77IOW2EJMEYLTTIZB5GI",
+      "code": "tUSD",
+      "issuer": "GBPMOEWRIJURWRY53PPOVGNV56LHLVUFDTVFK2JJHI6V2IXMBODQNBLF",
+      "decimals": 7
+    }
+  },
+  "accounts": {
+    "owner": "GANB7IQH5NJ4DOEYZWXSTTYDOJP32OAU4YU3DYSA2LOPMMDAWRLCE2XJ",
+    "relayer": "GCIXAGBFO22WP5M5MKMYVISDSUBRTV3L4IP7B4G4SU6KYN44Z4ZMG5ED",
+    "agent_signer": "GAKXACTCV6QY64CLUTUDRRIC3MCW56SICWX4MJHNJDLSVV2LAJD3YX47",
+    "agent_controller": "GD2IOMEEC675BHTMVT2QXQSFDRFGHG7PVZDXZDI7P4MQE7VDKQVWC3VP",
+    "provider": "GBSJVKTMMTY52BQ7Q6MDRUPWSYA5GL74PS66RNVA4SRET6267RX33YHW",
+    "approved_recipient": "GDZY6JLHOTHW27536DYPC7PARNSF6FS5EATQWGBNR7RKPB5O6XSQ2SDI",
+    "unapproved_recipient": "GBVKZFGEFPQ2GZ3TB5N7IYWDTVUA5VX6H275KFKXMJRBMVUTHLG4DZD6"
+  },
+  "agent": {
+    "agent_id": "7",
+    "revision": "1",
+    "metadata_uri": "https://stellar-agent-wallet.fly.dev/agents/GAKXACTCV6QY64CLUTUDRRIC3MCW56SICWX4MJHNJDLSVV2LAJD3YX47.json",
+    "metadata_sha256": "4197d376b826f147fca2c65a46380351156914f9282fa426af850e4e2573b029",
+    "registration": {
+      "transaction": "186d55143ed2b95b359e1fbbef3e1c15e7d369653e988af4ef00ff92971edc10",
+      "link": "https://stellar.expert/explorer/testnet/tx/186d55143ed2b95b359e1fbbef3e1c15e7d369653e988af4ef00ff92971edc10"
+    }
+  },
+  "verification": {
+    "provider_mode": "Live",
+    "sequence": "1",
+    "risk_score": 0,
+    "issued_at": "2026-11-28T13:02:19.000Z",
+    "expires_at": "2026-12-28T13:02:19.000Z",
+    "checks": [
+      {
+        "kind": "Code",
+        "outcome": "Unsupported"
+      },
+      {
+        "kind": "Endpoint",
+        "outcome": "NotApplicable"
+      },
+      {
+        "kind": "Media",
+        "outcome": "Unsupported"
+      },
+      {
+        "kind": "Metadata",
+        "outcome": "Passed"
+      },
+      {
+        "kind": "SignerAccount",
+        "outcome": "Passed"
+      },
+      {
+        "kind": "SignerHistory",
+        "outcome": "Inconclusive"
+      },
+      {
+        "kind": "ThreatFeed",
+        "outcome": "Unsupported"
+      },
+      {
+        "kind": "Token",
+        "outcome": "Unsupported"
+      }
+    ],
+    "publication": {
+      "transaction": "a7e522d6f52411480c3090234d0bd5c79c770b0f09c0d801762134b4233aaf29",
+      "link": "https://stellar.expert/explorer/testnet/tx/a7e522d6f52411480c3090234d0bd5c79c770b0f09c0d801762134b4233aaf29"
+    }
+  },
+  "wallet_created": {
+    "transaction": "6cf52834dfaeedde66617036c6670e82bfdbf1174a285e72070d9f017138eb84",
+    "link": "https://stellar.expert/explorer/testnet/tx/6cf52834dfaeedde66617036c6670e82bfdbf1174a285e72070d9f017138eb84"
+  },
+  "wallet_funded": {
+    "transaction": "458fab8ab95196346fbebae5fa0970424e15e9e443accda80e874c4591b26d83",
+    "link": "https://stellar.expert/explorer/testnet/tx/458fab8ab95196346fbebae5fa0970424e15e9e443accda80e874c4591b26d83",
+    "amount": "100"
+  },
+  "allowance": {
+    "policy_hash": "160a44ad0714d941fe3d0a0e7d24971f74ce8ad83fd721bd1bed69c55b0f5574",
+    "transaction": "bd0300c7b9f99338041be4a53cd0709256c6dfa321a14fd091375e9716f61040",
+    "link": "https://stellar.expert/explorer/testnet/tx/bd0300c7b9f99338041be4a53cd0709256c6dfa321a14fd091375e9716f61040",
+    "per_payment": "5",
+    "per_day": "20",
+    "recipients": [
+      "GDZY6JLHOTHW27536DYPC7PARNSF6FS5EATQWGBNR7RKPB5O6XSQ2SDI"
+    ],
+    "valid_until": "2026-12-05T13:02:34.000Z",
+    "required_checks": [
+      "Metadata",
+      "SignerAccount"
+    ]
+  },
+  "steps": [
+    {
+      "step": "A payment inside the allowance",
+      "outcome": "success",
+      "transaction": "c101e432d08c292f5529ca5dae962670a7bc16165df71e17eabd5836a4cec17a",
+      "ledger": 5969464,
+      "link": "https://stellar.expert/explorer/testnet/tx/c101e432d08c292f5529ca5dae962670a7bc16165df71e17eabd5836a4cec17a",
+      "amount": "3",
+      "recipient": "GDZY6JLHOTHW27536DYPC7PARNSF6FS5EATQWGBNR7RKPB5O6XSQ2SDI",
+      "wallet_balance": {
+        "before": "100",
+        "after": "97"
+      },
+      "recipient_balance": {
+        "before": "19",
+        "after": "22"
+      }
+    },
+    {
+      "step": "A payment over the limit",
+      "outcome": "failed",
+      "transaction": "57bccc1bbb6f2fe24717c2f9b8d330dc770526380f7e1fef55feedb6c03186d5",
+      "ledger": 5969466,
+      "link": "https://stellar.expert/explorer/testnet/tx/57bccc1bbb6f2fe24717c2f9b8d330dc770526380f7e1fef55feedb6c03186d5",
+      "amount": "8",
+      "recipient": "GDZY6JLHOTHW27536DYPC7PARNSF6FS5EATQWGBNR7RKPB5O6XSQ2SDI",
+      "simulated_error": "PaymentLimitExceeded",
+      "error": "PaymentLimitExceeded",
+      "wallet_balance": {
+        "before": "97",
+        "after": "97"
+      }
+    },
+    {
+      "step": "A payment to an unapproved recipient",
+      "outcome": "failed",
+      "transaction": "4060ce3c027b8f2e97becb2d1571c9181d40294ec756544b8e44412547dc43e1",
+      "ledger": 5969467,
+      "link": "https://stellar.expert/explorer/testnet/tx/4060ce3c027b8f2e97becb2d1571c9181d40294ec756544b8e44412547dc43e1",
+      "amount": "3",
+      "recipient": "GBVKZFGEFPQ2GZ3TB5N7IYWDTVUA5VX6H275KFKXMJRBMVUTHLG4DZD6",
+      "simulated_error": "RecipientNotAllowed",
+      "error": "RecipientNotAllowed",
+      "wallet_balance": {
+        "before": "97",
+        "after": "97"
+      }
+    },
+    {
+      "step": "The owner pauses the wallet",
+      "outcome": "success",
+      "transaction": "34cc64081a93d3048f6f3e26eeddc1b7775b7a902211888dead4a1fcb581a864",
+      "ledger": 5969468,
+      "link": "https://stellar.expert/explorer/testnet/tx/34cc64081a93d3048f6f3e26eeddc1b7775b7a902211888dead4a1fcb581a864"
+    },
+    {
+      "step": "A payment while the wallet is paused",
+      "outcome": "failed",
+      "transaction": "bccd467626f966e7cbf474cf8a2e5df059942c8a99ee9f930401fd38f0a3635b",
+      "ledger": 5969469,
+      "link": "https://stellar.expert/explorer/testnet/tx/bccd467626f966e7cbf474cf8a2e5df059942c8a99ee9f930401fd38f0a3635b",
+      "amount": "3",
+      "recipient": "GDZY6JLHOTHW27536DYPC7PARNSF6FS5EATQWGBNR7RKPB5O6XSQ2SDI",
+      "simulated_error": "Paused",
+      "error": "Paused",
+      "wallet_balance": {
+        "before": "97",
+        "after": "97"
+      }
+    },
+    {
+      "step": "The owner resumes the wallet",
+      "outcome": "success",
+      "transaction": "14fae7174ce45ea5e8b2a1675f9322b0dcb10d0d852e49cd44a67b2847e8815b",
+      "ledger": 5969470,
+      "link": "https://stellar.expert/explorer/testnet/tx/14fae7174ce45ea5e8b2a1675f9322b0dcb10d0d852e49cd44a67b2847e8815b"
+    },
+    {
+      "step": "The owner revokes the allowance",
+      "outcome": "success",
+      "transaction": "4535be2e3d4527e8a5d402ebf70917bba0168a059ea2b1ae47990741e78657ba",
+      "ledger": 5969471,
+      "link": "https://stellar.expert/explorer/testnet/tx/4535be2e3d4527e8a5d402ebf70917bba0168a059ea2b1ae47990741e78657ba"
+    },
+    {
+      "step": "A payment after revocation",
+      "outcome": "failed",
+      "transaction": "b946ce2e00567c662902032d8f6ea9890b22e105481e282cb5cec1f4399822a2",
+      "ledger": 5969472,
+      "link": "https://stellar.expert/explorer/testnet/tx/b946ce2e00567c662902032d8f6ea9890b22e105481e282cb5cec1f4399822a2",
+      "amount": "3",
+      "recipient": "GDZY6JLHOTHW27536DYPC7PARNSF6FS5EATQWGBNR7RKPB5O6XSQ2SDI",
+      "simulated_error": "Revoked",
+      "error": "Revoked",
+      "wallet_balance": {
+        "before": "97",
+        "after": "97"
+      }
+    }
+  ],
+  "end": {
+    "wallet_balance": "97",
+    "spent_under_the_allowance": "3",
+    "allowance_revoked": true,
+    "history": {
+      "status": "verified",
+      "detail": "5 entries from genesis match the stored head",
+      "entries": 5,
+      "read_from": "https://stellar-agent-wallet.fly.dev/indexer/"
+    }
+  }
+}

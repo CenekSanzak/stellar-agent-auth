@@ -118,6 +118,8 @@ export interface InitResult {
   wallet: string;
   /** Whether this run registered the agent, or found it already registered. */
   registered: 'now' | 'earlier';
+  /** The registration's transaction, when this run made it. */
+  registration_transaction?: string;
   /** The verification the market published, or why there is none yet. */
   verification: { status: string; checks?: { kind: string; outcome: string }[]; expires_at?: string } | { error: string };
   /** Where the owner approves an allowance for this agent. */
@@ -160,6 +162,7 @@ export async function initAgent(options: InitOptions): Promise<InitResult> {
     agentId = undefined;
   }
   const registered = agentId ? 'earlier' : 'now';
+  let registrationTransaction: string | undefined;
   if (!agentId) {
     log('Registering the agent in the agent registry');
     const document = await post<{ metadata_uri: string; metadata_hash: string }>(base, 'v1/agents/metadata', {
@@ -174,6 +177,7 @@ export async function initAgent(options: InitOptions): Promise<InitResult> {
     { limits: pipelineLimits({ maxFee: 50_000_000n }) });
     if (outcome.status !== 'success') throw new Error(`The agent was not registered: ${outcome.status}${outcome.code ? ` (${outcome.code})` : ''}`);
     agentId = decodeIdentity(outcome.returnValue!).agent_id.toString();
+    registrationTransaction = outcome.hash;
   }
   const settings: AgentSettings = {
     version: 1, market: base.href, owner: options.owner, agent_id: agentId, signer: agent.address,
@@ -190,6 +194,7 @@ export async function initAgent(options: InitOptions): Promise<InitResult> {
 
   return {
     agent_id: agentId, signer: agent.address, registered, verification, home: options.home,
+    ...(registrationTransaction ? { registration_transaction: registrationTransaction } : {}),
     wallet: deployedAddress(market.passphrase, options.owner, Uint8Array.from(Buffer.from(market.wallet_salt, 'hex'))),
     approve_at: new URL(`?agent=${agentId}`, base).href,
   };

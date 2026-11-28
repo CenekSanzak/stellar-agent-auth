@@ -11,7 +11,7 @@ import { createWalletAgent, type AgentOptions, type Offer, type WalletAgent } fr
 import { agentHome, initAgent, keyReference, marketBase, readMarket, readSettings, type InitResult } from './setup.js';
 
 export { createWalletAgent, type AgentOptions, type Offer, type WalletAgent } from './agent.js';
-export { agentHome, initAgent, readSettings, type AgentSettings, type InitOptions, type InitResult } from './setup.js';
+export { agentHome, initAgent, keyReference, readSettings, type AgentSettings, type InitOptions, type InitResult } from './setup.js';
 
 /**
  * An MCP server that makes an AI agent, such as Claude Code or Codex, the agent of a policy-limited wallet. The

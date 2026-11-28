@@ -30,6 +30,9 @@
       ],
       "@stellar-agent-auth/x402": [
         "./packages/x402/src/index.ts"
+      ],
+      "@stellar-agent-auth/mcp": [
+        "./packages/mcp/src/index.ts"
       ]
     },
     "skipLibCheck": true
