@@ -30,6 +30,8 @@ This work adds 2 unit tests, 1 local-network test (`tests/integration/evidence.t
 
 The 100 Rust tests are 48 in the smart wallet, 23 in the verification registry, 14 in the agent registry, 8 in the spike's test contract, 5 in shared-types and 2 in the demo service, as before.
 
+The browser test was changed after that clone, as described under "Found and fixed" below, and passed twice more from the working tree.
+
 Each suite passed in its final run. One CI run failed on the way, in the browser test, on a commit that passed in another run; see "Found and fixed" below. Flakiness over repeated runs was not otherwise measured.
 
 ## P8 gate
