@@ -68,7 +68,10 @@ describe('Scout demo in a browser', () => {
     rows.map((row) => [row.getAttribute('data-vendor'), row.getAttribute('data-status'), row.getAttribute('data-error')]));
   /** Ask to try the sample agent: its allowance form opens over the page. Nothing is opened for a visitor unasked. */
   const openScoutForm = async (on: Page = page) => {
-    if (await on.getByTestId('sample').count() === 0) await on.getByTestId('add-agent').click();
+    // The agents are drawn when their reads come back. A first-time owner is offered the sample at once; one who
+    // has an agent finds it behind "Add agent". Wait for either before choosing, or the wrong one is waited for.
+    await on.locator('[data-action="try-sample"], [data-testid="add-agent"]').first().waitFor({ timeout: 30_000 });
+    if (await on.locator('[data-action="try-sample"]').count() === 0) await on.getByTestId('add-agent').click();
     await on.locator('[data-action="try-sample"]').first().click();
     await on.locator('dialog[open] form[data-form="allowance"]').waitFor({ timeout: 30_000 });
   };

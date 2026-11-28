@@ -97,8 +97,8 @@ export function createWalletAgent(options: AgentOptions) {
     }));
     return {
       wallet, agent: agent.address, allowed: true as const, frozen, policy: hex(hash), assets,
-      // An empty list would mean anyone; the wallet reads it the same way.
-      may_pay: policy.allowed_recipients.length ? policy.allowed_recipients : 'anyone not blocked',
+      // The wallet pays only recipients the owner listed, so an empty list means no one.
+      may_pay: policy.allowed_recipients,
       never_pay: policy.blocked_recipients,
       ends_at: new Date(Number(policy.valid_until) * 1_000).toISOString(),
       ends_in_seconds: Number(policy.valid_until > now ? policy.valid_until - now : 0n),

@@ -1,0 +1,182 @@
+{
+  "checked_at": "2026-11-28T13:17:26.545Z",
+  "network": "testnet",
+  "passphrase": "Test SDF Network ; September 2015",
+  "network_id": "cee0302d59844d32bdca915c8203dd44b33fbb7edc19051ea37abedf28ecd472",
+  "protocol": 30,
+  "rpc_url": "https://soroban-testnet.stellar.org/",
+  "made_at": "2026-11-27T10:59:45.429Z",
+  "contracts": {
+    "agent_registry": {
+      "id": "CDQXY7OPSHKQGEVCIJI6UITZPD7B7U2G7SJHK2TJNXTKSE4T5WBZLE63",
+      "wasm_sha256": "b99cf6c5bbaa29e8ab586ab175343cdb637dcee4918ba0b728f3b728519d6928",
+      "link": "https://stellar.expert/explorer/testnet/contract/CDQXY7OPSHKQGEVCIJI6UITZPD7B7U2G7SJHK2TJNXTKSE4T5WBZLE63"
+    },
+    "verification_registry": {
+      "id": "CDZDDHWQNZBZ7JCI5THJGU76ZTAXUOB3BXIXMVZJFKQP2ZPJ3SRTV6RS",
+      "wasm_sha256": "41b7f41ffc66d6a17c8625ec81225ea6a772e09d4c2a1d589fe0df9d55af61dd",
+      "admin": "GDZXKWUSZWVRFWSJI2WKJZ4BGXWIC4CI3SE4SU7OEWFOAXG2UE67PSXF",
+      "agent_registry": "CDQXY7OPSHKQGEVCIJI6UITZPD7B7U2G7SJHK2TJNXTKSE4T5WBZLE63",
+      "link": "https://stellar.expert/explorer/testnet/contract/CDZDDHWQNZBZ7JCI5THJGU76ZTAXUOB3BXIXMVZJFKQP2ZPJ3SRTV6RS"
+    },
+    "smart_wallet": {
+      "wasm_sha256": "568ccc8e662a83f0011ee6c265681e8d887780336cce0173962a61a0625dd4b9",
+      "salt": "dea4dc954dfc52e6c0800b21e7cf8f500670f1eece693f75d92e7d9ad6438949",
+      "note": "There is no one wallet. Each owner deploys their own from this code, at an address fixed by their account and this salt."
+    }
+  },
+  "asset": {
+    "contract": "CCCDL5N5Z7DCJH3WWJHW2JMIJQOKMOCTE5FA77IOW2EJMEYLTTIZB5GI",
+    "code": "tUSD",
+    "issuer": "GBPMOEWRIJURWRY53PPOVGNV56LHLVUFDTVFK2JJHI6V2IXMBODQNBLF",
+    "decimals": 7,
+    "link": "https://stellar.expert/explorer/testnet/asset/tUSD-GBPMOEWRIJURWRY53PPOVGNV56LHLVUFDTVFK2JJHI6V2IXMBODQNBLF",
+    "note": "A test asset issued for this deployment. It has no value and is not a stablecoin."
+  },
+  "provider": {
+    "address": "GBSJVKTMMTY52BQ7Q6MDRUPWSYA5GL74PS66RNVA4SRET6267RX33YHW",
+    "mode": "Live",
+    "approved": true
+  },
+  "agent": {
+    "agent_id": "1",
+    "revision": "1",
+    "signer": "GDE5H7IXAKZAT2I4XBN4RBDGADBSPTVJQMMZ3U2UYAM4CICZXUVSNSQ7",
+    "controller": "GBCJ7QXPKJ4EYFU52WO7PXYGSN2T34FAWBEMDNCEF2BL3PLTLWD4BZFM",
+    "metadata_uri": "https://raw.githubusercontent.com/CenekSanzak/stellar-agent-auth/7373e45cdef6e6900f3ce15c8dd6a9aae39b4962/deployments/testnet/scout-metadata.json",
+    "metadata_sha256": "fa0a69dad12d468e2ffd05e60af6b978150f7edca02d32edcd45dece1effcd16",
+    "verification": {
+      "sequence": "1",
+      "risk_score": 0,
+      "issued_at": "2026-11-27T10:59:04.000Z",
+      "expires_at": "2026-12-27T10:59:04.000Z",
+      "checks": [
+        {
+          "kind": "Code",
+          "outcome": "Unsupported"
+        },
+        {
+          "kind": "Endpoint",
+          "outcome": "Passed"
+        },
+        {
+          "kind": "Media",
+          "outcome": "Unsupported"
+        },
+        {
+          "kind": "Metadata",
+          "outcome": "Passed"
+        },
+        {
+          "kind": "SignerAccount",
+          "outcome": "Passed"
+        },
+        {
+          "kind": "SignerHistory",
+          "outcome": "Inconclusive"
+        },
+        {
+          "kind": "ThreatFeed",
+          "outcome": "Unsupported"
+        },
+        {
+          "kind": "Token",
+          "outcome": "Unsupported"
+        }
+      ]
+    }
+  },
+  "roles": {
+    "admin": "GDZXKWUSZWVRFWSJI2WKJZ4BGXWIC4CI3SE4SU7OEWFOAXG2UE67PSXF",
+    "issuer": "GBPMOEWRIJURWRY53PPOVGNV56LHLVUFDTVFK2JJHI6V2IXMBODQNBLF",
+    "funder": "GANP56VG6GBMZ34ABOSIHRKHENFE7HKNGXZJORUBDAZJYX5KGTOEGLL4",
+    "facilitator": "GAYO232SY7TUOXY67WCMOAT2EKSVCQDCTCW6U2WCLR7RVCX22H65ZP5E",
+    "provider": "GBSJVKTMMTY52BQ7Q6MDRUPWSYA5GL74PS66RNVA4SRET6267RX33YHW",
+    "vendors": {
+      "ledger-wire": "GDZY6JLHOTHW27536DYPC7PARNSF6FS5EATQWGBNR7RKPB5O6XSQ2SDI",
+      "deep-archive": "GD7CKIT6QWUNNAFZQJJF2CTSZKOYGCB66LS3RR6PV43WFX5CRLTOFDIS",
+      "audited-sources": "GBJSHFLOFTLPQPVD5GCMF6BBOGQW47443D2K6TNWGIDPAQDNCNMB33AU",
+      "bargain-data": "GBVKZFGEFPQ2GZ3TB5N7IYWDTVUA5VX6H275KFKXMJRBMVUTHLG4DZD6"
+    }
+  },
+  "transactions": {
+    "agent_registry_created": {
+      "transaction": "9b1867629606f203ce5240edaa46ce9b5cf0444c7c6b117754699244c7608e9a",
+      "ledger": 5950697,
+      "at": "2026-11-27T10:58:49Z",
+      "link": "https://stellar.expert/explorer/testnet/tx/9b1867629606f203ce5240edaa46ce9b5cf0444c7c6b117754699244c7608e9a"
+    },
+    "verification_registry_created": {
+      "transaction": "cf7c026f4d8b4470ece72c952ca716e9dca20ed0af73523b95ec0d3b2539b2aa",
+      "ledger": 5950698,
+      "at": "2026-11-27T10:58:54Z",
+      "link": "https://stellar.expert/explorer/testnet/tx/cf7c026f4d8b4470ece72c952ca716e9dca20ed0af73523b95ec0d3b2539b2aa"
+    },
+    "provider_approved": {
+      "transaction": "aba47fa4a4bfa844d26ed85a514a064099d4f8daacb6fe7aea5552ee863795b1",
+      "ledger": 5950699,
+      "at": "2026-11-27T10:58:59Z",
+      "link": "https://stellar.expert/explorer/testnet/tx/aba47fa4a4bfa844d26ed85a514a064099d4f8daacb6fe7aea5552ee863795b1"
+    },
+    "asset_contract_created": {
+      "transaction": "89a541468a96674d5f240d9b58912b096e33d66873e8386ec2f62d65f69d9985",
+      "ledger": 5950708,
+      "at": "2026-11-27T10:59:44Z",
+      "link": "https://stellar.expert/explorer/testnet/tx/89a541468a96674d5f240d9b58912b096e33d66873e8386ec2f62d65f69d9985"
+    },
+    "asset_issued": {
+      "transaction": "02625b23906f5a41931a5a7510626fadaa027bb4207e62ff2c0d992c033a994e",
+      "ledger": 5950707,
+      "at": "2026-11-27T10:59:39Z",
+      "link": "https://stellar.expert/explorer/testnet/tx/02625b23906f5a41931a5a7510626fadaa027bb4207e62ff2c0d992c033a994e"
+    },
+    "agent_registered": {
+      "transaction": "aab361d97e0f792ab231e6de13f568c6ff230b26cf5adea6f65fcd76cf493d3c",
+      "ledger": 5950700,
+      "at": "2026-11-27T10:59:04Z",
+      "link": "https://stellar.expert/explorer/testnet/tx/aab361d97e0f792ab231e6de13f568c6ff230b26cf5adea6f65fcd76cf493d3c"
+    },
+    "agent_first_verified": {
+      "transaction": "ff8632b7a45813ae3c18f5f86f141c4c15afdfef3e1d19be08037033cee4efb8",
+      "ledger": 5950701,
+      "at": "2026-11-27T10:59:09Z",
+      "link": "https://stellar.expert/explorer/testnet/tx/ff8632b7a45813ae3c18f5f86f141c4c15afdfef3e1d19be08037033cee4efb8"
+    }
+  },
+  "built_here": {
+    "host": "darwin arm64",
+    "agent_registry": {
+      "sha256": "b99cf6c5bbaa29e8ab586ab175343cdb637dcee4918ba0b728f3b728519d6928",
+      "same_as_deployed": true
+    },
+    "verification_registry": {
+      "sha256": "41b7f41ffc66d6a17c8625ec81225ea6a772e09d4c2a1d589fe0df9d55af61dd",
+      "same_as_deployed": true
+    },
+    "smart_wallet": {
+      "sha256": "568ccc8e662a83f0011ee6c265681e8d887780336cce0173962a61a0625dd4b9",
+      "same_as_deployed": true
+    },
+    "note": "Whether this machine's build of the source is byte for byte what is deployed. The deployment was built on macOS arm64. A Linux x86_64 build of the same source has the same size, interface and build metadata, and other bytes in two of the three contracts."
+  },
+  "toolchain": {
+    "node": "v24.22.2",
+    "@stellar/stellar-sdk": "17.4.0",
+    "@x402/stellar": "2.32.0",
+    "soroban-sdk": "=29.0.1",
+    "rust": "1.98.0"
+  },
+  "checks": [
+    "the RPC server is on the recorded network",
+    "the agent registry exists",
+    "the verification registry exists",
+    "the wallet code is installed",
+    "the verification registry is bound to the agent registry",
+    "the provider is approved, as Live",
+    "the agent is registered with the recorded signer, controller and metadata",
+    "the agent's metadata is served and has the registered hash",
+    "the agent has a current verification from the provider",
+    "the asset contract is the Stellar Asset Contract of the recorded asset",
+    "the asset has 7 decimals"
+  ]
+}
