@@ -14,7 +14,7 @@ Everything here is on Stellar Testnet or a local network. The asset is tUSD, a t
 
 ## 1. Try the demo
 
-Open <https://stellar-agent-wallet.fly.dev/> and choose **Try as a guest**. A guest is a key made in your browser; nothing is installed and the page never asks for a secret key. Freighter and other Stellar wallets work too, set to Testnet.
+Open <https://stellar-agent-wallet.fly.dev/> and choose **Try as a guest**. A guest is a key made in your browser; nothing is installed and the page never asks for a secret key. Freighter works too, set to Testnet. Other Stellar wallets can be picked from a list, but none of those was tried.
 
 1. Press **Set up my wallet**. Your account gets test XLM, you create your wallet contract, and a faucet puts 100 tUSD in it.
 2. Under **Agents**, choose **Try Scout**, the sample agent, and approve the allowance the form suggests: 5 per purchase, 6 per day, three of the four sellers.

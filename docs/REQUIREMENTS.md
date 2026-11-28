@@ -1,6 +1,6 @@
 # Requirements and evidence ledger
 
-P0 infrastructure, the P1 ABI and authorization gate, the P2 agent registry, the P3 verification registry and limited verifier, the P4 smart wallet and the P5 SDK pipeline, sponsor and CLI are implemented and validated locally. The P3 Testnet checkpoint has run; the wallet is not yet deployed to Testnet. P6–P8 are not built. P9 was redefined on 2026-11-25 as the wallet's account payment path and moved ahead of P6; see [ADR 0006](decisions/0006-custom-account-spike.md) and the revised [plan](IMPLEMENTATION_PLAN.md). It is done; see the P9 evidence below. Product acceptance remains tied to the verification, wallet and SDK flows below.
+Every phase, P0 to P9, is implemented and has a validation record. The Testnet release (P8) is recorded in [P8 validation](P8_VALIDATION.md) and summarised for a reviewer in [evidence of completion](EVIDENCE.md). One piece of evidence is still to be added: the demo video, which the builder records. P9 was redefined on 2026-11-25 as the wallet's account payment path and moved ahead of P6; see [ADR 0006](decisions/0006-custom-account-spike.md) and the revised [plan](IMPLEMENTATION_PLAN.md).
 
 | Source requirement | Acceptance IDs | Evidence required | Implementation phase |
 | --- | --- | --- | --- |
@@ -134,3 +134,12 @@ The [Phase 9 validation record](P9_VALIDATION.md) covers the wallet's account pa
 - A15, A16: the per-payment cap and the daily cap now have their own error codes, and a total cap bounds a policy's whole life on both paths.
 - A22: the owner's exposure view reports what is left of the total caps.
 - A29 is not met by P9. Its Testnet payments are from a throwaway deployment; the kept deployment with its records is P8.
+
+## P8 evidence
+
+The [Phase 8 validation record](P8_VALIDATION.md) covers the kept Testnet deployment and its check against the network, the acceptance scenario with its refusals on the ledger, the guides, and a rerun of every suite from a clean checkout.
+
+- A29: met. The kept deployment's contract IDs, code hashes, role addresses and the transactions that made it are in [`manifest.json`](../deployments/testnet/manifest.json), each read back from the network. The SOW scenario ran on it on 2026-11-28: one payment inside an allowance, and payments over the limit, to an unapproved recipient, while paused and after revocation refused, each as a failed transaction carrying the wallet's reason ([`evidence.json`](../deployments/testnet/evidence.json)). The guide is [SETUP.md](SETUP.md).
+- A28: met from a clean checkout; the commands and results are in the validation record.
+- A21: unchanged. Archival and restoration are shown with the host's emulation in contract tests. They were not observed on a public network, where an entry is archived only after a month untouched. What to do about storage lifetimes is in [operations](OPERATIONS.md#contract-storage).
+- SOW exclusions: the evidence page, the setup guide and the operations notes each say that there has been no security audit, that the asset is a test asset, and which ERC features are not implemented.

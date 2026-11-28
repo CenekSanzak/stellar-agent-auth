@@ -119,11 +119,13 @@ export function startApp(root: Document, storage: Storage = localStorage) {
     try {
       await work();
     } finally {
-      state.busy = null;
       saveActivity();
+      // Read everything back before saying it is done, so that the page never says "confirmed" beside what was
+      // true before: an allowance that is approved and not yet shown, or a balance that has not moved.
+      await refresh();
+      state.busy = null;
       flash();
       render();
-      await refresh();
     }
   }
 

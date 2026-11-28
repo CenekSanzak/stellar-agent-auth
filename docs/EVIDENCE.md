@@ -77,7 +77,7 @@ The whole run, with every address and transaction, is in [`deployments/testnet/e
 
 | | |
 | --- | --- |
-| Demo | <https://stellar-agent-wallet.fly.dev/>. Create a wallet, give an agent an allowance, and watch it pay and be refused. It works as a guest, with Freighter, and with other Stellar wallets |
+| Demo | <https://stellar-agent-wallet.fly.dev/>. Create a wallet, give an agent an allowance, and watch it pay and be refused. It works as a guest and with Freighter. Other Stellar wallets can be picked from a list; none of those was tried |
 | Your own AI agent | Someone's own agent in Claude Code, Codex or another MCP host can be the wallet's agent. The page gives one sentence to paste into it. The tool it installs is the npm package [`stellar-agent-wallet`](https://www.npmjs.com/package/stellar-agent-wallet) |
 | Developer kit | A TypeScript SDK (`packages/sdk`), a command-line tool (`packages/cli`), a package for paying web APIs over x402 (`packages/x402`), and the agent tool (`packages/mcp`). Each has a README |
 | Tests | Unit tests, contract tests, tests on a local Stellar network with real signatures, and a browser test of the demo. All run in CI on every change. Counts and results are in [P8 validation](P8_VALIDATION.md) |
