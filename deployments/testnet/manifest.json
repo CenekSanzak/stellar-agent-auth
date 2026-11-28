@@ -1,5 +1,5 @@
 {
-  "checked_at": "2026-11-28T13:05:32.863Z",
+  "checked_at": "2026-11-28T13:17:26.545Z",
   "network": "testnet",
   "passphrase": "Test SDF Network ; September 2015",
   "network_id": "cee0302d59844d32bdca915c8203dd44b33fbb7edc19051ea37abedf28ecd472",
@@ -144,9 +144,20 @@
     }
   },
   "built_here": {
-    "agent_registry": "b99cf6c5bbaa29e8ab586ab175343cdb637dcee4918ba0b728f3b728519d6928",
-    "verification_registry": "41b7f41ffc66d6a17c8625ec81225ea6a772e09d4c2a1d589fe0df9d55af61dd",
-    "smart_wallet": "568ccc8e662a83f0011ee6c265681e8d887780336cce0173962a61a0625dd4b9"
+    "host": "darwin arm64",
+    "agent_registry": {
+      "sha256": "b99cf6c5bbaa29e8ab586ab175343cdb637dcee4918ba0b728f3b728519d6928",
+      "same_as_deployed": true
+    },
+    "verification_registry": {
+      "sha256": "41b7f41ffc66d6a17c8625ec81225ea6a772e09d4c2a1d589fe0df9d55af61dd",
+      "same_as_deployed": true
+    },
+    "smart_wallet": {
+      "sha256": "568ccc8e662a83f0011ee6c265681e8d887780336cce0173962a61a0625dd4b9",
+      "same_as_deployed": true
+    },
+    "note": "Whether this machine's build of the source is byte for byte what is deployed. The deployment was built on macOS arm64. A Linux x86_64 build of the same source has the same size, interface and build metadata, and other bytes in two of the three contracts."
   },
   "toolchain": {
     "node": "v24.22.2",
@@ -159,10 +170,7 @@
     "the RPC server is on the recorded network",
     "the agent registry exists",
     "the verification registry exists",
-    "the agent registry runs the code this source builds",
-    "the verification registry runs the code this source builds",
     "the wallet code is installed",
-    "the wallet code is the code this source builds",
     "the verification registry is bound to the agent registry",
     "the provider is approved, as Live",
     "the agent is registered with the recorded signer, controller and metadata",

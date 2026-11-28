@@ -81,7 +81,7 @@ The whole run, with every address and transaction, is in [`deployments/testnet/e
 | Your own AI agent | Someone's own agent in Claude Code, Codex or another MCP host can be the wallet's agent. The page gives one sentence to paste into it. The tool it installs is the npm package [`stellar-agent-wallet`](https://www.npmjs.com/package/stellar-agent-wallet) |
 | Developer kit | A TypeScript SDK (`packages/sdk`), a command-line tool (`packages/cli`), a package for paying web APIs over x402 (`packages/x402`), and the agent tool (`packages/mcp`). Each has a README |
 | Tests | Unit tests, contract tests, tests on a local Stellar network with real signatures, and a browser test of the demo. All run in CI on every change. Counts and results are in [P8 validation](P8_VALIDATION.md) |
-| Testnet deployment | The contract IDs above, the test asset and every role's public address are in [`deployments/testnet/manifest.json`](../deployments/testnet/manifest.json), with the transactions that made them. A script checks the record against the network: 14 checks passed on 28 November 2026 |
+| Testnet deployment | The contract IDs above, the test asset and every role's public address are in [`deployments/testnet/manifest.json`](../deployments/testnet/manifest.json), with the transactions that made them. A script checks the record against the network: all 11 checks passed on 28 November 2026 |
 | Setup guide | [SETUP.md](SETUP.md): try it, connect your own agent, run it on your machine, use the SDK, deploy your own. [OPERATIONS.md](OPERATIONS.md) covers who holds which key, upkeep and limits |
 
 The wallet's record in the demo, rebuilt from the ledger and checked against the wallet:

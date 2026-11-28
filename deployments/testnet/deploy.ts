@@ -11,6 +11,11 @@
  * agent and its verification, and the asset. It then looks up, in the network's own history, the transactions that
  * made them. It exits with 1 if anything does not match, and writes nothing then.
  *
+ * It also says whether the contracts as built on this machine are byte for byte the ones on the network. That is
+ * reported, not required: the deployment was built on macOS arm64, where the pinned toolchain reproduces it, and
+ * a Linux x86_64 build of the same source has the same size, interface and build metadata but other bytes in two
+ * of the three contracts.
+ *
  * Run it again after a Testnet reset or a new deployment, before anything points people at the addresses.
  */
 import { readFile, writeFile } from 'node:fs/promises';
@@ -73,12 +78,14 @@ export async function checkDeployment(log: (line: string) => void = console.log)
   };
   check('the agent registry exists', code.agent_registry !== undefined);
   check('the verification registry exists', code.verification_registry !== undefined);
-  for (const name of ['agent_registry', 'verification_registry'] as const) {
-    if (local[name] && code[name]) check(`the ${name.replace('_', ' ')} runs the code this source builds`, local[name] === code[name], code[name]);
-  }
   const walletCode = xdr.LedgerKey.contractCode(new xdr.LedgerKeyContractCode({ hash: Buffer.from(record.wallet_wasm_hash, 'hex') }));
   check('the wallet code is installed', (await server.getLedgerEntries(walletCode)).entries.length === 1);
-  if (local.smart_wallet) check('the wallet code is the code this source builds', local.smart_wallet === record.wallet_wasm_hash, local.smart_wallet);
+  const deployedCode = { ...code, smart_wallet: record.wallet_wasm_hash };
+  const builtHere = Object.fromEntries((['agent_registry', 'verification_registry', 'smart_wallet'] as const).map((name) => {
+    const sha256 = local[name];
+    if (sha256) log(`${sha256 === deployedCode[name] ? 'same' : 'diff'} ${name.replace('_', ' ')} as built on this machine${sha256 === deployedCode[name] ? '' : ` (${sha256})`}`);
+    return [name, sha256 ? { sha256, same_as_deployed: sha256 === deployedCode[name] } : null];
+  }));
 
   // What they are bound to.
   const verification = { ...read, contractId: record.verification_registry };
@@ -188,7 +195,11 @@ export async function checkDeployment(log: (line: string) => void = console.log)
     },
     roles: { admin, issuer: record.asset.issuer, ...record.roles, provider: record.provider.address, vendors: record.vendors },
     transactions,
-    built_here: local,
+    built_here: {
+      host: `${process.platform} ${process.arch}`,
+      ...builtHere,
+      note: 'Whether this machine\'s build of the source is byte for byte what is deployed. The deployment was built on macOS arm64. A Linux x86_64 build of the same source has the same size, interface and build metadata, and other bytes in two of the three contracts.',
+    },
     toolchain: {
       node: process.version, '@stellar/stellar-sdk': version('@stellar/stellar-sdk'), '@x402/stellar': version('@x402/stellar'),
       'soroban-sdk': cargo.match(/soroban-sdk\s*=\s*(?:\{[^}]*version\s*=\s*)?"([^"]+)"/)?.[1] ?? null,

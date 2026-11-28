@@ -14,6 +14,8 @@ Reviewed: 3 November 2026. Baseline: `c12bd39`. Revised: 25 November 2026.
 - The demo was hosted the same day at <https://stellar-agent-wallet.fly.dev/>, and an MCP server was added so that a model in Claude Code or Codex can be the wallet's agent ([ADR 0014](decisions/0014-agent-over-mcp.md)).
 - Still on 27 November, after the owner tried the hosted demo: anyone can now bring their own agent. It sets itself up with one command, the server serves its metadata and verifies it, and the owner approves an allowance for it in the page ([ADR 0015](decisions/0015-bring-your-own-agent.md)). This is the product the project is for; Scout is the sample.
 
+- On 28 November P8 was finished except for the demo video, which the owner records: the kept deployment is checked against the network and recorded, the acceptance scenario ran on it with its refusals submitted as failed transactions, and the setup guide, the operations notes and the evidence page were written ([P8 validation](P8_VALIDATION.md)). The plan's P8 file list names a threat-model document; the statement of work does not ask for one, and what the design protects against and what it does not is a section of [operations](OPERATIONS.md) instead.
+
 This is a proposed implementation plan, not an implementation or deployment report. The review changed no application code, made no commits, and performed no deployment. The existing untracked statement-of-work PDF was read without modification.
 
 ## 1. Outcome and scope

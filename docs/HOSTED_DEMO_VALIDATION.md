@@ -157,6 +157,6 @@ What the move cost, as expected: wallets and allowances are on the ledger and we
 - **Rate limits behind the real proxy.** The hosted server takes the client's address from Fly's header; that two visitors are limited separately was tested with that header locally, not from two networks.
 - **Wallets other than a guest key and Freighter.** The wallet picker opens under the content security policy and lists the wallets; no wallet in it was used to sign. Freighter was last used by hand with the earlier page, on a local network; the code that connects it is unchanged.
 - **Load.** Two visitors at once were tested. The limits are set for a demo that a few reviewers use; the public Testnet RPC's own limits were not measured.
-- **A model, to the end.** One read the instructions and asked before acting. None has completed the set-up or used the tools.
+- **A model, to the end.** One read the instructions and asked before acting. None has completed the set-up or used the tools. (Since reported done by the owner; see [P8 validation](P8_VALIDATION.md).)
 - **A long-running deployment.** It has been up for hours, not days. What needs doing over time is listed in [hosting](HOSTING.md).
-- **A refusal as a transaction on the ledger**, as before: Scout asks the wallet before it signs.
+- **A refusal as a transaction on the ledger**, as before: Scout asks the wallet before it signs. (Since done by the acceptance scenario; see [P8 validation](P8_VALIDATION.md).)

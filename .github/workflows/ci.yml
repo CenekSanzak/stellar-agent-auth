@@ -73,3 +73,32 @@ jobs:
         run: docker compose logs --tail=100
       - if: always()
         run: npm run local:down
+  # Public Testnet, read-only: the compatibility preflight and the check of the kept deployment against the
+  # network. It needs no secret and makes no transaction. It runs only when the workflow is started by hand, so
+  # that a faucet or RPC outage cannot fail a merge.
+  testnet:
+    if: github.event_name == 'workflow_dispatch'
+    needs: foundation
+    timeout-minutes: 15
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - uses: actions/download-artifact@v4
+        with:
+          name: contract-wasm
+          path: target/wasm32v1-none/release
+      - run: npm run build
+      - run: npm run test:testnet
+        env:
+          RUN_TESTNET_TESTS: '1'
+      - run: node deployments/testnet/deploy.ts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: testnet-manifest
+          path: deployments/testnet/manifest.json
+          if-no-files-found: error

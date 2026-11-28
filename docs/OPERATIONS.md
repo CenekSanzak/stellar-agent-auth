@@ -35,7 +35,9 @@ npm run build:contracts && npm run build
 node deployments/testnet/deploy.ts
 ```
 
-This reads the deployment's record, `deployments/testnet/demo.json`, and asks the network whether each thing in it is there and is what the record says: both registries and the code they run, the installed wallet code, what the verification registry is bound to, the verifier's approval, the sample agent, its metadata and its current check result, and the asset. It compares the code on the network with what this source builds. It then finds, in the network's own history, the transactions that made the deployment. It needs no key and changes nothing.
+This reads the deployment's record, `deployments/testnet/demo.json`, and asks the network whether each thing in it is there and is what the record says: both registries and the code they run, the installed wallet code, what the verification registry is bound to, the verifier's approval, the sample agent, its metadata and its current check result, and the asset. It then finds, in the network's own history, the transactions that made the deployment. It needs no key and changes nothing.
+
+It also reports whether the contracts as built on your machine are byte for byte the ones on the network. The deployment was built on macOS arm64, and the pinned toolchain reproduces it there. A Linux x86_64 build of the same source, which is what CI makes, has the same size, the same interface and the same build metadata, but other bytes in the wallet and the verification registry. Why was not investigated; other Soroban projects report the same between these two hosts. So a matching hash proves the source; a differing one on another kind of machine does not disprove it.
 
 If everything matches it writes [`deployments/testnet/manifest.json`](../deployments/testnet/manifest.json); if anything does not, it says what, exits with 1 and writes nothing. Run it after a new deployment and after a Testnet reset, before pointing anyone at the addresses.
 
